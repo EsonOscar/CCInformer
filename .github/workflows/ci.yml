@@ -1,0 +1,91 @@
+name: CI
+
+# Build and security checks on every PR into main. The checks that judge the PR itself (title,
+# version bump) live in pr-gates.yml, so they re-run on title edits without reinstalling anything.
+#
+# Every job name is a required status check in .github/rulesets/main.json. Renaming a job silently
+# breaks protection (the old name stays required and never reports), so update the ruleset in the
+# same PR.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plugin:
+    # The same checks as .githooks/pre-push: the manifest, marketplace file and hooks module must
+    # pass `claude plugin validate --strict`, and the mod's tests must pass. Neither needs a login.
+    # Runs on the latest Claude Code, as installed machines do: when a new release breaks the mod or
+    # tightens the validator, this goes red on the next PR instead of on someone's machine.
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Skip until the mod is in the repo
+        id: has-plugin
+        run: |
+          if [ -f .claude-plugin/plugin.json ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No .claude-plugin/plugin.json yet, so there is nothing to validate."
+          fi
+
+      - name: Setup Node
+        if: steps.has-plugin.outputs.present == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install Claude Code
+        if: steps.has-plugin.outputs.present == 'true'
+        run: npm install -g @anthropic-ai/claude-code@latest && claude --version
+
+      - name: Validate the plugin
+        if: steps.has-plugin.outputs.present == 'true'
+        run: claude plugin validate --strict .
+
+      - name: Run the mod's tests
+        if: steps.has-plugin.outputs.present == 'true'
+        run: claude plugin test .
+
+  secret-scan:
+    # Fails on a secret (API keys, tokens, private keys...). Scans every commit of the PR, so a secret
+    # added and removed again inside the PR is still caught, then the checked-out tree.
+    # Config and local-run instructions: .gitleaks.toml
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the PR's commits are scanned one by one
+          persist-credentials: false
+
+      - name: Install gitleaks (pinned version, checksum-verified)
+        working-directory: ${{ runner.temp }}
+        run: |
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          tarball="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -fsSLO "$url/$tarball"
+          curl -fsSL "$url/gitleaks_${GITLEAKS_VERSION}_checksums.txt" | awk -v f="$tarball" '$2 == f' | sha256sum -c -
+          tar -xzf "$tarball" gitleaks
+
+      - name: Scan every commit in the PR
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: '"$RUNNER_TEMP/gitleaks" git . --config .gitleaks.toml --redact --verbose --no-banner --log-opts="$BASE_SHA..$HEAD_SHA"'
+
+      - name: Scan the checked-out tree
+        run: '"$RUNNER_TEMP/gitleaks" dir . --config .gitleaks.toml --redact --verbose --no-banner'

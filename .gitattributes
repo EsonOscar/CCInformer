@@ -1,0 +1,4 @@
+# Hooks and shell scripts must keep LF line endings: with core.autocrlf=true (the Git for Windows
+# default) they would be checked out as CRLF, and sh/bash fail on the \r.
+.githooks/** text eol=lf
+*.sh         text eol=lf

@@ -1,0 +1,6 @@
+#!/usr/bin/env sh
+# Rejects a commit whose message isn't type(scope): subject. Activated once per clone with:
+#   git config core.hooksPath .githooks
+# A habit, not a gate: commits are squashed on merge, and CI checks only the PR title.
+
+bash "$(dirname "$0")/check-commit-msg.sh" "$1"

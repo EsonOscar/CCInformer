@@ -1,0 +1,28 @@
+# Secret scanning (run in CI by the secret-scan job in .github/workflows/ci.yml).
+#
+# On a PR the job scans every commit of the PR and then the checked-out tree, so a secret added and
+# removed again inside the PR is still caught.
+#
+# Run locally, with the same version CI uses (v8.30.1):
+#   gitleaks dir . --config .gitleaks.toml --redact --verbose --no-banner
+#   gitleaks git . --config .gitleaks.toml --redact --verbose --no-banner --log-opts="origin/main..HEAD"
+#     (install: scoop install gitleaks / brew install gitleaks)
+#
+# Never allowlist a real secret. Remove it from the file and rotate it instead.
+
+title = "Secret scan"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Generated, local-only and binary files"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)\.git/''',
+  '''(^|/)\.claude-plugin/types/''',
+  '''(^|/)\.claude/worktrees/''',
+  '''\.(png|jpe?g|gif|webp|ico|pdf|woff2?|ttf|otf)$''',
+]
+# False positives: exempt the narrowest possible shape, with a comment saying what it is and why it
+# can never be a credential.
