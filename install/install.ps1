@@ -34,7 +34,7 @@ if ($markets -match "`"name`":\s*`"$Marketplace`"") {
 }
 if ($LASTEXITCODE -ne 0) { throw "The marketplace step failed (exit $LASTEXITCODE)." }
 
-# 3. Auto-update on, and no old local copy loaded beside the installed one. Node writes settings.json
+# 3. Auto-update on, and no local copy of the mod overriding the installed one. Node writes settings.json
 #    the way Claude Code does (2-space JSON), so nothing else in the file changes; a backup is kept.
 $settingsScript = @'
 const fs = require('fs'), path = require('path'), os = require('os')
@@ -45,14 +45,20 @@ const changes = []
 const markets = (s.extraKnownMarketplaces ??= {})
 const entry = markets.ccinformer ?? { source: { source: 'github', repo: 'EsonOscar/CCInformer' } }
 if (entry.autoUpdate !== true) { markets.ccinformer = { ...entry, autoUpdate: true }; changes.push('auto-update on for the ccinformer marketplace') }
+// A copy of the mod named in CLAUDE_CODE_PLUGIN_DIRS overrides the installed one. A deleted copy is known by its
+// folder's name alone; any other folder that no longer exists is someone else's to remove.
+const full = d => d.replace(/^~/, os.homedir())
+const isModCopy = d => {
+  if (!d.trim()) return false
+  try { return ['ccinformer', 'sidepanel'].includes(JSON.parse(fs.readFileSync(path.join(full(d), '.claude-plugin', 'plugin.json'), 'utf8')).name) }
+  catch { return !fs.existsSync(full(d)) && /^(ccinformer|sidepanel)$/i.test(path.basename(full(d))) }
+}
 const dirs = s.env && s.env.CLAUDE_CODE_PLUGIN_DIRS
+const removed = []
 if (typeof dirs === 'string') {
   const keep = dirs.split(path.delimiter).filter(d => {
-    try {
-      const manifest = path.join(d.replace(/^~/, os.homedir()), '.claude-plugin', 'plugin.json')
-      const name = JSON.parse(fs.readFileSync(manifest, 'utf8')).name
-      if (name === 'ccinformer' || name === 'sidepanel') { changes.push('stopped loading the local copy at ' + d); return false }
-    } catch {}
+    if (isModCopy(d)) { removed.push(d); changes.push('stopped loading the local copy at ' + d); return false }
+    if (d && !fs.existsSync(full(d))) console.log('settings.json: CLAUDE_CODE_PLUGIN_DIRS names ' + d + ', which no longer exists; remove it if nothing needs it')
     return true
   })
   if (keep.length === 0) { delete s.env.CLAUDE_CODE_PLUGIN_DIRS; if (Object.keys(s.env).length === 0) delete s.env }
@@ -64,6 +70,13 @@ if (changes.length) {
   for (const c of changes) console.log('settings.json: ' + c)
   console.log('settings.json: the previous version is at ' + file + '.bak-ccinformer')
 } else console.log('settings.json: already set')
+// This shell's own CLAUDE_CODE_PLUGIN_DIRS. Inside a Claude Code session it holds what the session started with,
+// settings.json's env block included, so only a copy from nowhere else needs the person to act.
+const shellDirs = (process.env.CLAUDE_CODE_PLUGIN_DIRS || '').split(path.delimiter).filter(d => d && isModCopy(d))
+for (const d of shellDirs) {
+  if (removed.includes(d) || process.env.CLAUDECODE === '1') console.log('This shell still loads ' + d + ' from when it started; new sessions won\'t, unless your shell profile sets CLAUDE_CODE_PLUGIN_DIRS')
+  else console.error('Warning: CLAUDE_CODE_PLUGIN_DIRS in this shell names a copy of the mod (' + d + '), which overrides the installed one. Remove it from your shell profile.')
+}
 '@
 if (Get-Command node -ErrorAction SilentlyContinue) {
   Step "Switching on auto-update"
@@ -71,9 +84,9 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
   if ($LASTEXITCODE -ne 0) { throw "Updating settings.json failed (exit $LASTEXITCODE); nothing was written." }
 } else {
   Write-Warning "Node isn't installed, so auto-update isn't switched on. In a Claude Code session: /plugin, Marketplaces, $Marketplace, Enable auto-update."
-}
-if ($env:CLAUDE_CODE_PLUGIN_DIRS) {
-  Write-Warning "CLAUDE_CODE_PLUGIN_DIRS is set in this shell ($env:CLAUDE_CODE_PLUGIN_DIRS). If it names an old copy of the mod, remove it from your profile."
+  if ($env:CLAUDE_CODE_PLUGIN_DIRS) {
+    Write-Warning "CLAUDE_CODE_PLUGIN_DIRS is set in this shell ($env:CLAUDE_CODE_PLUGIN_DIRS). A copy of the mod named there overrides the installed one; remove it from settings.json or your shell profile."
+  }
 }
 
 # 4. The mod.
