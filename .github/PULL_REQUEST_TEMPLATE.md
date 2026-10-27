@@ -12,4 +12,4 @@ If the PR changes what ships, raise the version in plugin.json; the version-bump
 <!-- CI runs `claude plugin validate --strict .` and `claude plugin test .`.
      What did you try in a live session, and on which OS? -->
 
-- [ ] Tried in a live session (`/side`)
+- [ ] Tried in a live session (`/ccinformer`)

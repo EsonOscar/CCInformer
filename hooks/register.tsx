@@ -25,7 +25,11 @@ import { summarizeRun } from './stats'
 import { StatsView } from './view-stats'
 
 const PANE = 'ccinformer'
-const COMMAND = 'side'
+const TITLE = 'CCInformer'
+// The command, and a short alias that runs the same handler.
+const COMMAND = 'ccinformer'
+const ALIAS = 'side'
+const ARGUMENT_HINT = '[git|agents|sessions|debug]'
 // The pane asks for a quarter of the terminal, never less than this; a width the person drags to wins.
 const SHARE = 0.25
 const MIN_COLUMNS = 40
@@ -126,8 +130,14 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: COMMAND,
-      description: 'Toggle the side pane: git and CI, agents and workflows, sessions, debug',
-      argumentHint: '[git|agents|sessions|debug]',
+      description: 'Toggle the CCInformer pane: git and CI, agents and workflows, sessions, debug',
+      argumentHint: ARGUMENT_HINT,
+      immediate: true,
+    })
+    await $.command.register({
+      name: ALIAS,
+      description: `Short for /${COMMAND}: toggle the CCInformer pane`,
+      argumentHint: ARGUMENT_HINT,
       immediate: true,
     })
     const tab = await $.store.get(STORE_TAB)
@@ -417,7 +427,7 @@ export const register: Register = on => {
     // Reopen where it was left; the engine seats a pane opened unasked only in a wide terminal.
     if ((await $.store.get(STORE_OPEN)) === true) {
       const columns = Number(await $.store.get(STORE_COLUMNS)) || MIN_COLUMNS
-      await $.ui.open({ id: PANE, title: 'CCInformer', columns })
+      await $.ui.open({ id: PANE, title: TITLE, columns })
       await update($, isOpenAtom, () => true)
       void refresh(await read($, tabAtom))
     }
@@ -430,7 +440,9 @@ export const register: Register = on => {
     return next(e)
   })
 
-  on('command.run', { command: COMMAND }, async ($, e) => {
+  // Both names run this; every other command passes through untouched.
+  on('command.run', async ($, e, next) => {
+    if (e.command !== COMMAND && e.command !== ALIAS) return next(e)
     const arg = e.args.trim().toLowerCase()
     void live?.wake()
     if (isTab(arg)) {
@@ -444,7 +456,7 @@ export const register: Register = on => {
       return {}
     }
     const columns = Math.max(MIN_COLUMNS, Math.round(e.presentation.columns * SHARE))
-    await $.ui.open({ id: PANE, title: 'CCInformer', columns })
+    await $.ui.open({ id: PANE, title: TITLE, columns })
     const now = await $.clock.now()
     await update($, nowAtom, () => now)
     await update($, isOpenAtom, () => true)
@@ -452,7 +464,7 @@ export const register: Register = on => {
     await $.store.set(STORE_COLUMNS, columns)
     void live?.refresh(await read($, tabAtom))
     return {}
-  })
+  }).catch(($, e, next) => next(e))
 
   on('ui.close', async ($, e, next) => {
     if (e.id === PANE) {
@@ -662,6 +674,13 @@ export const register: Register = on => {
     }
     return (
       <Box flexDirection="column" paddingX={1}>
+        {/* Claude Code draws a pane's title only as a tab beside other panes, so the pane names itself. */}
+        <Box key="title" flexDirection="row">
+          <Text color={ACCENT} weight="bold">
+            ✻{' '}
+          </Text>
+          <Text dimColor>{TITLE}</Text>
+        </Box>
         {Header(k, tab, badges, t => void live?.showTab(t), () => void live?.refresh(tab))}
         <Text color={ACCENT} dimColor>
           {'─'.repeat(Math.max(1, width - 2))}
@@ -705,9 +724,6 @@ const Header = (k: Kit, tab: Tab, badges: Record<Tab, Badge | null>, pick: (id: 
   const { Box, Button, Text } = k
   return (
     <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-      <Text color={ACCENT} weight="bold">
-        ✻
-      </Text>
       {TABS.map(t => {
         const badge = badges[t.id]
         return (

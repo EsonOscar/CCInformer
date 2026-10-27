@@ -87,4 +87,4 @@ if ($installed -match "`"id`":\s*`"$Plugin@$Marketplace`"") {
 }
 if ($LASTEXITCODE -ne 0) { throw "The install step failed (exit $LASTEXITCODE)." }
 
-Step "Done. Start a new Claude Code session (or run /reload-plugins in an open one) and type /side."
+Step "Done. Start a new Claude Code session (or run /reload-plugins in an open one) and type /ccinformer (or /side)."

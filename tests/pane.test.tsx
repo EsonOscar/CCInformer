@@ -15,8 +15,9 @@ const PANE = {
   },
 } as const
 
-// Nothing sits beneath the plugin in a test: these hooks stand for the engine.
-const engine = (on: Parameters<TestBody>[1]) => {
+// Nothing sits beneath the plugin in a test: these hooks stand for the engine. `opened` collects the ids of the
+// panes the plugin opens.
+const engine = (on: Parameters<TestBody>[1], opened: string[] = []) => {
   mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/test' })
@@ -25,11 +26,31 @@ const engine = (on: Parameters<TestBody>[1]) => {
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('agent.list', () => ({ value: [] }))
-  on('command.register', () => ({ value: { command: 'side' } }))
-  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('ui.open', (_, e) => {
+    opened.push(e.id)
+    return { value: { isPlaced: true } }
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {}, text: 'ok' }))
 }
+
+test('/ccinformer and its alias /side both open the pane, which names itself', async ($, on) => {
+  const opened: string[] = []
+  engine(on, opened)
+  await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
+
+  const typed = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
+  await $.command.run({ ...typed, command: 'ccinformer', args: '' })
+  // With the pane open, a tab argument switches the tab and keeps it open, so the alias opens it again.
+  await $.command.run({ ...typed, command: 'side', args: 'debug' })
+  expect(opened).toEqual(['ccinformer', 'ccinformer'])
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'CCInformer' })).toBeDefined()
+  expect(await ui.find({ key: 'tab-debug' })).toBeDefined()
+  await ui.unmount()
+})
 
 test('the tabs draw, and a tool call shows on the Debug tab', async ($, on) => {
   engine(on)
