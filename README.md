@@ -6,7 +6,7 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Agents** › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
 - **Agents** › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
 - **Sessions**: the other Claude sessions on this machine, those in this folder first, with what each is working on. A warning shows when another session is working in this folder.
-- **Debug**: every tool call with its run time; every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
+- **Debug**: every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
 
 ## Install
 
