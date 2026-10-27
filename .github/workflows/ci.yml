@@ -31,31 +31,18 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Skip until the mod is in the repo
-        id: has-plugin
-        run: |
-          if [ -f .claude-plugin/plugin.json ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::notice::No .claude-plugin/plugin.json yet, so there is nothing to validate."
-          fi
-
       - name: Setup Node
-        if: steps.has-plugin.outputs.present == 'true'
         uses: actions/setup-node@v7
         with:
           node-version: 22
 
       - name: Install Claude Code
-        if: steps.has-plugin.outputs.present == 'true'
         run: npm install -g @anthropic-ai/claude-code@latest && claude --version
 
       - name: Validate the plugin
-        if: steps.has-plugin.outputs.present == 'true'
         run: claude plugin validate --strict .
 
       - name: Run the mod's tests
-        if: steps.has-plugin.outputs.present == 'true'
         run: claude plugin test .
 
   secret-scan:

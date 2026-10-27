@@ -9,10 +9,6 @@
 root="$(git rev-parse --show-toplevel)"
 claude="${CLAUDE_BIN:-claude}"
 
-if [ ! -f "$root/.claude-plugin/plugin.json" ]; then
-  exit 0
-fi
-
 if ! "$claude" --version > /dev/null 2>&1; then
   echo "pre-push: '$claude' doesn't run, so the plugin checks are skipped. Set CLAUDE_BIN to a working binary." >&2
   exit 0

@@ -1,0 +1,6 @@
+{
+  "name": "ccinformer",
+  "description": "CCInformer: a Claude Code side pane for git and CI, workflow runs, other sessions and debug",
+  "owner": { "name": "EsonOscar" },
+  "plugins": [{ "name": "ccinformer", "source": "./" }]
+}
