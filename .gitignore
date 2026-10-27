@@ -1,0 +1,9 @@
+# Environment files, every variant (.env, .env.local, .env.staging, prod.env, ...)
+.env
+.env.*
+*.env
+
+# Local-only notes and files, every variant (.local/, .local.*, *.local)
+.local
+.local.*
+*.local

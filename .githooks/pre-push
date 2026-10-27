@@ -1,0 +1,25 @@
+#!/usr/bin/env sh
+# Runs the plugin job from CI before anything leaves this machine: validate the manifest and hooks
+# module, then run the mod's tests. Skipped with a notice if Claude Code can't be started.
+#
+# Set CLAUDE_BIN when the first `claude` on PATH isn't a working one (e.g. a broken shim), in your
+# shell profile: export CLAUDE_BIN="$HOME/.local/bin/claude.exe"
+# Skip for one push: git push --no-verify (CI runs the same checks anyway).
+
+root="$(git rev-parse --show-toplevel)"
+claude="${CLAUDE_BIN:-claude}"
+
+if [ ! -f "$root/.claude-plugin/plugin.json" ]; then
+  exit 0
+fi
+
+if ! "$claude" --version > /dev/null 2>&1; then
+  echo "pre-push: '$claude' doesn't run, so the plugin checks are skipped. Set CLAUDE_BIN to a working binary." >&2
+  exit 0
+fi
+
+"$claude" plugin validate --strict "$root" > /dev/null || {
+  echo "pre-push: plugin validate failed. Run: $claude plugin validate --strict ." >&2
+  exit 1
+}
+"$claude" plugin test "$root" || exit 1

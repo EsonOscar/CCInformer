@@ -1,0 +1,68 @@
+name: PR gates
+
+# The checks that judge the PR itself rather than the code: its title, and the version bump when it
+# changes what ships. Separate from ci.yml because they must re-run when the title changes (edited),
+# which shouldn't reinstall Claude Code.
+#
+# Every job name is a required status check in .github/rulesets/main.json. Renaming one silently
+# breaks protection, so update the ruleset in the same PR.
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-gates-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash # bash -eo pipefail: a failing git command can't pass as empty input
+
+env:
+  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+jobs:
+  pr-title:
+    # The squash merge takes the PR title as the commit's subject, so the title is what main's history
+    # shows. Individual commits are squashed away and aren't checked here.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Check the PR title
+        # Through env, never ${{ }} inside run: a crafted title can't inject shell commands.
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$TITLE" | bash .githooks/check-commit-msg.sh -
+
+  version-bump:
+    # Every merge into main is a release: machines install from main, and they only pick up a change
+    # when plugin.json's version goes up. So a PR that changes what ships must raise it.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the version bump
+        run: |
+          shipped='^(\.claude-plugin/|hooks/|types/|tsconfig\.json$)'
+          if ! git -c core.quotePath=false diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE "$shipped"; then
+            echo "Nothing that ships changed: no version bump needed."; exit 0
+          fi
+          version() { git show "$1:.claude-plugin/plugin.json" 2>/dev/null | sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1; }
+          old=$(version "$BASE_SHA"); new=$(version "$HEAD_SHA")
+          if [ -z "$new" ]; then echo "::error::No version in .claude-plugin/plugin.json."; exit 1; fi
+          if [ -z "$old" ]; then echo "First release: $new."; exit 0; fi
+          if [ "$old" != "$new" ] && [ "$(printf '%s\n%s\n' "$old" "$new" | sort -V | tail -n 1)" = "$new" ]; then
+            echo "Version $old -> $new."; exit 0
+          fi
+          echo "::error::Files that ship changed, but plugin.json's version ($new) isn't above main's ($old). Raise it in this PR: patch for a fix, minor for a feature."
+          exit 1
