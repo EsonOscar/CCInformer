@@ -81,4 +81,4 @@ else
   "$claude" plugin install "$plugin@$marketplace" --scope user || die "Installing the mod failed."
 fi
 
-step "Done. Start a new Claude Code session (or run /reload-plugins in an open one) and type /side."
+step "Done. Start a new Claude Code session (or run /reload-plugins in an open one) and type /ccinformer (or /side)."

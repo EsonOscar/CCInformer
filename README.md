@@ -36,7 +36,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Use
 
-- `/side` opens or closes the pane; `/side git|agents|sessions|debug` opens it on a tab.
+- `/ccinformer` opens or closes the pane; `/ccinformer git|agents|sessions|debug` opens it on a tab. `/side` is a short alias for the same thing.
 - Ctrl+X Tab gives it the keyboard: `1`-`4` switch tabs, `r` refreshes, Esc gives the keyboard back. Clicking works without that.
 
 ## Numbers

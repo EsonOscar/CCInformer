@@ -50,7 +50,7 @@ Installed machines only pick up a change when `version` in `.claude-plugin/plugi
 - **How much, while on 0.x:** patch for a fix, minor for a feature *or* a breaking change. CCInformer stays on 0.x until the planned feature set is complete; 1.0.0 is a deliberate decision, after which a breaking change is a major bump.
 - **What counts as breaking:**
   - a pack or `.ccinformer.jsonc` change that makes existing files invalid;
-  - a removed `/side` command or key;
+  - a removed `/ccinformer` or `/side` command, or a removed key;
   - moved store or ledger paths, which reset saved state;
   - a renamed plugin id.
 
