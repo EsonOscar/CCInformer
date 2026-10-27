@@ -7,3 +7,7 @@
 .local
 .local.*
 *.local
+
+# Claude Code's per-person settings and worktrees for this repo (.claude/CLAUDE.md is committed)
+.claude/settings.local.json
+.claude/worktrees/

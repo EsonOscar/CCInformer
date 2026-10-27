@@ -57,7 +57,9 @@ jobs:
           if ! git -c core.quotePath=false diff --name-only "$BASE_SHA...$HEAD_SHA" | grep -qE "$shipped"; then
             echo "Nothing that ships changed: no version bump needed."; exit 0
           fi
-          version() { git show "$1:.claude-plugin/plugin.json" 2>/dev/null | sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1; }
+          # A commit without plugin.json (main before the first release) has no version: '' rather than
+          # git's exit 128, which pipefail would otherwise turn into a failed job.
+          version() { { git show "$1:.claude-plugin/plugin.json" 2>/dev/null || true; } | sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -n 1; }
           old=$(version "$BASE_SHA"); new=$(version "$HEAD_SHA")
           if [ -z "$new" ]; then echo "::error::No version in .claude-plugin/plugin.json."; exit 1; fi
           if [ -z "$old" ]; then echo "First release: $new."; exit 0; fi

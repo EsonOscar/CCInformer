@@ -31,9 +31,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if [ ! -f .claude-plugin/plugin.json ]; then
-            echo "::notice::No .claude-plugin/plugin.json yet, so there is nothing to release."; exit 0
-          fi
           version=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' .claude-plugin/plugin.json | head -n 1)
           if [ -z "$version" ]; then echo "::error::No version in .claude-plugin/plugin.json."; exit 1; fi
           tag="v$version"

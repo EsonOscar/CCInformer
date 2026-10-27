@@ -1,0 +1,7 @@
+{
+  "name": "ccinformer",
+  "version": "0.1.0",
+  "description": "A side pane with live git and CI, subagents and workflow phases, other sessions, and a debug log of tools, requests and context growth",
+  "author": { "name": "EsonOscar" },
+  "types": "./types/index.d.ts"
+}
