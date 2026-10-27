@@ -110,8 +110,6 @@ let isTurnRunning = false
 let lastTask = ''
 let lastModel = ''
 let contextWindow = 0
-// Tool run times from the PostToolUse event, which leave out the wait for the person's approval.
-const toolDurations = new Map<string, number>()
 
 // The background work, built in session.start over that hook's $; the other hooks reach it here.
 type Live = {
@@ -529,25 +527,14 @@ export const register: Register = on => {
 
     const result = await next(e)
 
-    const measured = (await $.clock.now()) - startedAt
-    const ms = toolDurations.get(row.id) ?? measured
-    toolDurations.delete(row.id)
+    // From the call to its result, so a wait for the person's approval counts too. Claude Code's PostToolUse event has
+    // the tool's own time, but a team-org account's built-in security plugin skips other plugins' classic hooks.
+    const ms = (await $.clock.now()) - startedAt
     const outcome: ToolOutcome = 'deny' in result && result.deny ? 'denied' : result.isError ? 'error' : 'ok'
     await update($, toolsAtom, list => list.map(r => (r.id === row.id ? { ...r, ms, outcome } : r)))
     if (!e.agentId && TOUCHING_TOOLS.includes(tool)) live?.touched()
     if (!e.agentId && isPush(input.command)) live?.pushed()
     return result
-  }).catch(($, e, next) => next(e))
-
-  // The tool's own run time, without the wait for the person's approval that tool.call's clock includes.
-  on('classic.PostToolUse', async ($, e, next) => {
-    if (typeof e.duration_ms === 'number' && e.tool_use_id) {
-      const id = e.tool_use_id
-      const ms = e.duration_ms
-      toolDurations.set(id, ms)
-      await update($, toolsAtom, list => list.map(r => (r.id === id && r.outcome !== 'running' ? { ...r, ms } : r)))
-    }
-    return next(e)
   }).catch(($, e, next) => next(e))
 
   on('agent.spawn', async ($, e, next) => {
