@@ -37,7 +37,7 @@ One change per PR, in English.
 ## Pull requests
 
 - Against `main`, titled as above.
-- The body follows [the PR template](.github/PULL_REQUEST_TEMPLATE.md). Add `Closes #<issue>` when there is one. The body stays on the PR; the squash commit gets the title only.
+- The body follows [the PR template](.github/PULL_REQUEST_TEMPLATE.md). Add `Closes #<issue>` when there is one. The body stays on the PR. The squash commit gets the PR title as its subject and the PR's commit messages as its body, so write commit messages that explain the change.
 - Before pushing, run what CI runs: `claude plugin validate --strict .` and `claude plugin test .` (the pre-push hook does this for you).
 - A red check means fix the cause; nothing in CI has a bypass.
 
@@ -71,14 +71,14 @@ The workflows pin Actions to a major version (`@v7`), so minor and patch release
 
 ## Repo settings
 
-Applied by hand, once, by an admin. The ruleset requires a PR and green checks on `main`, with no approval count (a sole maintainer can't approve their own PR), and allows squash merges only. The merge settings make the PR title the commit's subject, with an empty body, and delete the branch after the merge.
+Applied by hand, once, by an admin. The ruleset requires a PR and green checks on `main`, with no approval count (a sole maintainer can't approve their own PR), and allows squash merges only. The merge settings make the PR title the commit's subject and the PR's commit messages its body, and delete the branch after the merge. Squash rather than merge commits: every commit on `main` is a release that passed CI, which keeps reverting and bisecting simple, and the commit messages keep the detail.
 
 ```bash
 repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api -X POST "repos/$repo/rulesets" --input .github/rulesets/main.json
 gh api -X PATCH "repos/$repo" \
   -F delete_branch_on_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
-  -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=BLANK
+  -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES
 ```
 
 Import the ruleset only after the workflows are on `main`, or the required checks never report and every PR is stuck.
