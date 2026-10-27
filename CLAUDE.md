@@ -2,11 +2,9 @@
 
 The sidepanel mod for Claude Code (a right-docked pane: git and CI, agents and workflow runs, other sessions, debug), published as a public GitHub repo that is its own plugin marketplace, so any machine installs it with one script and auto-updates.
 
-The plan, decisions still open and the order of work are in `.local/INIT_PLAN.md` (git-ignored, on Oscar's machine only). Read it before working on the move, the marketplace or the install scripts.
-
 ## This repo is public
 
-Every committed line is published. Before any `git add`, read what you add for what must stay private: secrets, internal hostnames or URLs, names, paths, data or code from work projects (the list is in `.local/INIT_PLAN.md`, §7), and personal paths such as `C:\Users\<name>`. Write examples with placeholders (`<owner>/<repo>`, `~/.claude/...`).
+Every committed line is published. Before any `git add`, read what you add for what must stay private: secrets, internal hostnames or URLs, names, paths, data or code from other projects, and personal paths such as `C:\Users\<name>`. Write examples with placeholders (`<owner>/<repo>`, `~/.claude/...`).
 
 ## Working on the mod
 
@@ -18,14 +16,14 @@ Every committed line is published. Before any `git add`, read what you add for w
   claude plugin test .
   ```
 - `.claude-plugin/types/` is written by Claude Code and ignores itself; leave it alone.
-- What **ships** to installed machines: `.claude-plugin/`, `hooks/`, `types/`, `tsconfig.json`. Every merge into `main` is a release, so a PR that changes any of them raises `version` in `plugin.json` (patch for a fix, minor for a feature), or machines never see it.
+- What **ships** to installed machines: `.claude-plugin/`, `hooks/`, `types/`, `tsconfig.json`. Every merge into `main` is a release, so a PR that changes any of them raises `version` in `plugin.json`, or machines never see it. On 0.x: patch for a fix, minor for a feature or a breaking change (CONTRIBUTING.md "Versions" says what counts as breaking). Releases are tagged by CI; the GitHub releases page is the changelog.
 
 ## Git and PRs
 
 Full rules: [CONTRIBUTING.md](CONTRIBUTING.md). Read it before your first branch, commit or PR in a session.
 
 - The loop: branch from a fresh `main` as `feat/`, `fix/`, `chore/` or `docs/` + the task; commit; push the branch; open a PR against `main`; once `gh pr view <n> --json state` shows `MERGED`, delete the branch locally with `git branch -D` (git doesn't see a squashed branch as merged; GitHub deletes the remote one).
-- PR titles become `main`'s history: `type(scope): subject`, with a scope from CONTRIBUTING.md. Commits use the same format; when the commit-msg hook rejects one, reword it.
+- PR titles become `main`'s history: `type(scope): subject`, the scope one lowercase word for the area changed (see CONTRIBUTING.md). Use the same format for commits by habit; only the PR title is checked.
 - One feature per PR, all in English. Show the diff before every commit.
 - Red check in CI: fix the cause.
-- Commit, push or open a PR only when Oscar asks for that action in the current message. Ask first, every time, before merging a PR, changing repo settings or rulesets, or force-pushing.
+- Commit, push or open a PR only when the maintainer asks for that action in the current message. Ask first, every time, before merging a PR, changing repo settings or rulesets, or force-pushing.

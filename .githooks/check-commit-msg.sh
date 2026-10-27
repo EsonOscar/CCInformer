@@ -1,15 +1,13 @@
 #!/usr/bin/env bash
-# Checks one commit message or PR title: type(scope): subject, with the scope from SCOPES below.
-# Used by .githooks/commit-msg locally and by the pr-title job in CI, so both agree. No dependencies
-# beyond bash and grep.
+# Checks one PR title (or commit message): type(scope): subject. The type comes from TYPES below;
+# the scope is any lowercase word naming the area changed, so there's no list to keep up to date.
+# Used by the pr-title job in CI. No dependencies beyond bash and grep.
 #
 #   bash .githooks/check-commit-msg.sh <file>     check the first line of a file
 #   printf '%s\n' "$TITLE" | bash .githooks/check-commit-msg.sh -
-#
-# Missing a scope? Add it here in a PR, and to the list in CONTRIBUTING.md.
 
 TYPES='build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test'
-SCOPES='pane|git|agents|sessions|debug|stats|plugin|install|repo|deps|release'
+SCOPE='[a-z][a-z0-9-]*'
 MAX_HEADER=100
 
 source="${1:--}"
@@ -30,13 +28,13 @@ fail() {
   echo "  got:      $header" >&2
   echo "  expected: type(scope): subject   e.g. feat(git): show the PR's review state" >&2
   echo "  types:    ${TYPES//|/ }" >&2
-  echo "  scopes:   ${SCOPES//|/ }" >&2
+  echo "  scope:    one lowercase word for the area changed (git, debug, pane, plugin, install, repo...)" >&2
   exit 1
 }
 
 [ -n "$header" ] || fail "Empty message."
 [ "${#header}" -le "$MAX_HEADER" ] || fail "Header is ${#header} characters; the limit is $MAX_HEADER. Put detail in the body."
 printf '%s' "$header" | grep -qE "^($TYPES)[(!:]" || fail "Missing or unknown type."
-printf '%s' "$header" | grep -qE "^($TYPES)\(($SCOPES)\)!?: " || fail "Missing or unknown scope, or no ': ' after it."
+printf '%s' "$header" | grep -qE "^($TYPES)\($SCOPE\)!?: " || fail "Missing scope (one lowercase word), or no ': ' after it."
 printf '%s' "$header" | grep -qE "^[^:]+: [^ ](.*[^.])?$" || fail "Empty subject, or it ends with a period."
 exit 0

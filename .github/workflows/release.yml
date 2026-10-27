@@ -1,0 +1,44 @@
+name: Release
+
+# Every merge into main is a release (machines install from main). When the merge carries a version
+# in .claude-plugin/plugin.json that has no tag yet, this tags the merge commit vX.Y.Z and creates a
+# GitHub release whose notes list the PRs merged since the previous release. The releases page is the
+# changelog; there is no CHANGELOG.md.
+#
+# Not a required check: it runs after the merge, on push to main.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # create the tag and the release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # existing tags
+          persist-credentials: false
+
+      - name: Tag and release a new version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f .claude-plugin/plugin.json ]; then
+            echo "::notice::No .claude-plugin/plugin.json yet, so there is nothing to release."; exit 0
+          fi
+          version=$(sed -nE 's/^[[:space:]]*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' .claude-plugin/plugin.json | head -n 1)
+          if [ -z "$version" ]; then echo "::error::No version in .claude-plugin/plugin.json."; exit 1; fi
+          tag="v$version"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "$tag exists already: this merge shipped nothing new."; exit 0
+          fi
+          gh release create "$tag" --target "$GITHUB_SHA" --title "$tag" --generate-notes
+          echo "Released $tag."

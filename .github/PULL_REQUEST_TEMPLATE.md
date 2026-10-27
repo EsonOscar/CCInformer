@@ -1,27 +1,15 @@
 <!--
 Title: type(scope): what the change does, e.g. feat(git): show the PR's review state.
-The scope must be on the list in CONTRIBUTING.md. CI checks the title and every commit.
+If the PR changes what ships, raise the version in plugin.json; the version-bump check enforces it.
 -->
 
 ## Context
 
-<!-- Why now? What was wrong or missing? Add "Closes #<issue>" when there is one. -->
-
-## Goal
-
-<!-- What is different afterwards, as seen in the pane? -->
+<!-- Why now? What was wrong or missing, and what is different afterwards? Add "Closes #<issue>" when there is one. -->
 
 ## Testing
 
-<!-- `claude plugin validate --strict .` and `claude plugin test .` pass (CI runs both).
+<!-- CI runs `claude plugin validate --strict .` and `claude plugin test .`.
      What did you try in a live session, and on which OS? -->
 
 - [ ] Tried in a live session (`/side`)
-
-## Version
-
-<!-- Merging releases this PR. If it changes .claude-plugin/, hooks/, types/ or tsconfig.json, raise
-     the version in plugin.json (patch for a fix, minor for a feature); CI checks it.
-     Otherwise delete this section. -->
-
-- `x.y.z` -> `x.y.z`

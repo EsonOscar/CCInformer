@@ -5,7 +5,7 @@ How changes get into CCInformer, for people and their agents alike, cut down for
 ## One-time setup, per clone
 
 ```bash
-git config core.hooksPath .githooks    # commit-msg and pre-push hooks
+git config core.hooksPath .githooks    # the pre-push hook
 gh auth status                         # logged in to github.com as yourself
 ```
 
@@ -25,20 +25,10 @@ Never push to `main` directly; the ruleset rejects it once it's imported (see [R
 
 ## Titles: `type(scope): subject`
 
-PR titles become `main`'s history. Header at most 100 characters, no period at the end. CI checks the PR title (`pr-title`); the `commit-msg` hook applies the same format to your local commits as a habit, though they're squashed away on merge. The list itself lives in [`.githooks/check-commit-msg.sh`](.githooks/check-commit-msg.sh).
+PR titles become `main`'s history. Header at most 100 characters, no period at the end. CI checks the PR title (`pr-title`, with [`.githooks/check-commit-msg.sh`](.githooks/check-commit-msg.sh)). Local commits are squashed away on merge, so their messages aren't checked.
 
 - **Types:** `build chore ci docs feat fix perf refactor revert style test`
-- **Scopes:**
-
-  | Scope | Covers |
-  |---|---|
-  | `pane` | What every tab shares: `register.tsx`, `ui.tsx`, the `/side` command, keys, polling |
-  | `git`, `agents`, `sessions`, `debug`, `stats` | One tab each (`view-*.tsx` and its helpers) |
-  | `plugin` | `.claude-plugin/` (manifest, marketplace), `types/` |
-  | `install` | The install scripts |
-  | `repo` | Repo tooling and docs: hooks, CI, rulesets, `CLAUDE.md`, this file |
-  | `deps` | Dependency bumps (Dependabot) |
-  | `release` | A version bump on its own |
+- **Scope:** one lowercase word naming the area the PR changes, for example `git`, `debug`, `pane` (what every tab shares), `plugin` (`.claude-plugin/`, `types/`), `install`, `repo` (tooling and docs), `release` (a version bump on its own). Any word passes the check; pick the one a reader of the history would look for.
 
   Examples: `feat(git): show the PR's review state`, `fix(debug): count cache reads once`, `chore(release): 0.2.0`.
 
@@ -53,7 +43,18 @@ One change per PR, in English.
 
 ## Versions
 
-Installed machines only pick up a change when `version` in `.claude-plugin/plugin.json` goes up. So a PR that changes what ships (`.claude-plugin/`, `hooks/`, `types/`, `tsconfig.json`) raises it in the same PR: patch for a fix, minor for a feature. The `version-bump` check fails the PR otherwise. Docs, tests and CI changes don't need a bump.
+Installed machines only pick up a change when `version` in `.claude-plugin/plugin.json` goes up. So a PR that changes what ships (`.claude-plugin/`, `hooks/`, `types/`, `tsconfig.json`) raises it in the same PR. The `version-bump` check fails the PR otherwise. Docs, tests and CI changes don't need a bump.
+
+- **Where:** `plugin.json` only. `marketplace.json` carries no version, so the two can't disagree.
+- **How much, while on 0.x:** patch for a fix, minor for a feature *or* a breaking change. CCInformer stays on 0.x until the planned feature set is complete; 1.0.0 is a deliberate decision, after which a breaking change is a major bump.
+- **What counts as breaking:**
+  - a pack or `.ccinformer.jsonc` change that makes existing files invalid;
+  - a removed `/side` command or key;
+  - moved store or ledger paths, which reset saved state;
+  - a renamed plugin id.
+
+  Say so in the PR's Context.
+- **Releases:** after the merge, [`release.yml`](.github/workflows/release.yml) tags the commit `vX.Y.Z` and creates a GitHub release that lists the PRs since the previous one. The releases page is the changelog; there is no `CHANGELOG.md`.
 
 ## Checks
 
@@ -66,14 +67,14 @@ Installed machines only pick up a change when `version` in `.claude-plugin/plugi
 
 Job names are required status checks in [`.github/rulesets/main.json`](.github/rulesets/main.json). Renaming a job means updating the ruleset in the same PR.
 
-Dependabot opens one grouped PR a month for the Actions the workflows use.
+The workflows pin Actions to a major version (`@v7`), so minor and patch releases arrive by themselves; a new major version is a deliberate change in a PR. GitHub's Dependabot security updates are on in the repo settings.
 
 ## Repo settings
 
 Applied by hand, once, by an admin. The ruleset requires a PR and green checks on `main`, with no approval count (a sole maintainer can't approve their own PR), and allows squash merges only. The merge settings make the PR title the commit's subject, with an empty body, and delete the branch after the merge.
 
 ```bash
-repo=EsonOscar/CCInformer
+repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
 gh api -X POST "repos/$repo/rulesets" --input .github/rulesets/main.json
 gh api -X PATCH "repos/$repo" \
   -F delete_branch_on_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
