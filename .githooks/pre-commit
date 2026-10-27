@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+# The leak guard on a commit: the staged changes' paths and added lines must hold no denylist entry
+# (see check-text.sh; skipped with a notice where ccinformer.denylist isn't set).
+# Skip for one commit: git commit --no-verify (the pre-push hook checks again).
+
+root="$(git rev-parse --show-toplevel)"
+
+{
+  git diff --cached --name-only
+  # Added lines only, without the diff's own +++ header.
+  git diff --cached -U0 --no-color --no-ext-diff --dst-prefix=b/ | grep -v '^+++ b/' | grep -v '^+++ /dev/null' | grep '^+'
+} | sh "$root/.githooks/check-text.sh" -
+status=$?
+if [ "$status" -eq 1 ]; then
+  echo "pre-commit: the staged changes hold a denylist entry (above). Remove it, stage again, and commit." >&2
+fi
+[ "$status" -eq 0 ] || exit 1

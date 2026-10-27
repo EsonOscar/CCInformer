@@ -5,11 +5,27 @@ How changes get into CCInformer, for people and their agents alike, cut down for
 ## One-time setup, per clone
 
 ```bash
-git config core.hooksPath .githooks    # the pre-push hook
-gh auth status                         # logged in to github.com as yourself
+git config core.hooksPath .githooks                     # the pre-commit and pre-push hooks
+git config ccinformer.denylist <path to your denylist>  # the leak guard (below); optional
+gh auth status                                          # logged in to github.com as yourself
 ```
 
 If the first `claude` on your PATH doesn't run (a broken shim), point the pre-push hook at a working one in your shell profile: `export CLAUDE_BIN="$HOME/.local/bin/claude.exe"`.
+
+## Leak guard
+
+The repo is public, and gitleaks only knows what a secret looks like. The leak guard catches what's private to you: names, hostnames, paths, other projects.
+
+- **The denylist** is a text file you keep **outside the repo**: one word or phrase per line, blank lines and `#` comments skipped. The local key `ccinformer.denylist` points at it, so no tracked file names it.
+- **A match** ignores case and stands as a whole word: no letter or digit touches it, on a side where the entry itself ends in one. So `kit` misses "toolkit", while `.corp.example` still hits "db.corp.example". A line starting with `!` names a public string that never counts, for example a GitHub handle that contains a name you deny: `!<handle>`.
+- **`pre-commit`** checks the staged changes: every added line and every path.
+- **`pre-push`** checks every commit the push sends: its message, added lines and paths. It runs before the plugin checks. An entry that a later commit removes is still caught, since the history would publish it.
+- **PR text** isn't in any commit, so check it yourself before `gh pr create --body-file`:
+  ```bash
+  sh .githooks/check-text.sh <body file>
+  printf '%s\n' "<title>" | sh .githooks/check-text.sh -
+  ```
+- Without the key, the hooks skip the guard with a notice. If the key names a file that can't be read, they stop. `--no-verify` skips a hook for one commit or push. CI has no denylist, so the guard runs only on your machine.
 
 ## The loop
 
@@ -40,6 +56,7 @@ One change per PR, in English.
 - The body follows [the PR template](.github/PULL_REQUEST_TEMPLATE.md). Add `Closes #<issue>` when there is one. The body stays on the PR. The squash commit gets the PR title as its subject and the PR's commit messages as its body, so write commit messages that explain the change.
 - **Titles, bodies and commit messages stand on their own.** A reader has only the tracked files and the PR, so never cite private planning: no checkpoint or step ids (`CP2`, `C4`, `A12`, "phase 0"), no plan file names, no notes kept outside the repo. Say what changed and why in plain words, and point at tracked files where it helps.
 - Before pushing, run what CI runs: `claude plugin validate --strict .` and `claude plugin test .` (the pre-push hook does this for you).
+- Before `gh pr create`, run the [leak guard](#leak-guard) on the title and the body file.
 - A red check means fix the cause; nothing in CI has a bypass.
 
 ## Versions

@@ -1,13 +1,32 @@
 #!/usr/bin/env sh
-# Runs the plugin job from CI before anything leaves this machine: validate the manifest and hooks
-# module, then run the mod's tests. Skipped with a notice if Claude Code can't be started.
+# Runs before anything leaves this machine. First the leak guard over every commit the push sends (see
+# check-text.sh); then the plugin job from CI: validate the manifest and hooks module, then run the mod's
+# tests, skipped with a notice if Claude Code can't be started.
 #
 # Set CLAUDE_BIN when the first `claude` on PATH isn't a working one (e.g. a broken shim), in your
 # shell profile: export CLAUDE_BIN="$HOME/.local/bin/claude.exe"
-# Skip for one push: git push --no-verify (CI runs the same checks anyway).
+# Skip for one push: git push --no-verify. CI runs the plugin checks again, but has no denylist.
 
 root="$(git rev-parse --show-toplevel)"
 claude="${CLAUDE_BIN:-claude}"
+
+# Git passes one line per ref: <local ref> <local sha> <remote ref> <remote sha>. Each commit the push
+# sends that no remote branch holds yet is checked whole: its message, paths and added lines, so an entry
+# a later commit removes is still caught (the history would publish it).
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac   # a deleted branch sends nothing
+  {
+    git log --format='%B' "$local_sha" --not --remotes
+    # Added lines, and the paths in each file's diff --git header; a removed line (and the --- header) starts
+    # with '-'. Not --name-only: with -p it drops the patch.
+    git log --format= -p -U0 --no-color --no-ext-diff "$local_sha" --not --remotes | grep -v '^-'
+  } | sh "$root/.githooks/check-text.sh" -
+  status=$?
+  if [ "$status" -eq 1 ]; then
+    echo "pre-push: a commit on $local_ref holds a denylist entry (above). Rewrite it before pushing." >&2
+  fi
+  [ "$status" -eq 0 ] || exit 1
+done
 
 if ! "$claude" --version > /dev/null 2>&1; then
   echo "pre-push: '$claude' doesn't run, so the plugin checks are skipped. Set CLAUDE_BIN to a working binary." >&2
