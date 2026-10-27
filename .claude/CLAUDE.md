@@ -6,6 +6,8 @@ CCInformer, a mod for Claude Code (a right-docked pane: git and CI, agents and w
 
 Every committed line is published. Before any `git add`, read what you add for what must stay private: secrets, internal hostnames or URLs, names, paths, data or code from other projects, and personal paths such as `C:\Users\<name>`. Write examples with placeholders (`<owner>/<repo>`, `~/.claude/...`).
 
+The leak guard backs this up where the clone has `ccinformer.denylist` set: `pre-commit` and `pre-push` block a denylist entry in a commit, and PR text is checked by hand before `gh pr create`: `sh .githooks/check-text.sh <body file>`, and the title piped to `sh .githooks/check-text.sh -` (CONTRIBUTING.md "Leak guard"). A hit means rewrite the text, never `--no-verify`.
+
 ## Working on the mod
 
 - **Load the `plugin-authoring` skill first**, before changing anything under `hooks/`, `types/` or `.claude-plugin/`.
