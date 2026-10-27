@@ -7,7 +7,7 @@ import type {
 } from '../types'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
-import { spinner } from './format'
+import { paneTitle, spinner } from './format'
 import { ciOutcome, sessionGroups } from './insight'
 import { OPERATION_MARKERS, parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
 import { isFinished } from './phases'
@@ -427,7 +427,7 @@ export const register: Register = on => {
     // Reopen where it was left; the engine seats a pane opened unasked only in a wide terminal.
     if ((await $.store.get(STORE_OPEN)) === true) {
       const columns = Number(await $.store.get(STORE_COLUMNS)) || MIN_COLUMNS
-      await $.ui.open({ id: PANE, title: TITLE, columns })
+      await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns })
       await update($, isOpenAtom, () => true)
       void refresh(await read($, tabAtom))
     }
@@ -456,7 +456,7 @@ export const register: Register = on => {
       return {}
     }
     const columns = Math.max(MIN_COLUMNS, Math.round(e.presentation.columns * SHARE))
-    await $.ui.open({ id: PANE, title: TITLE, columns })
+    await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns })
     const now = await $.clock.now()
     await update($, nowAtom, () => now)
     await update($, isOpenAtom, () => true)
@@ -679,7 +679,7 @@ export const register: Register = on => {
           <Text color={ACCENT} weight="bold">
             ✻{' '}
           </Text>
-          <Text dimColor>{TITLE}</Text>
+          <Text dimColor>{paneTitle(TITLE, $.plugin.root)}</Text>
         </Box>
         {Header(k, tab, badges, t => void live?.showTab(t), () => void live?.refresh(tab))}
         <Text color={ACCENT} dimColor>
