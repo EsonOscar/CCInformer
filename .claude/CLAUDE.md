@@ -9,7 +9,7 @@ Every committed line is published. Before any `git add`, read what you add for w
 ## Working on the mod
 
 - **Load the `plugin-authoring` skill first**, before changing anything under `hooks/`, `types/` or `.claude-plugin/`.
-- Rules the validator holds the mod to: `$` stays in the hook module (write `$.noun.method()` where it's used, never pass `$` to a helper); state atoms live in the file that reads and writes them; types are imported with `import type`.
+- Rules the validator holds the mod to: one hooks module, `hooks/register.tsx`, which declares every state atom it reads and writes; `$` is passed only to a function declaration (`function f($, …)`), at the top of that file or imported from another file of the mod, never to an arrow function (`const f = ($) => …`); types are imported with `import type`.
 - Done means both pass from the repo root:
   ```bash
   claude plugin validate --strict .
