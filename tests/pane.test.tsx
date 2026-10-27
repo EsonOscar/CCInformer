@@ -35,7 +35,7 @@ const engine = (on: Parameters<TestBody>[1], opened: string[] = []) => {
   on('tool.call', () => ({ result: {}, text: 'ok' }))
 }
 
-test('/ccinformer and its alias /side both open the pane, which names itself', async ($, on) => {
+test('/ccinformer and its alias /side both open the pane, which names itself as a working copy', async ($, on) => {
   const opened: string[] = []
   engine(on, opened)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
@@ -47,7 +47,8 @@ test('/ccinformer and its alias /side both open the pane, which names itself', a
   expect(opened).toEqual(['ccinformer', 'ccinformer'])
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: 'CCInformer' })).toBeDefined()
+  // A test loads the mod from its folder, not from the plugin cache, so the pane says it's a working copy.
+  expect(await ui.find({ type: 'Text', text: 'CCInformer · dev' })).toBeDefined()
   expect(await ui.find({ key: 'tab-debug' })).toBeDefined()
   await ui.unmount()
 })

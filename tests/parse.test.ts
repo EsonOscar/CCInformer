@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { duration, shortModel, tokens } from '../hooks/format'
+import { duration, paneTitle, shortModel, tokens } from '../hooks/format'
 import { parseChecks, parseLog, parseNumstat, parseRuns, parseStatus, parseWorkflowMeta, parseWorktrees, phaseOf, withNumstat } from '../hooks/parse'
 import { contextTokens, isPush, summarize } from '../hooks/rows'
 
@@ -105,6 +105,12 @@ describe('formatting and summaries', () => {
     expect([duration(400), duration(12_000), duration(62_000), duration(3_900_000)]).toEqual(['0.4s', '12s', '1m02s', '1h05m'])
     expect([tokens(812), tokens(12_345), tokens(1_200_000)]).toEqual(['812', '12k', '1.2M'])
     expect(shortModel('claude-opus-5-5')).toBe('opus-5-5')
+  })
+
+  test('the installed release is named plainly, a working copy says dev', async () => {
+    expect(paneTitle('CCInformer', 'C:\\Users\\me\\.claude\\plugins\\cache\\ccinformer\\ccinformer\\0.3.0')).toBe('CCInformer')
+    expect(paneTitle('CCInformer', '/home/me/.claude/plugins/cache/ccinformer/ccinformer/0.3.0')).toBe('CCInformer')
+    expect(paneTitle('CCInformer', '/home/me/code/CCInformer/.claude/worktrees/some-task')).toBe('CCInformer · dev')
   })
 
   test('a tool call is summed up by its file, command or MCP server', async () => {

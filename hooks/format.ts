@@ -45,3 +45,9 @@ export const shortModel = (model: string): string => model.replace(/^claude-/, '
 export const lastSegment = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 
 export const firstLine = (text: string): string => text.split('\n')[0] ?? ''
+
+// An installed plugin runs from Claude Code's plugin cache; any other folder is a working copy (`claude --plugin-dir`).
+const INSTALLED = /[\\/]plugins[\\/]cache[\\/]/
+
+// "CCInformer", or "CCInformer · dev" for a working copy, so a dev session can't pass for the release.
+export const paneTitle = (name: string, root: string): string => (INSTALLED.test(root) ? name : `${name} · dev`)

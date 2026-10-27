@@ -56,7 +56,7 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 
 ## Changing it
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the flow, titles and versions. To try a change before it's released, start one session with the working copy loaded (`claude --plugin-dir <folder>`); a session started that way reloads the mod when a file is saved. Load the `plugin-authoring` skill before changing the mod, and check with `claude plugin validate --strict .` and `claude plugin test .`. Rules the validator holds a mod to: `$` is never passed to a helper (write `$.noun.method()` where it is used), state atoms live in the file that reads and writes them, and types are imported with `import type`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the flow, titles and versions. To try a change before it's released, start one session with the working copy loaded (`claude --plugin-dir <folder>`); that session runs the working copy in place of the installed release, reloads it when a file is saved, and its pane says `CCInformer · dev`. Other sessions keep the release. The working copy keeps its own store, so its Sessions tab sees only other sessions running a working copy. Load the `plugin-authoring` skill before changing the mod, and check with `claude plugin validate --strict .` and `claude plugin test .`. Rules the validator holds a mod to: `$` is never passed to a helper (write `$.noun.method()` where it is used), state atoms live in the file that reads and writes them, and types are imported with `import type`.
 
 ## License
 
