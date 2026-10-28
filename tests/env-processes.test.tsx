@@ -1,6 +1,10 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+// These drive minutes of mocked time, a tick at a time: on a busy machine that takes longer than the default limit
+// in real time, which says nothing about the mod.
+const CLOCK_HEAVY = { timeoutMs: 20_000 }
+
 const PANE = {
   plugin: 'ccinformer',
   component: 'Pane',
@@ -109,7 +113,7 @@ const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix', isRecordin
   return { clock, calls, machine, toasts, kept }
 }
 
-test('Now › Env lists the processes the pack knows and the free memory, read every 30 s only while it shows', async ($, on) => {
+test('Now › Env lists the processes the pack knows and the free memory, read every 30 s only while it shows', CLOCK_HEAVY, async ($, on) => {
   const { clock, calls } = engine(on, 'windows')
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -135,7 +139,7 @@ test('Now › Env lists the processes the pack knows and the free memory, read e
   expect(calls.processes).toBe(2)
 })
 
-test('the memory probe runs every 30 s only while a heavy task of this session runs, pane closed or not', async ($, on) => {
+test('the memory probe runs every 30 s only while a heavy task of this session runs, pane closed or not', CLOCK_HEAVY, async ($, on) => {
   const { clock, calls } = engine(on, 'windows')
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.advance(90_000)
@@ -150,7 +154,7 @@ test('the memory probe runs every 30 s only while a heavy task of this session r
   expect(calls.memory).toBe(2)
 })
 
-test('low memory toasts once, and again only after it recovered', async ($, on) => {
+test('low memory toasts once, and again only after it recovered', CLOCK_HEAVY, async ($, on) => {
   const { clock, machine, toasts } = engine(on, 'windows')
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: 'Bash', command: 'npm run e2e', run_in_background: true })
