@@ -7,10 +7,11 @@ export const HEAVY_SLOTS = 1
 export const LIGHT_TIMEOUT_MS = 20_000
 export const HEAVY_TIMEOUT_MS = 120_000
 
-// Runs one command with a timeout. The hooks module makes it from $.process.run, and nothing else runs commands.
-export type Run = (argv: string[], timeoutMs: number) => Promise<Ran>
+// Runs one command with a timeout, in `cwd` when given (else the session's folder). The hooks module makes it from
+// $.process.run, and nothing else runs commands.
+export type Run = (argv: string[], timeoutMs: number, cwd?: string) => Promise<Ran>
 // Runs one command in its turn; the lane's timeout applies unless the caller gives one.
-export type Lane = (argv: string[], timeoutMs?: number) => Promise<Ran>
+export type Lane = (argv: string[], timeoutMs?: number, cwd?: string) => Promise<Ran>
 export type Lanes = { light: Lane; heavy: Lane }
 
 export const createLanes = (run: Run): Lanes => ({
@@ -35,10 +36,10 @@ const createLane = (run: Run, slots: number, timeoutMs: number): Lane => {
     if (next) next()
     else running -= 1
   }
-  return async (argv, ms = timeoutMs) => {
+  return async (argv, ms = timeoutMs, cwd) => {
     await take()
     try {
-      return await run(argv, ms)
+      return await run(argv, ms, cwd)
     } finally {
       free()
     }

@@ -35,6 +35,8 @@ export const NODE_VITE: PackManifest = {
       cost: 'turn',
       class: 'ci',
       bin: ['node', 'node_modules/eslint/bin/eslint.js'],
+      // ESLint's own default for bulk suppressions; a repo without the file suppresses nothing.
+      suppressions: 'eslint-suppressions.json',
     },
   ],
   noise: [

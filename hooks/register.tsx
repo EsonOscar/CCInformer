@@ -2,10 +2,14 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, EnvTask, FileChange, GitSnapshot, MemoryReading, NowView, PackReport,
-  ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
+  AgentRow, Area, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaFor, areaNames } from './areas'
+import { ESLINT_BIN, covers, eslintFindings, isTold, noteFor, ownedRules, sizeFindings } from './checks/findings'
+import { repoPath } from './checks/glob'
+import { parseSuppressions } from './checks/suppressions'
+import type { Suppressions } from './checks/suppressions'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
@@ -18,7 +22,7 @@ import { ciOutcome } from './insight'
 import { parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
 import { isFinished } from './phases'
 import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
-import type { ResolvedPack } from './packs/types'
+import type { CheckSpec, ResolvedPack } from './packs/types'
 import { gitFolderFacts } from './read-git'
 import { listRecordFiles, readText } from './read-records'
 import { readBeats, readBranch } from './read-sessions'
@@ -75,11 +79,19 @@ const STATS_EVERY_TICKS = 120
 // The pack's processes on this machine while Now › Env shows; free memory while a heavy task of this session runs.
 const PROCESSES_EVERY_TICKS = 30
 const MEMORY_EVERY_TICKS = 30
+// The tools that write a file the inline checks read, and the most files one ESLint run takes (its JSON carries each
+// file's source, and a run's output is cut at 4 MiB); the rest wait for the next run.
+const WRITING_TOOLS = ['Edit', 'Write']
+const MAX_CHECKED_FILES = 40
 
 // What the pane draws from. Kept in $.state, so a write redraws the pane and a hot reload keeps it.
 const areaAtom = atom({ plugin: 'ccinformer', key: 'area' } as const, 'code' as Area)
 const debugViewAtom = atom({ plugin: 'ccinformer', key: 'debugView' } as const, 'tools' as DebugView)
 const workViewAtom = atom({ plugin: 'ccinformer', key: 'workView' } as const, 'runs' as WorkView)
+const codeViewAtom = atom({ plugin: 'ccinformer', key: 'codeView' } as const, 'git' as CodeView)
+const findingsAtom = atom({ plugin: 'ccinformer', key: 'findings' } as const, [] as Finding[])
+const dismissedAtom = atom({ plugin: 'ccinformer', key: 'dismissed' } as const, [] as string[])
+const checkRunAtom = atom({ plugin: 'ccinformer', key: 'checkRun' } as const, null as CheckRun | null)
 const NOTHING_SELECTED: Record<Area, string> = { now: '', code: '', work: '', timeline: '', debug: '' }
 const selectedAtom = atom({ plugin: 'ccinformer', key: 'selected' } as const, NOTHING_SELECTED)
 const phaseAtom = atom({ plugin: 'ccinformer', key: 'phase' } as const, '')
@@ -148,6 +160,10 @@ type Live = {
   checkPack: () => Promise<void>
   pack: () => Promise<ResolvedPack | null>
   setTrust: (isAllowed: boolean) => Promise<string>
+  checkFile: (path: string) => Promise<string>
+  runChecks: () => Promise<void>
+  turnNote: () => Promise<string>
+  dismiss: (id: string) => Promise<void>
 }
 let live: Live | null = null
 
@@ -169,6 +185,7 @@ export const register: Register = on => {
     const restored = typeof stored === 'string' ? areaFor(stored) : null
     if (restored) await update($, areaAtom, () => restored.area)
     if (restored?.view === 'env' || restored?.view === 'sessions') await update($, nowViewAtom, () => restored.view as NowView)
+    if (restored?.view === 'git' || restored?.view === 'rules') await update($, codeViewAtom, () => restored.view as CodeView)
     // Runs this session recorded with an older version of the mod get a status now.
     const recorded = await read($, agentsAtom)
     await update($, runsAtom, list => list.map(r => upgradeRun(r, recorded)))
@@ -183,7 +200,7 @@ export const register: Register = on => {
     const projectsDir = configDir + '/projects/' + projectDirName(cwd)
 
     // The one place the mod runs commands: everything else goes through a lane (a CI check holds this).
-    const lanes = createLanes((argv, timeoutMs) => $.process.run(argv, { timeoutMs }))
+    const lanes = createLanes((argv, timeoutMs, dir) => $.process.run(argv, dir ? { timeoutMs, cwd: dir } : { timeoutMs }))
     const exec: Exec = lanes.light
     // Each poll below runs alone: one that comes due while its last run is busy is skipped.
     const solo = createSolo()
@@ -234,6 +251,94 @@ export const register: Register = on => {
         const run = await exec(memoryQuery(platform)).catch(() => null)
         await noteMemory(run?.exitCode === 0 ? parseMemory(platform, run.stdout, await $.clock.now()) : null)
       })
+    // The pack's checks. Inline ones read each file Claude writes, and the model reads what they find with the tool's
+    // result. Turn ones run the repo's own tools (ESLint) once a main turn ends, over the files every agent wrote in
+    // it, one run at a time in the heavy lane; the model reads their findings with the next prompt the person types,
+    // for the files unchanged since the run.
+    const emptySuppressions = configDir + '/ccinformer/empty-suppressions.json'
+    const touched = new Set<string>()
+    let isChecking = false
+    let isCheckQueued = false
+    let isTrustAsked = false
+    let toTell: { findings: Finding[]; stamps: Record<string, string> } | null = null
+    // A file's modified time and size, '' when it isn't there: a file whose stamp changed since a run was edited again.
+    const stampOf = async (path: string) => {
+      const stat = await $.fs.stat(path).catch(() => null)
+      return stat && stat.kind === 'file' ? `${stat.mtimeMs}:${stat.size}` : ''
+    }
+    const suppressionsOf = async (check: CheckSpec, root: string): Promise<Suppressions> =>
+      check.suppressions ? parseSuppressions(await readText($, `${root}/${check.suppressions}`)) : {}
+    // A check's new findings for these files replace its old ones there.
+    const saveFindings = (check: string, files: string[], found: Finding[]) =>
+      update($, findingsAtom, list => [...list.filter(f => f.check !== check || !files.includes(f.file)), ...found])
+    // Whether the repo's own tools may run; the first check that needs them asks once a session.
+    const mayRunRepoTools = async () => {
+      if (packReport?.trust.isTrusted) return true
+      if (isTrustAsked || !packReport) return false
+      isTrustAsked = true
+      if (!(await askTrust($, packReport))) return false
+      return !!(await reloadPack()).trust.isTrusted
+    }
+    // The turn's ESLint run: the files written since the last run that a check covers and that still exist.
+    const checkTurn = async () => {
+      const written = [...touched]
+      touched.clear()
+      const pack = written.length ? (packResolved ?? (await reloadPack(), packResolved)) : null
+      const report = packReport as PackReport | null
+      if (!pack || !report) return
+      for (const check of pack.checks.filter(c => c.cost === 'turn' && c.analyzer === 'eslint-json')) {
+        const covered: string[] = []
+        for (const f of written) if (covers(check, f) && (await stampOf(`${report.root}/${f}`))) covered.push(f)
+        if (!covered.length) continue
+        const files = covered.slice(0, MAX_CHECKED_FILES)
+        const run: CheckRun = { check: check.id, label: check.label, at: await $.clock.now(), ms: 0, files: files.length, isRunning: false, waitsForTrust: false, error: '' }
+        if (!(await mayRunRepoTools())) {
+          // They run after the next main turn, once trust is given.
+          for (const f of covered) touched.add(f)
+          await update($, checkRunAtom, () => ({ ...run, waitsForTrust: true }))
+          continue
+        }
+        for (const f of covered.slice(MAX_CHECKED_FILES)) touched.add(f)
+        if (covered.length > MAX_CHECKED_FILES) isCheckQueued = true
+        const stamps: Record<string, string> = {}
+        for (const f of files) stamps[f] = await stampOf(`${report.root}/${f}`)
+        await update($, checkRunAtom, () => ({ ...run, isRunning: true }))
+        if (!(await $.fs.exists(emptySuppressions))) await $.fs.write(emptySuppressions, '{}\n')
+        // Raw output (an empty suppressions file), so the repo's suppressions are applied here, exactly as ESLint would.
+        const argv = [...(check.bin ?? ESLINT_BIN), '--format', 'json', '--no-warn-ignored', '--suppressions-location', emptySuppressions, ...files]
+        const ran = await lanes.heavy(argv, check.timeoutMs, report.root).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
+        // ESLint exits 1 when it found problems and 2 when it couldn't run.
+        const owned = (file: string) => pack.checks.filter(c => c.cost === 'edit' && covers(c, file)).flatMap(ownedRules)
+        const parsed =
+          ran.exitCode === 0 || ran.exitCode === 1
+            ? eslintFindings(check, ran.stdout, report.root, await suppressionsOf(check, report.root), owned)
+            : { findings: [], files: [], error: ran.stderr.trim().split('\n').find(l => l.trim()) || `it exited with ${ran.exitCode}` }
+        if (!parsed.error) {
+          await saveFindings(check.id, files, parsed.findings)
+          const kept = toTell?.findings.filter(f => f.check !== check.id || !files.includes(f.file)) ?? []
+          toTell = { findings: [...kept, ...parsed.findings.filter(isTold)], stamps: { ...toTell?.stamps, ...stamps } }
+        }
+        const ms = (await $.clock.now()) - run.at
+        await update($, checkRunAtom, () => ({ ...run, ms, error: parsed.error }))
+      }
+    }
+    // One run at a time: a turn that ends while one runs starts another after it, with what was written meanwhile.
+    const runChecks = async () => {
+      if (isChecking) {
+        isCheckQueued = true
+        return
+      }
+      isChecking = true
+      try {
+        do {
+          isCheckQueued = false
+          await checkTurn()
+        } while (isCheckQueued)
+      } finally {
+        isChecking = false
+      }
+    }
+
     let ticks = 0
     let isGitQueued = false
     let isRecordQueued = false
@@ -410,6 +515,7 @@ export const register: Register = on => {
         await update($, areaAtom, () => area)
         if (view === 'runs' || view === 'stats') await update($, workViewAtom, () => view)
         if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
+        if (view === 'git' || view === 'rules') await update($, codeViewAtom, () => view)
         if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack') await update($, debugViewAtom, () => view)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
@@ -481,6 +587,42 @@ export const register: Register = on => {
           isRecordQueued = false
           void checkRecords()
         })
+      },
+      // A file was written: note it for the turn's run, and run the inline checks on it. Says what the model should
+      // read about it, or ''.
+      checkFile: async path => {
+        const pack = packResolved ?? (await reloadPack(), packResolved)
+        const root = (packReport as PackReport | null)?.root ?? ''
+        const file = root ? repoPath(root, /^([a-z]:)?[\\/]/i.test(path) ? path : `${cwd}/${path}`) : ''
+        if (!pack || !file) return ''
+        touched.add(file)
+        const checks = pack.checks.filter(c => c.cost === 'edit' && c.analyzer === 'size-lines' && covers(c, file))
+        if (!checks.length) return ''
+        const text = await readText($, `${root}/${file}`)
+        const found: Finding[] = []
+        for (const check of checks) {
+          const findings = sizeFindings(check, file, text, await suppressionsOf(check, root))
+          await saveFindings(check.id, [file], findings)
+          found.push(...findings)
+        }
+        return noteFor(found, 'edit')
+      },
+      runChecks,
+      // The turn checks' findings the model hasn't read, for the files unchanged since; each is told once.
+      turnNote: async () => {
+        const pending = toTell
+        toTell = null
+        const root = (packReport as PackReport | null)?.root
+        if (!pending || !root) return ''
+        const dismissed = await read($, dismissedAtom)
+        const fresh: string[] = []
+        for (const [file, stamp] of Object.entries(pending.stamps)) if (stamp && (await stampOf(`${root}/${file}`)) === stamp) fresh.push(file)
+        return noteFor(pending.findings.filter(f => fresh.includes(f.file) && !dismissed.includes(f.id)), 'turn')
+      },
+      // The person dismissed a finding: hidden for the rest of the session, and never told to the model.
+      dismiss: async id => {
+        await update($, dismissedAtom, list => (list.includes(id) ? list : [...list, id]))
+        await update($, selectedAtom, s => ({ ...s, code: '' }))
       },
     }
     $.clock.every(TICK_MS, () => void tick())
@@ -557,13 +699,16 @@ export const register: Register = on => {
 
   // The recorders below watch an event and pass it on unchanged; if one fails, the event goes on without it.
 
-  // A background task's end reaches the session as a task notification: its process no longer runs.
+  // A background task's end reaches the session as a task notification: its process no longer runs. A prompt the
+  // person typed (not a slash command) carries what the last turn's checks found to the model.
   on('prompt.submit', async ($, e, next) => {
     if (e.origin.kind === 'task-notification') {
       const ended = endedTaskIds(e.text)
       if (envTasks.some(t => ended.includes(t.id))) await saveEnvTasks($, envTasks.filter(t => !ended.includes(t.id)))
     }
-    return next(e)
+    const isTyped = ['composer', 'bridge', 'sdk'].includes(e.origin.kind) && !e.command && !e.isMeta
+    const note = isTyped ? await live?.turnNote() : ''
+    return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
   }).catch(($, e, next) => next(e))
 
   // The band above the prompt: a process of this session aimed at a shared or prod environment. It gives way to a
@@ -636,7 +781,10 @@ export const register: Register = on => {
     if (stopped && envTasks.some(t => t.id === stopped)) await saveEnvTasks($, envTasks.filter(t => t.id !== stopped))
     if (!e.agentId && TOUCHING_TOOLS.includes(tool)) live?.touched()
     if (!e.agentId && isPush(input.command)) live?.pushed()
-    return result
+    // A file written by any agent: the inline checks read it, and the model reads what they found with the result.
+    const isWritten = WRITING_TOOLS.includes(tool) && typeof input.file_path === 'string' && !('deny' in result && result.deny) && !result.isError
+    const note = isWritten ? await live?.checkFile(input.file_path as string) : ''
+    return note ? ({ ...result, context: [...(result.context ?? []), note] } as typeof result) : result
   }).catch(($, e, next) => next(e))
 
   on('agent.spawn', async ($, e, next) => {
@@ -673,6 +821,8 @@ export const register: Register = on => {
     } else {
       isTurnRunning = false
       void live?.wake()
+      // Once per main turn, over what every agent wrote in it.
+      void live?.runChecks()
     }
     return next(e)
   }).catch(($, e, next) => next(e))
@@ -729,18 +879,19 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
-      read($, processesAtom), read($, memoryAtom),
+      read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
     ])
     const data = {
-      area, nowView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats, tools,
-      steps, compactions, sessions, pack, tasks, processes, memory, selfId, cwd, width: e.props.bodyColumns,
+      area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, tasks, processes, memory, selfId, cwd, width: e.props.bodyColumns,
     }
     return PaneView(k, paneTitle(TITLE, $.plugin.root), data, {
       showArea: a => void live?.showArea({ area: a }),
       pickView: view => {
         if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
+        if (area === 'code') void update($, codeViewAtom, () => view as CodeView)
         if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
         if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
       },
@@ -756,6 +907,8 @@ export const register: Register = on => {
       },
       pickStats: name => void update($, statsNameAtom, () => name),
       toggleTrust: () => void live?.setTrust(!pack?.trust.isTrusted),
+      pickFinding: id => void update($, selectedAtom, s => ({ ...s, code: id })),
+      dismissFinding: id => void live?.dismiss(id),
     })
   })
 }

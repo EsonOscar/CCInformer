@@ -185,6 +185,26 @@ export type PackReport = {
   at: number
 }
 
+// Code's views: git and CI, and what the pack's checks found.
+export type CodeView = 'git' | 'rules'
+// Something a check found in a file: a file over its size limit, a lint error, a suppression nothing needs any more.
+// `ci` is a rule the repo's CI enforces, `advise` one only the project asks for; `ciWouldFail` says pushing the file
+// as it is fails CI. `line` is 0 for a finding about the whole file.
+export type Finding = {
+  id: string
+  check: string
+  file: string
+  line: number
+  rule: string
+  severity: 'error' | 'warn' | 'info'
+  class: 'ci' | 'advise'
+  message: string
+  ciWouldFail: boolean
+}
+// The latest run of a check that runs the repo's own tools after a turn: over how many files, how long it took, and
+// what went wrong ('' for nothing). `waitsForTrust` while the repo's tools may not run yet.
+export type CheckRun = { check: string; label: string; at: number; ms: number; files: number; isRunning: boolean; waitsForTrust: boolean; error: string }
+
 export type ToolOutcome ='running' | 'ok' | 'error' | 'denied'
 export type ToolRow = { id: string; tool: string; summary: string; agent: string; startedAt: number; ms: number; outcome: ToolOutcome }
 export type StepRow = {
@@ -236,6 +256,12 @@ declare module 'claude-code' {
       // heavy task of this session runs.
       processes: ProcessList | null
       memory: MemoryReading | null
+      codeView: CodeView
+      // What the pack's checks found, newest run per check and file; the ids the person dismissed this session; the
+      // latest run of a check that runs the repo's own tools.
+      findings: Finding[]
+      dismissed: string[]
+      checkRun: CheckRun | null
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null
