@@ -9,6 +9,8 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
 - **Debug** (`5`) › **Pack** (`p`): the pack this repo resolved to (see [Packs](#packs)): each layer and how it went, whether the repo's own tools may run (`a` allows or stops them), and every value with the layer that set it.
 
+**The band** above the prompt warns while a process Claude started points at a shared or production environment: `⚠ STAGING  npm run dev:staging  targets a shared environment`. The pack decides what counts: a script expanded through `package.json` and matched by an environment's `argRegex`, or the hosts in the env file the process reads (Vite's `.env.<mode>` for `--mode <mode>`), held against each environment's `hostPatterns`. A production one goes first and onto the status line too. The band clears when the process ends (its task's notification, a TaskStop, or a foreground command returning), gives way to a survey, and `×` clears a row whose end never arrived. Only the script's name is kept, never the command line or an env file's values.
+
 Each area keeps its selected row (a pressed file in Code, a picked run in Work) while another area shows; the keys that act on a row act on that one.
 
 ## Install
@@ -44,7 +46,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Packs
 
-A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. They don't drive anything in the pane yet; Debug › Pack shows what this repo resolved to.
+A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band (environments and processes); Debug › Pack shows what this repo resolved to.
 
 Four layers, lowest first. Lists merge by `id`, and a later layer's fields win:
 
@@ -89,12 +91,14 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Session beat | 15 s | always | |
 | Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` |
 | Pack files | each main turn | always | read again only when a file changed (a `stat` of each) |
+| Processes Claude starts | no polling | always | placed when the Bash call starts; cleared by its task's notification, a TaskStop, or the call returning |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s), so a fetch never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
 
 ## Where things live
 
 - `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
+- `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files). The band is `hooks/view-band.tsx`.
 - `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
 - The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).

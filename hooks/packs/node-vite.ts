@@ -12,7 +12,14 @@ export const NODE_VITE: PackManifest = {
     { file: 'vite.config.mts', weight: 1 },
   ],
   processes: [
-    { id: 'vite-dev', label: 'Vite dev server', match: '\\bvite(\\s+(dev|serve))?(\\s|$)', kind: 'dev' },
+    {
+      id: 'vite-dev',
+      label: 'Vite dev server',
+      match: '\\bvite(\\s+(dev|serve))?(\\s|$)',
+      kind: 'dev',
+      // Vite reads .env.<mode> for `--mode <mode>`.
+      envFrom: { argRegex: '--mode[= ](\\S+)', envFile: '.env.{mode}' },
+    },
     { id: 'vite-build', label: 'Vite build', match: '\\bvite\\s+build\\b', kind: 'build' },
     { id: 'vitest', label: 'Vitest', match: '\\bvitest\\b', kind: 'test' },
     { id: 'playwright', label: 'Playwright', match: '\\bplaywright\\s+test\\b', kind: 'test', heavy: true },
