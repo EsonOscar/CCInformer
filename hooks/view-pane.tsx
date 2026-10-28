@@ -1,0 +1,110 @@
+import type {
+  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, EnvTask, FileChange, GitSnapshot, MemoryReading, NowView, PackReport,
+  ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
+} from '../types'
+import { areaDef } from './areas'
+import { spinner } from './format'
+import { sessionGroups } from './insight'
+import { ACCENT, AreaBar, ViewBar } from './ui'
+import type { Badge, Kit } from './ui'
+import { AgentsView as AgentsPanel } from './view-agents'
+import { DebugPanel, debugCounts } from './view-debug'
+import { EnvView } from './view-env'
+import { GitView } from './view-git'
+import { PackView } from './view-pack'
+import { SessionsView } from './view-sessions'
+import { StatsView } from './view-stats'
+
+// Everything the pane draws from: the state the hooks keep, and who and where this session is.
+export type PaneData = {
+  area: Area
+  nowView: NowView
+  workView: WorkView
+  debugView: DebugView
+  selected: Record<Area, string>
+  phase: string
+  isActive: boolean
+  now: number
+  git: GitSnapshot | null
+  ci: CiSnapshot | null
+  showAllFiles: boolean
+  diff: DiffPreview | null
+  agents: AgentRow[]
+  runs: WorkflowRun[]
+  statsName: string
+  stats: RunSummary[]
+  tools: ToolRow[]
+  steps: StepRow[]
+  compactions: Compaction[]
+  sessions: SessionBeat[]
+  pack: PackReport | null
+  tasks: EnvTask[]
+  processes: ProcessList | null
+  memory: MemoryReading | null
+  selfId: string
+  cwd: string
+  width: number
+}
+
+// What a press in the pane does; the hooks module makes each from its state and the session's work.
+export type PaneNav = {
+  showArea: (area: Area) => void
+  pickView: (view: string) => void
+  refresh: () => void
+  toggleAllFiles: () => void
+  openDiff: (file: FileChange) => void
+  fetch: () => void
+  openDiffPane: () => void
+  pickPhase: (title: string) => void
+  pickRun: (key: string) => void
+  pickStats: (name: string) => void
+  toggleTrust: () => void
+}
+
+// Each area's badge: its worst item.
+export const badgesOf = (d: PaneData): Record<Area, Badge | null> => {
+  const busy: Badge = { char: spinner(d.now), color: ACCENT }
+  const othersBusy = sessionGroups(d.sessions, d.selfId, d.cwd, d.now).here.filter(b => b.id !== d.selfId && b.isBusy).length
+  const isPackBroken = !!d.pack?.layers.some(l => l.state === 'refused' || l.state === 'broken')
+  return {
+    now: d.memory?.isLow ? { char: '!', color: 'error' } : othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
+    code: d.ci?.checks.some(c => c.bucket === 'fail') ? { char: '✗', color: 'error' } : d.ci?.checks.some(c => c.bucket === 'pending') ? busy : null,
+    work: d.agents.some(a => a.status === 'running') ? busy : null,
+    timeline: null,
+    debug: d.tools.some(t => t.outcome === 'error') || isPackBroken ? { char: '•', color: 'error' } : null,
+  }
+}
+
+// The pane: its name, the areas, and the shown area's view bar and view.
+export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.Element => {
+  const { Box, Text } = k
+  const def = areaDef(d.area)
+  const debugData = { tools: d.tools, steps: d.steps, compactions: d.compactions, agents: d.agents }
+  const views: Record<Area, string> = { now: d.nowView, code: 'git', work: d.workView, timeline: '', debug: d.debugView }
+  const width = d.width - 2
+  const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane }
+  const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: d.selected.work, pickRun: nav.pickRun }
+  return (
+    <Box flexDirection="column" paddingX={1}>
+      {/* Claude Code draws a pane's title only as a tab beside other panes, so the pane names itself. */}
+      <Box key="title" flexDirection="row">
+        <Text color={ACCENT} weight="bold">
+          ✻{' '}
+        </Text>
+        <Text dimColor>{title}</Text>
+      </Box>
+      {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh)}
+      <Text color={ACCENT} dimColor>
+        {'─'.repeat(Math.max(1, width))}
+      </Text>
+      {def.views.length > 1 && ViewBar(k, def.views, views[d.area], nav.pickView, d.area === 'debug' ? debugCounts(debugData) : {})}
+      {d.area === 'now' && d.nowView === 'env' && EnvView(k, d.tasks, d.processes, d.memory, d.now)}
+      {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
+      {d.area === 'code' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
+      {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
+      {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
+      {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}
+      {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust })}
+    </Box>
+  )
+}

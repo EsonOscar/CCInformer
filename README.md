@@ -100,7 +100,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 
 ## Where things live
 
-- `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
+- `hooks/register.tsx`: every hook and every state atom (the validator requires them in one module), and the writes to state. Files are read by `$` helpers in `hooks/read-*.ts` (run records, sessions, the git folder), which only fetch and return. Views in `hooks/view-*.tsx`, the pane's layout and badges in `view-pane.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
 - `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files), and the process and memory queries with their parsers (`procs.ts`). The band is `hooks/view-band.tsx`, Now › Env `hooks/view-env.tsx`.
 - `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.

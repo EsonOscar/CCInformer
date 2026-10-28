@@ -5,35 +5,31 @@ import type {
   AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, EnvTask, FileChange, GitSnapshot, MemoryReading, NowView, PackReport,
   ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
-import { areaDef, areaFor, areaNames } from './areas'
+import { areaFor, areaNames } from './areas'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
-import { endedTaskIds } from './env/classify'
+import { endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
 import { classifyCommand } from './env/read'
-import { paneTitle, spinner } from './format'
-import { ciOutcome, sessionGroups } from './insight'
-import { OPERATION_MARKERS, parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
+import { paneTitle } from './format'
+import { ciOutcome } from './insight'
+import { parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
 import { isFinished } from './phases'
 import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
 import type { ResolvedPack } from './packs/types'
-import { mergeRecord, parseHead, projectDirName, recordKey, runFromRecord, upgradeRun } from './records'
+import { gitFolderFacts } from './read-git'
+import { listRecordFiles, readText } from './read-records'
+import { readBeats, readBranch } from './read-sessions'
+import { mergeRecord, projectDirName, recordKey, runFromRecord, upgradeRun } from './records'
 import {
   LISTED_STATES, TOUCHING_TOOLS, capped, contextTokens, endedState, isOver, isPush, pruneAgents, summarize, taskOf, toolLabel,
 } from './rows'
-import { ACCENT, AreaBar, ViewBar } from './ui'
-import type { Badge, Kit } from './ui'
-import { AgentsView as AgentsPanel } from './view-agents'
-import { EnvBand, bandTasks } from './view-band'
-import { DebugPanel, debugCounts } from './view-debug'
-import { EnvView } from './view-env'
-import { PackView } from './view-pack'
-import { GitView } from './view-git'
-import { SessionsView } from './view-sessions'
 import { summarizeRun } from './stats'
-import { StatsView } from './view-stats'
+import type { Kit } from './ui'
+import { EnvBand, bandTasks } from './view-band'
+import { PaneView } from './view-pane'
 
 const PANE = 'ccinformer'
 const TITLE = 'CCInformer'
@@ -271,7 +267,7 @@ export const register: Register = on => {
       solo('git', async () => {
         const before = await read($, gitAtom)
         const collected = await collectGit(exec, await $.clock.now())
-        const git = collected.gitDir ? { ...collected, ...(await gitFolderFacts(collected.gitDir)) } : collected
+        const git = collected.gitDir ? { ...collected, ...(await gitFolderFacts($, collected.gitDir)) } : collected
         await update($, gitAtom, () => git)
         // An open diff follows its file, and closes once the file is no longer changed (committed, reverted).
         const diff = await read($, diffAtom)
@@ -283,16 +279,9 @@ export const register: Register = on => {
         if (changed) void loadDiff(changed, git.root)
         if (!before || before.branch !== git.branch || before.head !== git.head) await refreshCi()
       })
-    // What the git folder itself says: an operation in the middle (rebase, merge, ...) and when it last fetched.
-    const gitFolderFacts = async (gitDir: string): Promise<{ operation: string; fetchedAt: number }> => {
-      let operation = ''
-      for (const m of OPERATION_MARKERS) if (!operation && (await $.fs.exists(`${gitDir}/${m.file}`))) operation = m.name
-      const fetched = await $.fs.stat(`${gitDir}/FETCH_HEAD`).catch(() => null)
-      return { operation, fetchedAt: fetched?.mtimeMs ?? 0 }
-    }
     // A file's diff for the preview: against HEAD, or an untracked file's first lines as added.
     const loadDiff = async (file: FileChange, root: string) => {
-      const text = file.code === '??' ? previewNewFile(await readText(`${root}/${file.path}`)) : previewDiff(await collectDiff(exec, file.path))
+      const text = file.code === '??' ? previewNewFile(await readText($, `${root}/${file.path}`)) : previewDiff(await collectDiff(exec, file.path))
       const shown = await read($, diffAtom)
       if (shown?.path === file.path) await update($, diffAtom, () => ({ path: file.path, text, isLoading: false }))
     }
@@ -310,17 +299,13 @@ export const register: Register = on => {
         }),
       )
     }
-    const readText = async (path: string): Promise<string> => {
-      const text = await $.fs.read(path).catch(() => '')
-      return typeof text === 'string' ? text : ''
-    }
     // A run this session started is finished once Claude Code has written its record: take its status and totals.
     const checkRecords = async () => {
       const runs = await read($, runsAtom)
       for (const run of runs.filter(r => !r.session && r.runId && !isFinished(r))) {
         const path = `${projectsDir}/${selfId}/workflows/${run.runId}.json`
         if (!(await $.fs.exists(path))) continue
-        const record = runFromRecord(await readText(path), run.toolUseId, '')
+        const record = runFromRecord(await readText($, path), run.toolUseId, '')
         if (!record || !isFinished(record.run)) continue
         const done = { ...record.run, phases: record.run.phases.length ? record.run.phases : run.phases }
         await update($, runsAtom, list => list.map(r => (r.toolUseId === run.toolUseId ? done : r)))
@@ -330,17 +315,7 @@ export const register: Register = on => {
     }
     // Finished runs from this project's recent sessions, newest first, read once each.
     const loadHistory = async () => {
-      const sessions = (await $.fs.list(projectsDir).catch(() => []))
-        .filter(d => d.kind === 'dir')
-        .sort((a, b) => b.mtimeMs - a.mtimeMs)
-        .slice(0, HISTORY_SESSIONS)
-      const found: { path: string; mtime: number; session: string }[] = []
-      for (const dir of sessions) {
-        const files = await $.fs.list(`${projectsDir}/${dir.name}/workflows`).catch(() => [])
-        for (const f of files.filter(f => f.kind === 'file' && /^wf_.*\.json$/.test(f.name)))
-          found.push({ path: `${projectsDir}/${dir.name}/workflows/${f.name}`, mtime: f.mtimeMs, session: dir.name })
-      }
-      const fresh = found
+      const fresh = (await listRecordFiles($, projectsDir, HISTORY_SESSIONS))
         .sort((a, b) => b.mtime - a.mtime)
         .slice(0, HISTORY_RECORDS)
         .filter(f => (readRecords.get(f.path) ?? -1) < f.mtime)
@@ -349,7 +324,7 @@ export const register: Register = on => {
         const runs = await read($, runsAtom)
         const runId = f.path.split('/').pop()?.replace(/\.json$/, '') ?? ''
         if (runs.some(r => r.runId === runId)) continue
-        const record = runFromRecord(await readText(f.path), recordKey(runId), f.session === selfId ? '' : f.session.slice(0, 8))
+        const record = runFromRecord(await readText($, f.path), recordKey(runId), f.session === selfId ? '' : f.session.slice(0, 8))
         if (!record) continue
         const kept = [...runs, record.run].sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_RUNS)
         await update($, runsAtom, () => kept)
@@ -359,28 +334,16 @@ export const register: Register = on => {
     // Every finished run in this project, for the Stats view: each record is read once, again only when it changes.
     const statsCache = new Map<string, { mtime: number; summary: RunSummary | null }>()
     const loadStats = async () => {
-      const sessions = (await $.fs.list(projectsDir).catch(() => [])).filter(d => d.kind === 'dir')
       let isChanged = false
-      for (const dir of sessions) {
-        const files = await $.fs.list(`${projectsDir}/${dir.name}/workflows`).catch(() => [])
-        for (const f of files.filter(f => f.kind === 'file' && /^wf_.*\.json$/.test(f.name))) {
-          const path = `${projectsDir}/${dir.name}/workflows/${f.name}`
-          if (statsCache.get(path)?.mtime === f.mtimeMs) continue
-          const record = runFromRecord(await readText(path), recordKey(f.name.replace(/\.json$/, '')), dir.name === selfId ? '' : dir.name.slice(0, 8))
-          statsCache.set(path, { mtime: f.mtimeMs, summary: record ? summarizeRun(record) : null })
-          isChanged = true
-        }
+      for (const f of await listRecordFiles($, projectsDir)) {
+        if (statsCache.get(f.path)?.mtime === f.mtime) continue
+        const record = runFromRecord(await readText($, f.path), recordKey(f.name.replace(/\.json$/, '')), f.session === selfId ? '' : f.session.slice(0, 8))
+        statsCache.set(f.path, { mtime: f.mtime, summary: record ? summarizeRun(record) : null })
+        isChanged = true
       }
       if (!isChanged) return
       const summaries = [...statsCache.values()].flatMap(c => (c.summary ? [c.summary] : []))
       await update($, statsAtom, () => summaries.sort((a, b) => a.startedAt - b.startedAt))
-    }
-    const readBranch = async (): Promise<string> => {
-      const dotGit = await $.fs.stat('.git').catch(() => null)
-      if (!dotGit) return ''
-      if (dotGit.kind === 'dir') return parseHead(await readText('.git/HEAD')).branch
-      const { gitdir } = parseHead(await readText('.git'))
-      return gitdir ? parseHead(await readText(gitdir + '/HEAD')).branch : ''
     }
     // Tells the other sessions what this one is doing, through the store they all share.
     const beat = async (now: number) => {
@@ -389,7 +352,7 @@ export const register: Register = on => {
       const row: SessionBeat = {
         id: selfId,
         cwd,
-        branch: (await readBranch()) || (await read($, gitAtom))?.branch || '',
+        branch: (await readBranch($)) || (await read($, gitAtom))?.branch || '',
         task: lastTask,
         isBusy: isTurnRunning,
         model: lastModel,
@@ -400,14 +363,7 @@ export const register: Register = on => {
       await $.store.set(STORE_SESSION + selfId, row)
     }
     const readSessions = async () => {
-      const now = await $.clock.now()
-      const beats: SessionBeat[] = []
-      for (const key of (await $.store.keys()).filter(k => k.startsWith(STORE_SESSION))) {
-        const b = (await $.store.get(key)) as SessionBeat | undefined
-        if (!b || typeof b.updatedAt !== 'number') continue
-        if (now - b.updatedAt > BEAT_FORGOTTEN_MS) await $.store.delete(key)
-        else beats.push(b)
-      }
+      const beats = await readBeats($, STORE_SESSION, await $.clock.now(), BEAT_FORGOTTEN_MS)
       await update($, sessionsAtom, () => beats)
     }
     // Once a second: keep this session's beat and CI pings going, and while the pane is open, poll what it shows.
@@ -648,19 +604,7 @@ export const register: Register = on => {
     // A Bash call the pack places (a dev server, a script aimed at staging, ...) is tracked while it runs.
     const pack = tool === 'Bash' && typeof input.command === 'string' ? await live?.pack() : null
     const target = pack ? await classifyCommand($, cwd, input.command as string, pack) : null
-    const envTask: EnvTask | null =
-      target && (target.env || target.process)
-        ? {
-            id: row.id,
-            toolUseId: row.id,
-            label: target.label,
-            envId: target.env?.id ?? '',
-            envLabel: target.env?.label ?? '',
-            tone: target.env?.tone ?? 'local',
-            isHeavy: !!target.process?.heavy,
-            startedAt,
-          }
-        : null
+    const envTask = target ? envTaskFor(target, row.id, startedAt) : null
     if (envTask) await saveEnvTasks($, [...envTasks, envTask])
     if (tool === 'Workflow' && e.tool_use_id) {
       const toolUseId = e.tool_use_id
@@ -779,75 +723,39 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const k = $.ui.resolve(e) as unknown as Kit
-    const { Box, Text } = k
-    const [area, debugView, workView, selected, phase, isActive, now, git, ci, agents, runs, tools, steps, compactions, sessions] =
+    const [area, nowView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats] =
       await Promise.all([
-        read($, areaAtom), read($, debugViewAtom), read($, workViewAtom), read($, selectedAtom), read($, phaseAtom), read($, isActiveAtom),
-        read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, agentsAtom), read($, runsAtom), read($, toolsAtom), read($, stepsAtom),
-        read($, compactionsAtom), read($, sessionsAtom),
+        read($, areaAtom), read($, nowViewAtom), read($, workViewAtom), read($, debugViewAtom), read($, selectedAtom), read($, phaseAtom),
+        read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
+        read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [statsName, stats, showAllFiles, diff, pack] = await Promise.all([
-      read($, statsNameAtom), read($, statsAtom), read($, showAllFilesAtom), read($, diffAtom), read($, packAtom),
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory] = await Promise.all([
+      read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
+      read($, processesAtom), read($, memoryAtom),
     ])
-    const [nowView, tasks, processes, memory] = await Promise.all([read($, nowViewAtom), read($, envTasksAtom), read($, processesAtom), read($, memoryAtom)])
-    const gitNav = {
-      showAll: showAllFiles,
-      toggleAll: () => void update($, showAllFilesAtom, v => !v),
-      diff,
-      openDiff: (f: FileChange) => void live?.openDiff(f),
+    const data = {
+      area, nowView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats, tools,
+      steps, compactions, sessions, pack, tasks, processes, memory, selfId, cwd, width: e.props.bodyColumns,
+    }
+    return PaneView(k, paneTitle(TITLE, $.plugin.root), data, {
+      showArea: a => void live?.showArea({ area: a }),
+      pickView: view => {
+        if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
+        if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
+        if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
+      },
+      refresh: () => void live?.refresh(area),
+      toggleAllFiles: () => void update($, showAllFilesAtom, v => !v),
+      openDiff: f => void live?.openDiff(f),
       fetch: () => void live?.fetch(),
       openDiffPane: () => void $.command.run({ command: 'diff' }),
-    }
-    const width = e.props.bodyColumns
-    const busy: Badge = { char: spinner(now), color: ACCENT }
-    const isPackBroken = !!pack?.layers.some(l => l.state === 'refused' || l.state === 'broken')
-    const othersBusy = sessionGroups(sessions, selfId, cwd, now).here.filter(b => b.id !== selfId && b.isBusy).length
-    const badges: Record<Area, Badge | null> = {
-      now: memory?.isLow ? { char: '!', color: 'error' } : othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
-      code: ci?.checks.some(c => c.bucket === 'fail') ? { char: '✗', color: 'error' } : ci?.checks.some(c => c.bucket === 'pending') ? busy : null,
-      work: agents.some(a => a.status === 'running') ? busy : null,
-      timeline: null,
-      debug: tools.some(t => t.outcome === 'error') || isPackBroken ? { char: '•', color: 'error' } : null,
-    }
-    const nav = {
-      phase,
-      pickPhase: (t: string) => void update($, phaseAtom, () => t),
-      run: selected.work,
-      pickRun: (key: string) => {
+      pickPhase: t => void update($, phaseAtom, () => t),
+      pickRun: key => {
         void update($, selectedAtom, s => ({ ...s, work: key }))
         void update($, phaseAtom, () => '')
       },
-    }
-    const def = areaDef(area)
-    const debugData = { tools, steps, compactions, agents }
-    const views: Record<Area, string> = { now: nowView, code: 'git', work: workView, timeline: '', debug: debugView }
-    const pickView = (view: string) => {
-      if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
-      if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
-      if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
-    }
-    return (
-      <Box flexDirection="column" paddingX={1}>
-        {/* Claude Code draws a pane's title only as a tab beside other panes, so the pane names itself. */}
-        <Box key="title" flexDirection="row">
-          <Text color={ACCENT} weight="bold">
-            ✻{' '}
-          </Text>
-          <Text dimColor>{paneTitle(TITLE, $.plugin.root)}</Text>
-        </Box>
-        {AreaBar(k, area, badges, a => void live?.showArea({ area: a }), () => void live?.refresh(area))}
-        <Text color={ACCENT} dimColor>
-          {'─'.repeat(Math.max(1, width - 2))}
-        </Text>
-        {def.views.length > 1 && ViewBar(k, def.views, views[area], pickView, area === 'debug' ? debugCounts(debugData) : {})}
-        {area === 'now' && nowView === 'env' && EnvView(k, tasks, processes, memory, now)}
-        {area === 'now' && nowView === 'sessions' && SessionsView(k, sessions, selfId, cwd, now)}
-        {area === 'code' && GitView(k, git, ci, now, width - 2, !isActive, gitNav)}
-        {area === 'work' && workView === 'runs' && AgentsPanel(k, agents, runs, now, width - 2, nav)}
-        {area === 'work' && workView === 'stats' && StatsView(k, stats, statsName, width - 2, n => void update($, statsNameAtom, () => n))}
-        {area === 'debug' && debugView !== 'pack' && DebugPanel(k, debugView, debugData, now, width - 2)}
-        {area === 'debug' && debugView === 'pack' && PackView(k, pack, now, { toggleTrust: () => void live?.setTrust(!pack?.trust.isTrusted) })}
-      </Box>
-    )
+      pickStats: name => void update($, statsNameAtom, () => name),
+      toggleTrust: () => void live?.setTrust(!pack?.trust.isTrusted),
+    })
   })
 }

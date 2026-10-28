@@ -1,3 +1,4 @@
+import type { EnvTask } from '../../types'
 import { hostMatches } from '../packs/merge'
 import type { EnvRule, ProcessMatcher, ResolvedPack, Tone } from '../packs/types'
 
@@ -112,3 +113,22 @@ export const classify = (
   const byHost = pack.environments.filter(e => hosts.some(h => (e.hostPatterns ?? []).some(p => hostMatches(p, h))))
   return { process, env: strictestEnv([...byArg, ...byHost]) }
 }
+
+// The task a placed command is tracked as: one the pack knows as a process, or one aimed at an environment.
+export const envTaskFor = (
+  target: { label: string; process: ProcessMatcher | null; env: EnvRule | null },
+  id: string,
+  startedAt: number,
+): EnvTask | null =>
+  target.env || target.process
+    ? {
+        id,
+        toolUseId: id,
+        label: target.label,
+        envId: target.env?.id ?? '',
+        envLabel: target.env?.label ?? '',
+        tone: target.env?.tone ?? 'local',
+        isHeavy: !!target.process?.heavy,
+        startedAt,
+      }
+    : null
