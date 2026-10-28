@@ -1,4 +1,5 @@
-export type Tab = 'git' | 'agents' | 'sessions' | 'debug'
+// The pane's five areas, switched with 1-5; an area with nothing built yet isn't drawn.
+export type Area = 'now' | 'code' | 'work' | 'timeline' | 'debug'
 export type DebugView = 'tools' | 'requests' | 'context'
 
 export type FileChange = { path: string; code: string; added: number; removed: number }
@@ -115,7 +116,7 @@ export type RunSummary = {
   spans: { title: string; ms: number }[]
   agents: AgentSample[]
 }
-export type AgentsView = 'runs' | 'stats'
+export type WorkView = 'runs' | 'stats'
 
 export type ToolOutcome ='running' | 'ok' | 'error' | 'denied'
 export type ToolRow = { id: string; tool: string; summary: string; agent: string; startedAt: number; ms: number; outcome: ToolOutcome }
@@ -152,14 +153,15 @@ export type SessionBeat = {
 declare module 'claude-code' {
   interface PluginState {
     ccinformer: {
-      tab: Tab
+      area: Area
       debugView: DebugView
-      // The workflow phase the Agents tab shows; '' follows the live one.
+      workView: WorkView
+      // Each area's selected row, '' for none: Work's run shown in full ('' shows the running one), Code's file
+      // whose diff shows. Per-row actions act on it.
+      selected: Record<Area, string>
+      // The workflow phase Work shows; '' follows the live one.
       phase: string
-      // The run the Agents tab shows in full; '' shows the running one.
-      run: string
-      agentsView: AgentsView
-      // The Git tab: whether it lists every changed file, and the diff it shows.
+      // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null
       // The workflow the Stats view sums up; '' takes the one with the most runs.

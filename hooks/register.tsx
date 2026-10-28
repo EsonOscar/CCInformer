@@ -2,9 +2,10 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type {
-  AgentRow, AgentsView, CiSnapshot, Compaction, DebugView, DiffPreview, FileChange, GitSnapshot, RunSummary, SessionBeat, StepRow, Tab,
-  ToolOutcome, ToolRow, WorkflowRun,
+  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, FileChange, GitSnapshot, RunSummary, SessionBeat, StepRow, ToolOutcome,
+  ToolRow, WorkView, WorkflowRun,
 } from '../types'
+import { areaDef, areaFor, areaNames } from './areas'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
@@ -16,10 +17,10 @@ import { mergeRecord, parseHead, projectDirName, recordKey, runFromRecord, upgra
 import {
   LISTED_STATES, TOUCHING_TOOLS, capped, contextTokens, endedState, isOver, isPush, pruneAgents, summarize, taskOf, toolLabel,
 } from './rows'
-import { ACCENT } from './ui'
-import type { Kit } from './ui'
+import { ACCENT, AreaBar, ViewBar } from './ui'
+import type { Badge, Kit } from './ui'
 import { AgentsView as AgentsPanel } from './view-agents'
-import { DebugPanel } from './view-debug'
+import { DebugPanel, debugCounts } from './view-debug'
 import { GitView } from './view-git'
 import { SessionsView } from './view-sessions'
 import { summarizeRun } from './stats'
@@ -30,11 +31,13 @@ const TITLE = 'CCInformer'
 // The command, and a short alias that runs the same handler.
 const COMMAND = 'ccinformer'
 const ALIAS = 'side'
-const ARGUMENT_HINT = '[git|agents|sessions|debug]'
+const ARGUMENT_HINT = '[' + areaNames().join('|') + ']'
 // The pane asks for a quarter of the terminal, never less than this; a width the person drags to wins.
 const SHARE = 0.25
 const MIN_COLUMNS = 40
-const STORE_TAB = 'tab'
+const STORE_AREA = 'area'
+// Where versions before the areas kept the tab; read when there's no area yet.
+const STORE_OLD_TAB = 'tab'
 const STORE_OPEN = 'isOpen'
 const STORE_COLUMNS = 'columns'
 const STORE_CI_PINGED = 'ciPinged'
@@ -65,20 +68,13 @@ const HISTORY_SESSIONS = 12
 const HISTORY_RECORDS = 8
 const STATS_EVERY_TICKS = 120
 
-const TABS: { id: Tab; label: string; hotkey: string }[] = [
-  { id: 'git', label: 'Git', hotkey: '1' },
-  { id: 'agents', label: 'Agents', hotkey: '2' },
-  { id: 'sessions', label: 'Sessions', hotkey: '3' },
-  { id: 'debug', label: 'Debug', hotkey: '4' },
-]
-const isTab = (v: unknown): v is Tab => TABS.some(t => t.id === v)
-
 // What the pane draws from. Kept in $.state, so a write redraws the pane and a hot reload keeps it.
-const tabAtom = atom({ plugin: 'ccinformer', key: 'tab' } as const, 'git' as Tab)
+const areaAtom = atom({ plugin: 'ccinformer', key: 'area' } as const, 'code' as Area)
 const debugViewAtom = atom({ plugin: 'ccinformer', key: 'debugView' } as const, 'tools' as DebugView)
+const workViewAtom = atom({ plugin: 'ccinformer', key: 'workView' } as const, 'runs' as WorkView)
+const NOTHING_SELECTED: Record<Area, string> = { now: '', code: '', work: '', timeline: '', debug: '' }
+const selectedAtom = atom({ plugin: 'ccinformer', key: 'selected' } as const, NOTHING_SELECTED)
 const phaseAtom = atom({ plugin: 'ccinformer', key: 'phase' } as const, '')
-const runAtom = atom({ plugin: 'ccinformer', key: 'run' } as const, '')
-const agentsViewAtom = atom({ plugin: 'ccinformer', key: 'agentsView' } as const, 'runs' as AgentsView)
 const statsNameAtom = atom({ plugin: 'ccinformer', key: 'statsName' } as const, '')
 const statsAtom = atom({ plugin: 'ccinformer', key: 'stats' } as const, [] as RunSummary[])
 const showAllFilesAtom = atom({ plugin: 'ccinformer', key: 'showAllFiles' } as const, false)
@@ -113,8 +109,8 @@ let contextWindow = 0
 
 // The background work, built in session.start over that hook's $; the other hooks reach it here.
 type Live = {
-  refresh: (tab: Tab) => Promise<void>
-  showTab: (tab: Tab) => Promise<void>
+  refresh: (area: Area) => Promise<void>
+  showArea: (target: { area: Area; view?: string }) => Promise<void>
   touched: () => void
   pushed: () => void
   wake: () => Promise<void>
@@ -128,7 +124,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: COMMAND,
-      description: 'Toggle the CCInformer pane: git and CI, agents and workflows, sessions, debug',
+      description: 'Toggle the CCInformer pane: sessions, git and CI, workflows, debug',
       argumentHint: ARGUMENT_HINT,
       immediate: true,
     })
@@ -138,8 +134,9 @@ export const register: Register = on => {
       argumentHint: ARGUMENT_HINT,
       immediate: true,
     })
-    const tab = await $.store.get(STORE_TAB)
-    if (isTab(tab)) await update($, tabAtom, () => tab)
+    const stored = (await $.store.get(STORE_AREA)) ?? (await $.store.get(STORE_OLD_TAB))
+    const restored = typeof stored === 'string' ? areaFor(stored) : null
+    if (restored) await update($, areaAtom, () => restored.area)
     // Runs this session recorded with an older version of the mod get a status now.
     const recorded = await read($, agentsAtom)
     await update($, runsAtom, list => list.map(r => upgradeRun(r, recorded)))
@@ -194,7 +191,10 @@ export const register: Register = on => {
         // An open diff follows its file, and closes once the file is no longer changed (committed, reverted).
         const diff = await read($, diffAtom)
         const changed = diff && !diff.isLoading ? git.files.find(f => f.path === diff.path) : undefined
-        if (diff && !diff.isLoading && !changed) await update($, diffAtom, () => null)
+        if (diff && !diff.isLoading && !changed) {
+          await update($, diffAtom, () => null)
+          await update($, selectedAtom, s => ({ ...s, code: '' }))
+        }
         if (changed) void loadDiff(changed, git.root)
         if (!before || before.branch !== git.branch || before.head !== git.head) await refreshCi()
       })
@@ -337,33 +337,36 @@ export const register: Register = on => {
       const ci = await read($, ciAtom)
       const isCiLive = now < ciHotUntil || (ci?.checks.some(c => c.bucket === 'pending') ?? false)
       const isOpen = await read($, isOpenAtom)
-      const tab = await read($, tabAtom)
-      const isOnGitTab = isOpen && active && tab === 'git'
-      const isGitDue = isOnGitTab && ticks % GIT_EVERY_TICKS === 0
-      const isCiDue = isCiLive ? ticks % CI_LIVE_EVERY_TICKS === 0 : isOnGitTab && ticks % CI_IDLE_EVERY_TICKS === 0
+      const area = await read($, areaAtom)
+      const isOnCode = isOpen && active && area === 'code'
+      const isGitDue = isOnCode && ticks % GIT_EVERY_TICKS === 0
+      const isCiDue = isCiLive ? ticks % CI_LIVE_EVERY_TICKS === 0 : isOnCode && ticks % CI_IDLE_EVERY_TICKS === 0
       // When both are due, git goes first, so CI reads the branch git just found.
       if (isGitDue) void refreshGit().then(() => (isCiDue ? refreshCi() : undefined))
       else if (isCiDue) void refreshCi()
       if (!isOpen) return
       await update($, nowAtom, () => now)
       if (ticks % AGENTS_EVERY_TICKS === 0) await pollAgents()
-      if (tab === 'agents' && ticks % HISTORY_EVERY_TICKS === 0) await loadHistory()
-      if (tab === 'agents' && ticks % STATS_EVERY_TICKS === 0 && (await read($, agentsViewAtom)) === 'stats') await loadStats()
-      if (tab === 'sessions' && ticks % SESSIONS_EVERY_TICKS === 0) await readSessions()
+      if (area === 'work' && ticks % HISTORY_EVERY_TICKS === 0) await loadHistory()
+      if (area === 'work' && ticks % STATS_EVERY_TICKS === 0 && (await read($, workViewAtom)) === 'stats') await loadStats()
+      if (area === 'now' && ticks % SESSIONS_EVERY_TICKS === 0) await readSessions()
     }
-    const refresh = async (t: Tab) => {
-      if (t === 'git') await refreshGit().then(refreshCi)
-      if (t === 'agents') await checkRecords().then(loadHistory)
-      if (t === 'agents' && (await read($, agentsViewAtom)) === 'stats') await loadStats()
-      if (t === 'sessions') await beat(await $.clock.now()).then(readSessions)
+    const refresh = async (area: Area) => {
+      if (area === 'code') await refreshGit().then(refreshCi)
+      if (area === 'work') await checkRecords().then(loadHistory)
+      if (area === 'work' && (await read($, workViewAtom)) === 'stats') await loadStats()
+      if (area === 'now') await beat(await $.clock.now()).then(readSessions)
     }
 
     live = {
       refresh,
-      showTab: async t => {
-        await update($, tabAtom, () => t)
-        await $.store.set(STORE_TAB, t)
-        await refresh(t)
+      // An area, and one of its views when one is named; the area is kept for the next session.
+      showArea: async ({ area, view }) => {
+        await update($, areaAtom, () => area)
+        if (view === 'runs' || view === 'stats') await update($, workViewAtom, () => view)
+        if (view === 'tools' || view === 'requests' || view === 'context') await update($, debugViewAtom, () => view)
+        await $.store.set(STORE_AREA, area)
+        await refresh(area)
       },
       // The main loop changed files: refresh git once the burst of edits settles.
       touched: () => {
@@ -388,15 +391,17 @@ export const register: Register = on => {
         lastActive = now
         if (wasActive) return
         await update($, isActiveAtom, () => true)
-        if ((await read($, isOpenAtom)) && (await read($, tabAtom)) === 'git') await refreshGit()
+        if ((await read($, isOpenAtom)) && (await read($, areaAtom)) === 'code') await refreshGit()
       },
-      // Pressing a file shows its diff under it; pressing it again hides it.
+      // Pressing a file selects it and shows its diff under it; pressing it again hides it.
       openDiff: async file => {
         const shown = await read($, diffAtom)
         if (shown?.path === file.path) {
           await update($, diffAtom, () => null)
+          await update($, selectedAtom, s => ({ ...s, code: '' }))
           return
         }
+        await update($, selectedAtom, s => ({ ...s, code: file.path }))
         await update($, diffAtom, () => ({ path: file.path, text: '', isLoading: true }))
         await loadDiff(file, (await read($, gitAtom))?.root ?? '.')
       },
@@ -425,7 +430,7 @@ export const register: Register = on => {
       const columns = Number(await $.store.get(STORE_COLUMNS)) || MIN_COLUMNS
       await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns })
       await update($, isOpenAtom, () => true)
-      void refresh(await read($, tabAtom))
+      void refresh(await read($, areaAtom))
     }
     return next(e)
   })
@@ -436,21 +441,21 @@ export const register: Register = on => {
     return next(e)
   })
 
-  // Both names run this; every other command passes through untouched.
+  // Both names run this; every other command passes through untouched. Bare, it toggles the pane; with an
+  // argument it opens the pane, on that area when it names one (or an old tab), and never closes it.
   on('command.run', async ($, e, next) => {
     if (e.command !== COMMAND && e.command !== ALIAS) return next(e)
     const arg = e.args.trim().toLowerCase()
     void live?.wake()
-    if (isTab(arg)) {
-      await update($, tabAtom, () => arg)
-      await $.store.set(STORE_TAB, arg)
-    }
-    if ((await read($, isOpenAtom)) && !isTab(arg)) {
+    if (!arg && (await read($, isOpenAtom))) {
       await $.ui.close({ id: PANE })
       await update($, isOpenAtom, () => false)
       await $.store.set(STORE_OPEN, false)
       return {}
     }
+    const target = arg ? areaFor(arg) : null
+    // The area is set before the pane opens, so its first drawing is the right one.
+    if (target) await update($, areaAtom, () => target.area)
     const columns = Math.max(MIN_COLUMNS, Math.round(e.presentation.columns * SHARE))
     await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns })
     const now = await $.clock.now()
@@ -458,8 +463,9 @@ export const register: Register = on => {
     await update($, isOpenAtom, () => true)
     await $.store.set(STORE_OPEN, true)
     await $.store.set(STORE_COLUMNS, columns)
-    void live?.refresh(await read($, tabAtom))
-    return {}
+    if (target) void live?.showArea(target)
+    else void live?.refresh(await read($, areaAtom))
+    return arg && !target ? { text: `CCInformer has no area "${arg}". Try: ${areaNames().join(', ')}.` } : {}
   }).catch(($, e, next) => next(e))
 
   on('ui.close', async ($, e, next) => {
@@ -520,7 +526,7 @@ export const register: Register = on => {
       await update($, runsAtom, list => capped(list.filter(r => r.toolUseId !== toolUseId), run, MAX_RUNS))
       // A new run: show it, and follow its live phase.
       await update($, phaseAtom, () => '')
-      await update($, runAtom, () => '')
+      await update($, selectedAtom, s => ({ ...s, work: '' }))
     }
 
     const result = await next(e)
@@ -620,13 +626,14 @@ export const register: Register = on => {
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const k = $.ui.resolve(e) as unknown as Kit
     const { Box, Text } = k
-    const [tab, view, phase, run, isActive, now, git, ci, agents, runs, tools, steps, compactions, sessions] = await Promise.all([
-      read($, tabAtom), read($, debugViewAtom), read($, phaseAtom), read($, runAtom), read($, isActiveAtom), read($, nowAtom),
-      read($, gitAtom), read($, ciAtom), read($, agentsAtom), read($, runsAtom), read($, toolsAtom), read($, stepsAtom),
-      read($, compactionsAtom), read($, sessionsAtom),
-    ])
-    const [agentsView, statsName, stats, showAllFiles, diff] = await Promise.all([
-      read($, agentsViewAtom), read($, statsNameAtom), read($, statsAtom), read($, showAllFilesAtom), read($, diffAtom),
+    const [area, debugView, workView, selected, phase, isActive, now, git, ci, agents, runs, tools, steps, compactions, sessions] =
+      await Promise.all([
+        read($, areaAtom), read($, debugViewAtom), read($, workViewAtom), read($, selectedAtom), read($, phaseAtom), read($, isActiveAtom),
+        read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, agentsAtom), read($, runsAtom), read($, toolsAtom), read($, stepsAtom),
+        read($, compactionsAtom), read($, sessionsAtom),
+      ])
+    const [statsName, stats, showAllFiles, diff] = await Promise.all([
+      read($, statsNameAtom), read($, statsAtom), read($, showAllFilesAtom), read($, diffAtom),
     ])
     const gitNav = {
       showAll: showAllFiles,
@@ -636,26 +643,31 @@ export const register: Register = on => {
       fetch: () => void live?.fetch(),
       openDiffPane: () => void $.command.run({ command: 'diff' }),
     }
-    const pickAgentsView = (v: AgentsView) => {
-      void update($, agentsViewAtom, () => v).then(() => live?.refresh('agents'))
-    }
     const width = e.props.bodyColumns
     const busy: Badge = { char: spinner(now), color: ACCENT }
     const othersBusy = sessionGroups(sessions, selfId, cwd, now).here.filter(b => b.id !== selfId && b.isBusy).length
-    const badges: Record<Tab, Badge | null> = {
-      git: ci?.checks.some(c => c.bucket === 'fail') ? { char: '✗', color: 'error' } : ci?.checks.some(c => c.bucket === 'pending') ? busy : null,
-      agents: agents.some(a => a.status === 'running') ? busy : null,
-      sessions: othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
+    const badges: Record<Area, Badge | null> = {
+      now: othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
+      code: ci?.checks.some(c => c.bucket === 'fail') ? { char: '✗', color: 'error' } : ci?.checks.some(c => c.bucket === 'pending') ? busy : null,
+      work: agents.some(a => a.status === 'running') ? busy : null,
+      timeline: null,
       debug: tools.some(t => t.outcome === 'error') ? { char: '•', color: 'error' } : null,
     }
     const nav = {
       phase,
       pickPhase: (t: string) => void update($, phaseAtom, () => t),
-      run,
+      run: selected.work,
       pickRun: (key: string) => {
-        void update($, runAtom, () => key)
+        void update($, selectedAtom, s => ({ ...s, work: key }))
         void update($, phaseAtom, () => '')
       },
+    }
+    const def = areaDef(area)
+    const debugData = { tools, steps, compactions, agents }
+    const views: Record<Area, string> = { now: 'sessions', code: 'git', work: workView, timeline: '', debug: debugView }
+    const pickView = (view: string) => {
+      if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
+      if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
     }
     return (
       <Box flexDirection="column" paddingX={1}>
@@ -666,64 +678,17 @@ export const register: Register = on => {
           </Text>
           <Text dimColor>{paneTitle(TITLE, $.plugin.root)}</Text>
         </Box>
-        {Header(k, tab, badges, t => void live?.showTab(t), () => void live?.refresh(tab))}
+        {AreaBar(k, area, badges, a => void live?.showArea({ area: a }), () => void live?.refresh(area))}
         <Text color={ACCENT} dimColor>
           {'─'.repeat(Math.max(1, width - 2))}
         </Text>
-        {tab === 'git' && GitView(k, git, ci, now, width - 2, !isActive, gitNav)}
-        {tab === 'agents' && SubViews(k, agentsView, pickAgentsView)}
-        {tab === 'agents' && agentsView === 'runs' && AgentsPanel(k, agents, runs, now, width - 2, nav)}
-        {tab === 'agents' && agentsView === 'stats' && StatsView(k, stats, statsName, width - 2, n => void update($, statsNameAtom, () => n))}
-        {tab === 'sessions' && SessionsView(k, sessions, selfId, cwd, now)}
-        {tab === 'debug' &&
-          DebugPanel(k, view, { tools, steps, compactions, agents }, now, width - 2, v => void update($, debugViewAtom, () => v))}
+        {def.views.length > 1 && ViewBar(k, def.views, views[area], pickView, area === 'debug' ? debugCounts(debugData) : {})}
+        {area === 'now' && SessionsView(k, sessions, selfId, cwd, now)}
+        {area === 'code' && GitView(k, git, ci, now, width - 2, !isActive, gitNav)}
+        {area === 'work' && workView === 'runs' && AgentsPanel(k, agents, runs, now, width - 2, nav)}
+        {area === 'work' && workView === 'stats' && StatsView(k, stats, statsName, width - 2, n => void update($, statsNameAtom, () => n))}
+        {area === 'debug' && DebugPanel(k, debugView, debugData, now, width - 2)}
       </Box>
     )
   })
-}
-
-type Badge = { char: string; color: typeof ACCENT }
-
-const AGENTS_VIEWS: { id: AgentsView; label: string; hotkey: string }[] = [
-  { id: 'runs', label: 'Runs', hotkey: 'w' },
-  { id: 'stats', label: 'Stats', hotkey: 's' },
-]
-
-// The Agents tab's two views: the runs as they happen, and statistics over every finished run.
-const SubViews = (k: Kit, view: AgentsView, pick: (v: AgentsView) => void): JSX.Element => {
-  const { Box, Button, Text } = k
-  return (
-    <Box flexDirection="row" columnGap={2} marginTop={1}>
-      {AGENTS_VIEWS.map(v => (
-        <Button key={'agents-' + v.id} plain hotkey={v.hotkey} onPress={() => pick(v.id)}>
-          <Text color={view === v.id ? ACCENT : 'text'} weight={view === v.id ? 'semibold' : 'regular'} dimColor={view !== v.id}>
-            {v.label}
-          </Text>
-        </Button>
-      ))}
-    </Box>
-  )
-}
-
-const Header = (k: Kit, tab: Tab, badges: Record<Tab, Badge | null>, pick: (id: Tab) => void, refresh: () => void): JSX.Element => {
-  const { Box, Button, Text } = k
-  return (
-    <Box flexDirection="row" columnGap={2} flexWrap="wrap">
-      {TABS.map(t => {
-        const badge = badges[t.id]
-        return (
-          <Button key={'tab-' + t.id} plain hotkey={t.hotkey} onPress={() => pick(t.id)}>
-            <Text color={tab === t.id ? ACCENT : 'text'} weight={tab === t.id ? 'semibold' : 'regular'} dimColor={tab !== t.id}>
-              {t.label}
-            </Text>
-            {badge && <Text color={badge.color}>{' ' + badge.char}</Text>}
-          </Button>
-        )
-      })}
-      <Box flexGrow={1} />
-      <Button key="refresh" plain hotkey="r" onPress={refresh}>
-        <Text dimColor>⟳</Text>
-      </Button>
-    </Box>
-  )
 }

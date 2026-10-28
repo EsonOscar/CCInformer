@@ -172,7 +172,7 @@ test('a git refresh that takes 3 s runs once however often it is asked for meanw
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  await ui.press({ key: 'tab-git' })
+  await ui.press({ key: 'area-code' })
   for (let i = 0; i < 2; i++) {
     await w.clock.advance(1000)
     await ui.press({ key: 'refresh' })
@@ -194,7 +194,7 @@ test('git keeps refreshing while a 20 s fetch holds the heavy lane, and a second
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  await ui.press({ key: 'tab-git' })
+  await ui.press({ key: 'area-code' })
   await w.clock.settle()
   await ui.press({ key: 'git-fetch' })
   await ui.press({ key: 'git-fetch' })

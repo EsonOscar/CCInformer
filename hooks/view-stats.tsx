@@ -1,4 +1,5 @@
 import type { RunSummary } from '../types'
+import { ACTIONS } from './areas'
 import { duration, shortDate, tokens } from './format'
 import { columnChart } from './insight'
 import { isFull, statsFor, workflowNames } from './stats'
@@ -25,7 +26,7 @@ export const StatsView = (k: Kit, summaries: RunSummary[], picked: string, width
   const last = s.runs[s.runs.length - 1]
   const next = names[(names.indexOf(name) + 1) % names.length] ?? name
   const note = names.length > 1 && (
-    <Button key="stats-next" plain hotkey="o" onPress={() => pick(next)}>
+    <Button key="stats-next" plain hotkey={ACTIONS.work.nextWorkflow} onPress={() => pick(next)}>
       <Text dimColor>{`${names.indexOf(name) + 1}/${names.length} ›`}</Text>
     </Button>
   )

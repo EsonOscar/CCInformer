@@ -44,7 +44,7 @@ Never push to `main` directly; the ruleset rejects it once it's imported (see [R
 PR titles become `main`'s history. Header at most 100 characters, no period at the end. CI checks the PR title (`pr-title`, with [`.githooks/check-commit-msg.sh`](.githooks/check-commit-msg.sh)). Local commits are squashed away on merge, so their messages aren't checked.
 
 - **Types:** `build chore ci docs feat fix perf refactor revert style test`
-- **Scope:** one lowercase word naming the area the PR changes, for example `git`, `debug`, `pane` (what every tab shares), `plugin` (`.claude-plugin/`, `types/`), `install`, `repo` (tooling and docs), `release` (a version bump on its own). Any word passes the check; pick the one a reader of the history would look for.
+- **Scope:** one lowercase word naming the area the PR changes, for example `git`, `debug`, `pane` (what every area shares), `plugin` (`.claude-plugin/`, `types/`), `install`, `repo` (tooling and docs), `release` (a version bump on its own). Any word passes the check; pick the one a reader of the history would look for.
 
   Examples: `feat(git): show the PR's review state`, `fix(debug): count cache reads once`, `chore(release): 0.2.0`.
 

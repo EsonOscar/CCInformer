@@ -13,31 +13,22 @@ const COMPACTIONS_SHOWN = 5
 
 export type DebugData = { tools: ToolRow[]; steps: StepRow[]; compactions: Compaction[]; agents: AgentRow[] }
 
-export const DebugPanel = (k: Kit, view: DebugView, data: DebugData, now: number, width: number, pick: (v: DebugView) => void): JSX.Element => {
-  const { Box, Button, Text } = k
-  const main = data.steps.filter(s => !s.agent && s.ms > 0)
-  const latest = main[main.length - 1]
-  const views: { id: DebugView; label: string; hotkey: string; count: string }[] = [
-    { id: 'tools', label: 'Tools', hotkey: 't', count: String(data.tools.length) },
-    { id: 'requests', label: 'Requests', hotkey: 'q', count: String(data.steps.length) },
-    { id: 'context', label: 'Context', hotkey: 'c', count: latest ? tokens(stepContext(latest)) : '' },
-  ]
+// What each Debug view's label counts: calls, requests, and the context the latest main request carried.
+export const debugCounts = (data: DebugData): Record<DebugView, string> => {
+  const latest = mainSteps(data.steps).at(-1)
+  return { tools: String(data.tools.length), requests: String(data.steps.length), context: latest ? tokens(stepContext(latest)) : '' }
+}
+
+const mainSteps = (steps: StepRow[]) => steps.filter(s => !s.agent && s.ms > 0)
+
+export const DebugPanel = (k: Kit, view: DebugView, data: DebugData, now: number, width: number): JSX.Element => {
+  const { Box } = k
   const label = (id: string) => data.agents.find(a => a.id === id)?.description ?? 'subagent'
   return (
     <Box flexDirection="column">
-      <Box flexDirection="row" columnGap={2} marginTop={1}>
-        {views.map(v => (
-          <Button key={'debug-' + v.id} plain hotkey={v.hotkey} onPress={() => pick(v.id)}>
-            <Text color={view === v.id ? ACCENT : 'text'} weight={view === v.id ? 'semibold' : 'regular'} dimColor={view !== v.id}>
-              {v.label}
-            </Text>
-            <Text dimColor>{v.count ? ' ' + v.count : ''}</Text>
-          </Button>
-        ))}
-      </Box>
       {view === 'tools' && Tools(k, data.tools, now, label)}
       {view === 'requests' && Requests(k, data.steps, now, label)}
-      {view === 'context' && Context(k, main, data.compactions, now, width)}
+      {view === 'context' && Context(k, mainSteps(data.steps), data.compactions, now, width)}
     </Box>
   )
 }
