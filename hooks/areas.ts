@@ -7,7 +7,15 @@ export type AreaDef = { id: Area; digit: string; label: string; views: KeyDef[] 
 
 // The digits switch areas and stay fixed, so Debug is 5 even while Timeline isn't drawn.
 export const AREAS: AreaDef[] = [
-  { id: 'now', digit: '1', label: 'Now', views: [{ id: 'sessions', label: 'Sessions', key: 's' }] },
+  {
+    id: 'now',
+    digit: '1',
+    label: 'Now',
+    views: [
+      { id: 'env', label: 'Env', key: 'e' },
+      { id: 'sessions', label: 'Sessions', key: 's' },
+    ],
+  },
   { id: 'code', digit: '2', label: 'Code', views: [{ id: 'git', label: 'Git', key: 'g' }] },
   {
     id: 'work',

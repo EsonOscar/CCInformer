@@ -84,6 +84,7 @@ test('Now lists this session, alone in its folder', async ($, on) => {
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'area-now' })
+  await ui.press({ key: 'view-sessions' })
   expect(await ui.find({ type: 'Text', text: /this session/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /No other session in this folder/ })).toBeDefined()
   await ui.unmount()

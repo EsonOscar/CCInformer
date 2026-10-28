@@ -2,7 +2,8 @@
 
 A Claude Code mod: a pane docked on the right of the terminal (a quarter of its width), in five areas, switched with `1`-`5`. An area shows once it has something built; Timeline (`4`) has nothing yet, so it isn't drawn, and the digits stay where they are.
 
-- **Now** (`1`) › **Sessions**: the other Claude sessions on this machine, those in this folder first, with what each is working on. A warning shows when another session is working in this folder.
+- **Now** (`1`) › **Env** (`e`): what runs and where it points. The processes this session started that the pack places (their environment, `heavy` for the ones that strain the machine, how long they've run); the processes the pack knows on this machine, started by Claude or not, with their pid, memory and environment; and how much memory is free. On Windows one PowerShell call reads both and matches the pack's patterns inside PowerShell, so command lines never reach the mod; elsewhere `ps` and `/proc/meminfo`, matched in the mod and dropped at once. Only the matcher, pid, memory and environment are kept. A toast says when memory runs low (under 1 GB free, or a tenth of the machine), once, until it recovers.
+- **Now** (`1`) › **Sessions** (`s`): the other Claude sessions on this machine, those in this folder first, with what each is working on. A warning shows when another session is working in this folder.
 - **Code** (`2`) › **Git**: branch, upstream and ahead/behind, when it last fetched (`u` fetches), and a warning while a rebase, merge, cherry-pick or revert is in progress. CI for the branch's open PR, with its review, merge state and size (or the commit's Actions runs); a failed check links to its run. The newest runs on the branch it merges into. Every change grouped as git does (conflicts, staged, unstaged, untracked): compact, `f` shows all, pressing a file shows its diff under it, `d` opens Claude Code's `/diff`. The commits a push would send and those waiting upstream, recent commits, other branches, stashes, worktrees. When a commit's checks finish, a toast and a desktop notification say how it went (one session pings for all).
 - **Work** (`3`) › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
 - **Work** (`3`) › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
@@ -46,7 +47,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Packs
 
-A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band (environments and processes); Debug › Pack shows what this repo resolved to.
+A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band and Now › Env (environments and processes); Debug › Pack shows what this repo resolved to.
 
 Four layers, lowest first. Lists merge by `id`, and a later layer's fields win:
 
@@ -91,6 +92,8 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Session beat | 15 s | always | |
 | Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` |
 | Pack files | each main turn | always | read again only when a file changed (a `stat` of each) |
+| Processes on this machine, with free memory | 30 s | the pane is open on Now › Env, in an active session | on opening Env, on `r` |
+| Free memory alone | 30 s | a heavy process this session started runs, pane open or closed | |
 | Processes Claude starts | no polling | always | placed when the Bash call starts; cleared by its task's notification, a TaskStop, or the call returning |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s), so a fetch never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
@@ -98,7 +101,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 ## Where things live
 
 - `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
-- `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files). The band is `hooks/view-band.tsx`.
+- `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files), and the process and memory queries with their parsers (`procs.ts`). The band is `hooks/view-band.tsx`, Now › Env `hooks/view-env.tsx`.
 - `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
 - The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).

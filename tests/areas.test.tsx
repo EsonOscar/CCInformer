@@ -88,6 +88,8 @@ test('each view sits under its area, and Timeline is not drawn until it has a vi
   expect(await ui.find({ key: 'area-timeline' })).toBeUndefined()
 
   await ui.press({ key: 'area-now' })
+  expect(await ui.find({ type: 'Text', text: /STARTED HERE/ })).toBeDefined()
+  await ui.press({ key: 'view-sessions' })
   expect(await ui.find({ type: 'Text', text: /this session/ })).toBeDefined()
 
   await ui.press({ key: 'area-code' })

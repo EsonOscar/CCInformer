@@ -2,14 +2,16 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, EnvTask, FileChange, GitSnapshot, PackReport, RunSummary, SessionBeat,
-  StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
+  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, EnvTask, FileChange, GitSnapshot, MemoryReading, NowView, PackReport,
+  ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, areaFor, areaNames } from './areas'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
 import { endedTaskIds } from './env/classify'
+import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
+import type { Platform } from './env/procs'
 import { classifyCommand } from './env/read'
 import { paneTitle, spinner } from './format'
 import { ciOutcome, sessionGroups } from './insight'
@@ -26,6 +28,7 @@ import type { Badge, Kit } from './ui'
 import { AgentsView as AgentsPanel } from './view-agents'
 import { EnvBand, bandTasks } from './view-band'
 import { DebugPanel, debugCounts } from './view-debug'
+import { EnvView } from './view-env'
 import { PackView } from './view-pack'
 import { GitView } from './view-git'
 import { SessionsView } from './view-sessions'
@@ -73,6 +76,9 @@ const BEAT_FORGOTTEN_MS = 24 * 60 * 60_000
 const HISTORY_SESSIONS = 12
 const HISTORY_RECORDS = 8
 const STATS_EVERY_TICKS = 120
+// The pack's processes on this machine while Now › Env shows; free memory while a heavy task of this session runs.
+const PROCESSES_EVERY_TICKS = 30
+const MEMORY_EVERY_TICKS = 30
 
 // What the pane draws from. Kept in $.state, so a write redraws the pane and a hot reload keeps it.
 const areaAtom = atom({ plugin: 'ccinformer', key: 'area' } as const, 'code' as Area)
@@ -99,6 +105,9 @@ const compactionsAtom = atom({ plugin: 'ccinformer', key: 'compactions' } as con
 const sessionsAtom = atom({ plugin: 'ccinformer', key: 'sessions' } as const, [] as SessionBeat[])
 const packAtom = atom({ plugin: 'ccinformer', key: 'pack' } as const, null as PackReport | null)
 const envTasksAtom = atom({ plugin: 'ccinformer', key: 'envTasks' } as const, [] as EnvTask[])
+const nowViewAtom = atom({ plugin: 'ccinformer', key: 'nowView' } as const, 'env' as NowView)
+const processesAtom = atom({ plugin: 'ccinformer', key: 'processes' } as const, null as ProcessList | null)
+const memoryAtom = atom({ plugin: 'ccinformer', key: 'memory' } as const, null as MemoryReading | null)
 
 const MAX_AGENTS = 300
 const MAX_RUNS = 12
@@ -117,13 +126,17 @@ let contextWindow = 0
 // The processes this session started that the pack places, kept here as well as in state: hooks that run at
 // once each write the whole list from here, so none overwrites another's change.
 let envTasks: EnvTask[] = []
+// What the status line says, so it is written only when that changes.
+let shownStatus: string | undefined
 
 // Writes the tracked processes; the status line names a production one too, as a backup for the band.
 async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void> {
   envTasks = tasks
   await update($, envTasksAtom, () => tasks)
   const prod = tasks.find(t => t.tone === 'prod')
-  $.ui.status(prod ? `⚠ PROD · ${prod.label || prod.envLabel}` : undefined)
+  const status = prod ? `⚠ PROD · ${prod.label || prod.envLabel}` : undefined
+  if (status !== shownStatus) $.ui.status(status)
+  shownStatus = status
 }
 
 // The background work, built in session.start over that hook's $; the other hooks reach it here.
@@ -137,7 +150,7 @@ type Live = {
   openDiff: (file: FileChange) => Promise<void>
   fetch: () => Promise<void>
   checkPack: () => Promise<void>
-  pack: () => ResolvedPack | null
+  pack: () => Promise<ResolvedPack | null>
   setTrust: (isAllowed: boolean) => Promise<string>
 }
 let live: Live | null = null
@@ -159,6 +172,7 @@ export const register: Register = on => {
     const stored = (await $.store.get(STORE_AREA)) ?? (await $.store.get(STORE_OLD_TAB))
     const restored = typeof stored === 'string' ? areaFor(stored) : null
     if (restored) await update($, areaAtom, () => restored.area)
+    if (restored?.view === 'env' || restored?.view === 'sessions') await update($, nowViewAtom, () => restored.view as NowView)
     // Runs this session recorded with an older version of the mod get a status now.
     const recorded = await read($, agentsAtom)
     await update($, runsAtom, list => list.map(r => upgradeRun(r, recorded)))
@@ -195,6 +209,35 @@ export const register: Register = on => {
       })().finally(() => {
         packLoad = null
       }))
+    // The processes the pack knows on this machine, and the free memory: one query for both, through the light
+    // lane. A toast says so once when memory runs low, and again only after it recovered.
+    const platform: Platform = (await $.env.get('OS')) === 'Windows_NT' ? 'windows' : 'posix'
+    let isMemoryLow = false
+    const noteMemory = async (memory: MemoryReading | null) => {
+      if (!memory) return
+      await update($, memoryAtom, () => memory)
+      if (memory.isLow && !isMemoryLow) $.ui.toast(`Memory is low: ${(memory.freeMb / 1024).toFixed(1)} GB free`)
+      isMemoryLow = memory.isLow
+    }
+    const refreshProcesses = () =>
+      solo('processes', async () => {
+        const pack = packResolved ?? (await reloadPack(), packResolved)
+        if (!pack) return
+        const started = await $.clock.now()
+        const runs = []
+        for (const argv of processQuery(pack, platform)) runs.push(await exec(argv).catch(() => null))
+        const now = await $.clock.now()
+        const isFailed = !runs[0] || runs[0].exitCode !== 0
+        const parsed = parseProcesses(pack, platform, runs.map(r => (r?.exitCode === 0 ? r.stdout : '')), now, now - started)
+        const processes = isFailed ? { list: [], at: now, ms: now - started, error: 'the process list could not be read' } : parsed.processes
+        await update($, processesAtom, () => processes)
+        await noteMemory(parsed.memory)
+      })
+    const probeMemory = () =>
+      solo('memory', async () => {
+        const run = await exec(memoryQuery(platform)).catch(() => null)
+        await noteMemory(run?.exitCode === 0 ? parseMemory(platform, run.stdout, await $.clock.now()) : null)
+      })
     let ticks = 0
     let isGitQueued = false
     let isRecordQueued = false
@@ -386,6 +429,9 @@ export const register: Register = on => {
       // When both are due, git goes first, so CI reads the branch git just found.
       if (isGitDue) void refreshGit().then(() => (isCiDue ? refreshCi() : undefined))
       else if (isCiDue) void refreshCi()
+      const isEnvShown = isOpen && active && area === 'now' && (await read($, nowViewAtom)) === 'env'
+      if (isEnvShown && ticks % PROCESSES_EVERY_TICKS === 0) void refreshProcesses()
+      else if (envTasks.some(t => t.isHeavy) && ticks % MEMORY_EVERY_TICKS === 0) void probeMemory()
       if (!isOpen) return
       await update($, nowAtom, () => now)
       if (ticks % AGENTS_EVERY_TICKS === 0) await pollAgents()
@@ -398,6 +444,7 @@ export const register: Register = on => {
       if (area === 'work') await checkRecords().then(loadHistory)
       if (area === 'work' && (await read($, workViewAtom)) === 'stats') await loadStats()
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
+      if (area === 'now' && (await read($, nowViewAtom)) === 'env') await refreshProcesses()
     }
 
     live = {
@@ -406,6 +453,7 @@ export const register: Register = on => {
       showArea: async ({ area, view }) => {
         await update($, areaAtom, () => area)
         if (view === 'runs' || view === 'stats') await update($, workViewAtom, () => view)
+        if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
         if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack') await update($, debugViewAtom, () => view)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
@@ -458,7 +506,8 @@ export const register: Register = on => {
       checkPack: async () => {
         if (packReport && (await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
       },
-      pack: () => packResolved,
+      // The resolved pack, waiting for the first read when a call comes right after the session started.
+      pack: async () => packResolved ?? (await reloadPack(), packResolved),
       // Lets the repo's own tools run (asking first) or stops them; says how it went.
       setTrust: async isAllowed => {
         const report = packReport ?? (await reloadPack())
@@ -597,7 +646,7 @@ export const register: Register = on => {
     await update($, toolsAtom, list => capped(list, row, MAX_TOOLS))
     if (e.agentId) await update($, agentsAtom, list => list.map(a => (a.id === e.agentId ? { ...a, tools: a.tools + 1 } : a)))
     // A Bash call the pack places (a dev server, a script aimed at staging, ...) is tracked while it runs.
-    const pack = tool === 'Bash' && typeof input.command === 'string' ? live?.pack() : null
+    const pack = tool === 'Bash' && typeof input.command === 'string' ? await live?.pack() : null
     const target = pack ? await classifyCommand($, cwd, input.command as string, pack) : null
     const envTask: EnvTask | null =
       target && (target.env || target.process)
@@ -740,6 +789,7 @@ export const register: Register = on => {
     const [statsName, stats, showAllFiles, diff, pack] = await Promise.all([
       read($, statsNameAtom), read($, statsAtom), read($, showAllFilesAtom), read($, diffAtom), read($, packAtom),
     ])
+    const [nowView, tasks, processes, memory] = await Promise.all([read($, nowViewAtom), read($, envTasksAtom), read($, processesAtom), read($, memoryAtom)])
     const gitNav = {
       showAll: showAllFiles,
       toggleAll: () => void update($, showAllFilesAtom, v => !v),
@@ -753,7 +803,7 @@ export const register: Register = on => {
     const isPackBroken = !!pack?.layers.some(l => l.state === 'refused' || l.state === 'broken')
     const othersBusy = sessionGroups(sessions, selfId, cwd, now).here.filter(b => b.id !== selfId && b.isBusy).length
     const badges: Record<Area, Badge | null> = {
-      now: othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
+      now: memory?.isLow ? { char: '!', color: 'error' } : othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
       code: ci?.checks.some(c => c.bucket === 'fail') ? { char: '✗', color: 'error' } : ci?.checks.some(c => c.bucket === 'pending') ? busy : null,
       work: agents.some(a => a.status === 'running') ? busy : null,
       timeline: null,
@@ -770,8 +820,9 @@ export const register: Register = on => {
     }
     const def = areaDef(area)
     const debugData = { tools, steps, compactions, agents }
-    const views: Record<Area, string> = { now: 'sessions', code: 'git', work: workView, timeline: '', debug: debugView }
+    const views: Record<Area, string> = { now: nowView, code: 'git', work: workView, timeline: '', debug: debugView }
     const pickView = (view: string) => {
+      if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
       if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
       if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
     }
@@ -789,7 +840,8 @@ export const register: Register = on => {
           {'─'.repeat(Math.max(1, width - 2))}
         </Text>
         {def.views.length > 1 && ViewBar(k, def.views, views[area], pickView, area === 'debug' ? debugCounts(debugData) : {})}
-        {area === 'now' && SessionsView(k, sessions, selfId, cwd, now)}
+        {area === 'now' && nowView === 'env' && EnvView(k, tasks, processes, memory, now)}
+        {area === 'now' && nowView === 'sessions' && SessionsView(k, sessions, selfId, cwd, now)}
         {area === 'code' && GitView(k, git, ci, now, width - 2, !isActive, gitNav)}
         {area === 'work' && workView === 'runs' && AgentsPanel(k, agents, runs, now, width - 2, nav)}
         {area === 'work' && workView === 'stats' && StatsView(k, stats, statsName, width - 2, n => void update($, statsNameAtom, () => n))}

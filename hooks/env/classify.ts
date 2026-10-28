@@ -95,6 +95,10 @@ export const endedTaskIds = (text: string): string[] =>
 
 const TONE_RANK: Record<Tone, number> = { local: 0, shared: 1, prod: 2 }
 
+// The strictest of some environments: prod over shared over local, the first on a tie.
+export const strictestEnv = (envs: EnvRule[]): EnvRule | null =>
+  envs.reduce<EnvRule | null>((worst, e) => (!worst || TONE_RANK[e.tone] > TONE_RANK[worst.tone] ? e : worst), null)
+
 // What a line runs and where it points: the first process matcher that matches, and the strictest environment
 // among those whose `argRegex` matches the line and those whose hosts the env files point at.
 export const classify = (
@@ -106,6 +110,5 @@ export const classify = (
   const byArg = pack.environments.filter(e => e.argRegex && tests(e.argRegex, text))
   const hosts = envFiles.flatMap(f => hostsIn(f.text, f.key))
   const byHost = pack.environments.filter(e => hosts.some(h => (e.hostPatterns ?? []).some(p => hostMatches(p, h))))
-  const env = [...byArg, ...byHost].reduce<EnvRule | null>((worst, e) => (!worst || TONE_RANK[e.tone] > TONE_RANK[worst.tone] ? e : worst), null)
-  return { process, env }
+  return { process, env: strictestEnv([...byArg, ...byHost]) }
 }
