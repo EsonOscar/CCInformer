@@ -1,6 +1,6 @@
 // The pane's five areas, switched with 1-5; an area with nothing built yet isn't drawn.
 export type Area = 'now' | 'code' | 'work' | 'timeline' | 'debug'
-export type DebugView = 'tools' | 'requests' | 'context'
+export type DebugView = 'tools' | 'requests' | 'context' | 'pack'
 
 export type FileChange = { path: string; code: string; added: number; removed: number }
 export type Commit = { sha: string; subject: string; age: string }
@@ -118,6 +118,39 @@ export type RunSummary = {
 }
 export type WorkView = 'runs' | 'stats'
 
+// The pack this repo resolved to, as Debug › Pack shows it: each layer's file and how it went, every value with the
+// layer that set it, and whether the repo's own tools may run.
+export type PackLayer = 'built-in' | 'user' | 'repo' | 'local'
+export type PackLayerRow = {
+  layer: PackLayer
+  source: string
+  state: 'loaded' | 'absent' | 'refused' | 'broken' | 'skipped'
+  note: string
+  reasons: string[]
+}
+export type PackEntryRow = {
+  section: string
+  id: string
+  label: string
+  layer: PackLayer
+  changedBy: PackLayer[]
+  removedBy?: PackLayer
+  needsTrust: boolean
+}
+export type PackTrust = { isTrusted: boolean; by: 'user pack' | 'you' | ''; at: number; isStale: boolean }
+export type PackReport = {
+  id: string
+  root: string
+  remote: string
+  repoKey: string
+  // SHA-256 of the repo's config files: a yes to trust holds for these exact files.
+  hash: string
+  layers: PackLayerRow[]
+  entries: PackEntryRow[]
+  trust: PackTrust
+  at: number
+}
+
 export type ToolOutcome ='running' | 'ok' | 'error' | 'denied'
 export type ToolRow = { id: string; tool: string; summary: string; agent: string; startedAt: number; ms: number; outcome: ToolOutcome }
 export type StepRow = {
@@ -161,6 +194,7 @@ declare module 'claude-code' {
       selected: Record<Area, string>
       // The workflow phase Work shows; '' follows the live one.
       phase: string
+      pack: PackReport | null
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null

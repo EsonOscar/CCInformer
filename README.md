@@ -7,6 +7,7 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Work** (`3`) › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
 - **Work** (`3`) › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
 - **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
+- **Debug** (`5`) › **Pack** (`p`): the pack this repo resolved to (see [Packs](#packs)): each layer and how it went, whether the repo's own tools may run (`a` allows or stops them), and every value with the layer that set it.
 
 Each area keeps its selected row (a pressed file in Code, a picked run in Work) while another area shows; the keys that act on a row act on that one.
 
@@ -38,9 +39,35 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Use
 
-- `/ccinformer` opens or closes the pane. `/ccinformer now|code|work|debug` opens it on an area, and a view's name opens its area on that view (`/ccinformer stats`); the old tab names (`git`, `agents`, `sessions`) still work. With an argument it never closes the pane. `/side` is a short alias for the same thing.
+- `/ccinformer` opens or closes the pane. `/ccinformer now|code|work|debug` opens it on an area, and a view's name opens its area on that view (`/ccinformer stats`); the old tab names (`git`, `agents`, `sessions`) still work. With an argument it never closes the pane. `/ccinformer pack trust` and `/ccinformer pack untrust` allow or stop the repo's own tools. `/side` is a short alias for the same thing.
 - Ctrl+X Tab gives it the keyboard: `1`-`5` switch areas, the letters shown switch an area's views and run its actions, `r` refreshes, Esc gives the keyboard back. A key is used once per area. Clicking works without that.
 
+## Packs
+
+A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. They don't drive anything in the pane yet; Debug › Pack shows what this repo resolved to.
+
+Four layers, lowest first. Lists merge by `id`, and a later layer's fields win:
+
+1. **A built-in pack**, picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
+2. **Your user pack**, `~/.claude/ccinformer/packs/<name>.pack.jsonc`, for the repos whose remote matches its `match.remote` (globs over `host/owner/repo`, e.g. `github.com/<owner>/*`). It can `extends` a built-in and `disable` ids from it. Your own values for a repo live here, outside the repo.
+3. **`.ccinformer.jsonc`** in the repo, committed.
+4. **`.ccinformer.local.jsonc`** in the repo, kept out of git; Debug › Pack warns when git doesn't ignore it.
+
+A repo's files may only add or tighten, with globs and literals:
+
+```jsonc
+{
+  "pack": "node-vite",                          // a built-in, when detection misses it
+  "budgets": { "<budget id>": { "limit": 400000 } }, // only stricter than the pack below
+  "locks": { "exclusive": ["db/migrations/**"], "warn": ["package-lock.json"] },
+  "envHosts": { "prod": ["db.example.com"] },     // shared or prod; a host in two tones takes the stricter
+  "plans": { "globs": ["docs/plans/*.md"], "archiveDir": "docs/plans/archive" }
+}
+```
+
+A repo file that names a command to run, switches anything off, holds a regex, names a user pack, or points outside the repo (by its text, or by where a link really leads) is refused whole, and Debug › Pack says why. So is a file that doesn't parse; the rest of the pane carries on.
+
+**Repo trust.** Some checks run the repo's own tools (ESLint loads its config and `node_modules`; a build runs its targets). They wait until the repo is trusted: a user pack matches it, or you allow it once with `/ccinformer pack trust` (or `a` in Debug › Pack). The yes holds for the repo's config files as they are; when they change, it asks again. `/ccinformer pack untrust` (or `a` again) takes it back. Until then only the mod's own checks run.
 ## Numbers
 
 - **Context** (`ctx`) is what one request carried in: an agent's figure is its latest request's, as Claude Code's workflow bar counts it; a run's total is the bar's own.
@@ -61,14 +88,16 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Stats | 120 s | the pane is open on Work › Stats | on opening Work › Stats, on `r` |
 | Session beat | 15 s | always | |
 | Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` |
+| Pack files | each main turn | always | read again only when a file changed (a `stat` of each) |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s), so a fetch never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
 
 ## Where things live
 
 - `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
+- `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
-- The mod's own state is kept per session; the area, the open pane, CI pings and the session list are in the store all sessions share (`~/.claude/plugins/store/`).
+- The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
 
 ## Changing it
 
