@@ -49,9 +49,11 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 A session counts as active while a turn runs, for 3 minutes after one, and while the pane is being used (mods can't see whether the terminal is in front). Git is polled every 5 s only while the pane is open, on the Git tab, in an active session; otherwise it refreshes after Claude changes files, on activity, or on `r`. CI is polled every 8 s while checks run and for 3 minutes after a push (also with the pane closed, for the ping), every 60 s on an active Git tab, and not otherwise.
 
+Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s), so a fetch never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
+
 ## Where things live
 
-- `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`.
+- `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
 - The mod's own state is kept per session; the tab, the open pane, CI pings and the session list are in the store all sessions share (`~/.claude/plugins/store/`).
 
 ## Changing it

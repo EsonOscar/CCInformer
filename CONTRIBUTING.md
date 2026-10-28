@@ -78,7 +78,7 @@ Installed machines only pick up a change when `version` in `.claude-plugin/plugi
 
 | Check | Workflow | What fails it |
 |---|---|---|
-| `plugin` | `ci.yml` | `claude plugin validate --strict .` or `claude plugin test .`, on the latest Claude Code |
+| `plugin` | `ci.yml` | A command run outside the exec lanes ([`.githooks/check-exec.sh`](.githooks/check-exec.sh)), or `claude plugin validate --strict .` or `claude plugin test .`, on the latest Claude Code |
 | `secret-scan` | `ci.yml` | gitleaks finds a secret in any commit of the PR or in the tree ([`.gitleaks.toml`](.gitleaks.toml)). The repo is public, so this one matters even solo |
 | `pr-title` | `pr-gates.yml` | The PR title isn't `type(scope): subject` |
 | `version-bump` | `pr-gates.yml` | Shipped files changed and `plugin.json`'s version didn't go up |
