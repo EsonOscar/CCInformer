@@ -118,6 +118,22 @@ export type RunSummary = {
 }
 export type WorkView = 'runs' | 'stats'
 
+// A process this session started (a Bash call, foreground or background) that the pack places in an
+// environment. Only a short label is kept, never the command line or an env file's values.
+export type EnvTone = 'local' | 'shared' | 'prod'
+export type EnvTask = {
+  // The background task's id once the call returns one; the call's tool_use_id until then.
+  id: string
+  toolUseId: string
+  // The script or process it ran, e.g. `npm run dev:staging`.
+  label: string
+  envId: string
+  envLabel: string
+  tone: EnvTone
+  isHeavy: boolean
+  startedAt: number
+}
+
 // The pack this repo resolved to, as Debug › Pack shows it: each layer's file and how it went, every value with the
 // layer that set it, and whether the repo's own tools may run.
 export type PackLayer = 'built-in' | 'user' | 'repo' | 'local'
@@ -195,6 +211,8 @@ declare module 'claude-code' {
       // The workflow phase Work shows; '' follows the live one.
       phase: string
       pack: PackReport | null
+      // The processes this session started that target an environment; the band shows the shared and prod ones.
+      envTasks: EnvTask[]
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null

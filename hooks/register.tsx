@@ -1,19 +1,22 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, FileChange, GitSnapshot, PackReport, RunSummary, SessionBeat, StepRow,
-  ToolOutcome, ToolRow, WorkView, WorkflowRun,
+  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, EnvTask, FileChange, GitSnapshot, PackReport, RunSummary, SessionBeat,
+  StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, areaFor, areaNames } from './areas'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
+import { endedTaskIds } from './env/classify'
+import { classifyCommand } from './env/read'
 import { paneTitle, spinner } from './format'
 import { ciOutcome, sessionGroups } from './insight'
 import { OPERATION_MARKERS, parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
 import { isFinished } from './phases'
 import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
+import type { ResolvedPack } from './packs/types'
 import { mergeRecord, parseHead, projectDirName, recordKey, runFromRecord, upgradeRun } from './records'
 import {
   LISTED_STATES, TOUCHING_TOOLS, capped, contextTokens, endedState, isOver, isPush, pruneAgents, summarize, taskOf, toolLabel,
@@ -21,6 +24,7 @@ import {
 import { ACCENT, AreaBar, ViewBar } from './ui'
 import type { Badge, Kit } from './ui'
 import { AgentsView as AgentsPanel } from './view-agents'
+import { EnvBand, bandTasks } from './view-band'
 import { DebugPanel, debugCounts } from './view-debug'
 import { PackView } from './view-pack'
 import { GitView } from './view-git'
@@ -94,6 +98,7 @@ const stepsAtom = atom({ plugin: 'ccinformer', key: 'steps' } as const, [] as St
 const compactionsAtom = atom({ plugin: 'ccinformer', key: 'compactions' } as const, [] as Compaction[])
 const sessionsAtom = atom({ plugin: 'ccinformer', key: 'sessions' } as const, [] as SessionBeat[])
 const packAtom = atom({ plugin: 'ccinformer', key: 'pack' } as const, null as PackReport | null)
+const envTasksAtom = atom({ plugin: 'ccinformer', key: 'envTasks' } as const, [] as EnvTask[])
 
 const MAX_AGENTS = 300
 const MAX_RUNS = 12
@@ -109,6 +114,17 @@ let isTurnRunning = false
 let lastTask = ''
 let lastModel = ''
 let contextWindow = 0
+// The processes this session started that the pack places, kept here as well as in state: hooks that run at
+// once each write the whole list from here, so none overwrites another's change.
+let envTasks: EnvTask[] = []
+
+// Writes the tracked processes; the status line names a production one too, as a backup for the band.
+async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void> {
+  envTasks = tasks
+  await update($, envTasksAtom, () => tasks)
+  const prod = tasks.find(t => t.tone === 'prod')
+  $.ui.status(prod ? `⚠ PROD · ${prod.label || prod.envLabel}` : undefined)
+}
 
 // The background work, built in session.start over that hook's $; the other hooks reach it here.
 type Live = {
@@ -121,6 +137,7 @@ type Live = {
   openDiff: (file: FileChange) => Promise<void>
   fetch: () => Promise<void>
   checkPack: () => Promise<void>
+  pack: () => ResolvedPack | null
   setTrust: (isAllowed: boolean) => Promise<string>
 }
 let live: Live | null = null
@@ -146,6 +163,8 @@ export const register: Register = on => {
     const recorded = await read($, agentsAtom)
     await update($, runsAtom, list => list.map(r => upgradeRun(r, recorded)))
     selfId = await $.session.id()
+    // A reload keeps the processes already tracked.
+    await saveEnvTasks($, await read($, envTasksAtom))
     cwd = await $.session.cwd()
     const startedAt = await $.clock.now()
     lastActive = startedAt
@@ -163,11 +182,13 @@ export const register: Register = on => {
     // one that waited for a load reads the load's result from here.
     let packStamp = ''
     let packReport: PackReport | null = null
+    let packResolved: ResolvedPack | null = null
     let packLoad: Promise<PackReport> | null = null
     const reloadPack = (): Promise<PackReport> =>
       (packLoad ??= (async () => {
-        const { report } = await loadPack($, exec, cwd, configDir)
+        const { pack, report } = await loadPack($, exec, cwd, configDir)
         packReport = report
+        packResolved = pack
         await update($, packAtom, () => report)
         packStamp = await packSignature($, report.root, configDir)
         return report
@@ -437,6 +458,7 @@ export const register: Register = on => {
       checkPack: async () => {
         if (packReport && (await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
       },
+      pack: () => packResolved,
       // Lets the repo's own tools run (asking first) or stops them; says how it went.
       setTrust: async isAllowed => {
         const report = packReport ?? (await reloadPack())
@@ -530,6 +552,25 @@ export const register: Register = on => {
 
   // The recorders below watch an event and pass it on unchanged; if one fails, the event goes on without it.
 
+  // A background task's end reaches the session as a task notification: its process no longer runs.
+  on('prompt.submit', async ($, e, next) => {
+    if (e.origin.kind === 'task-notification') {
+      const ended = endedTaskIds(e.text)
+      if (envTasks.some(t => ended.includes(t.id))) await saveEnvTasks($, envTasks.filter(t => !ended.includes(t.id)))
+    }
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
+  // The band above the prompt: a process of this session aimed at a shared or prod environment. It gives way to a
+  // survey, which shares the site.
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (e.props.hasSurvey) return next(e)
+    const shown = bandTasks(await read($, envTasksAtom))
+    if (!shown.length) return next(e)
+    const k = $.ui.resolve(e) as unknown as Kit
+    return EnvBand(k, shown, id => void saveEnvTasks($, envTasks.filter(t => t.id !== id)))
+  })
+
   on('turn.start', async ($, e, next) => {
     if (!e.agentId) {
       isTurnRunning = true
@@ -555,6 +596,23 @@ export const register: Register = on => {
     }
     await update($, toolsAtom, list => capped(list, row, MAX_TOOLS))
     if (e.agentId) await update($, agentsAtom, list => list.map(a => (a.id === e.agentId ? { ...a, tools: a.tools + 1 } : a)))
+    // A Bash call the pack places (a dev server, a script aimed at staging, ...) is tracked while it runs.
+    const pack = tool === 'Bash' && typeof input.command === 'string' ? live?.pack() : null
+    const target = pack ? await classifyCommand($, cwd, input.command as string, pack) : null
+    const envTask: EnvTask | null =
+      target && (target.env || target.process)
+        ? {
+            id: row.id,
+            toolUseId: row.id,
+            label: target.label,
+            envId: target.env?.id ?? '',
+            envLabel: target.env?.label ?? '',
+            tone: target.env?.tone ?? 'local',
+            isHeavy: !!target.process?.heavy,
+            startedAt,
+          }
+        : null
+    if (envTask) await saveEnvTasks($, [...envTasks, envTask])
     if (tool === 'Workflow' && e.tool_use_id) {
       const toolUseId = e.tool_use_id
       const path = typeof input.scriptPath === 'string' ? input.scriptPath : ''
@@ -575,6 +633,14 @@ export const register: Register = on => {
     const ms = (await $.clock.now()) - startedAt
     const outcome: ToolOutcome = 'deny' in result && result.deny ? 'denied' : result.isError ? 'error' : 'ok'
     await update($, toolsAtom, list => list.map(r => (r.id === row.id ? { ...r, ms, outcome } : r)))
+    // A call that went to the background keeps its task under the background id; any other one has ended.
+    if (envTask) {
+      const record = 'deny' in result && result.deny ? undefined : (result.result as { backgroundTaskId?: unknown } | undefined)
+      const backgroundId = typeof record?.backgroundTaskId === 'string' ? record.backgroundTaskId : ''
+      await saveEnvTasks($, backgroundId ? envTasks.map(t => (t.id === envTask.id ? { ...t, id: backgroundId } : t)) : envTasks.filter(t => t.id !== envTask.id))
+    }
+    const stopped = tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
+    if (stopped && envTasks.some(t => t.id === stopped)) await saveEnvTasks($, envTasks.filter(t => t.id !== stopped))
     if (!e.agentId && TOUCHING_TOOLS.includes(tool)) live?.touched()
     if (!e.agentId && isPush(input.command)) live?.pushed()
     return result

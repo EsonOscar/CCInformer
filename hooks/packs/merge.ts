@@ -117,7 +117,7 @@ const addHosts = (envs: EnvRule[], tone: Tone, hosts: string[], layer: Layer): E
 
 const TONE_RANK: Record<Tone, number> = { local: 0, shared: 1, prod: 2 }
 
-const hostMatches = (pattern: string, host: string): boolean =>
+export const hostMatches = (pattern: string, host: string): boolean =>
   new RegExp('^' + pattern.toLowerCase().split('*').map(p => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$').test(host.toLowerCase())
 
 // The tone of a host: the strictest of the environments whose patterns it matches, or null when none does.
