@@ -1,6 +1,10 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+// These drive minutes of mocked time, a tick at a time: on a busy machine that takes longer than the default limit
+// in real time, which says nothing about the mod.
+const CLOCK_HEAVY = { timeoutMs: 20_000 }
+
 import type { Ran } from '../hooks/collect'
 import { HEAVY_TIMEOUT_MS, LIGHT_SLOTS, LIGHT_TIMEOUT_MS, createLanes, createSolo } from '../hooks/core/lanes'
 
@@ -167,7 +171,7 @@ const engine = (on: Parameters<TestBody>[1], ms: { status: number; fetch: number
   return { clock, calls, started, done, count }
 }
 
-test('a git refresh that takes 3 s runs once however often it is asked for meanwhile, then again', async ($, on) => {
+test('a git refresh that takes 3 s runs once however often it is asked for meanwhile, then again', CLOCK_HEAVY, async ($, on) => {
   const w = engine(on, { status: 3000, fetch: 0 })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -189,7 +193,7 @@ test('a git refresh that takes 3 s runs once however often it is asked for meanw
   await ui.unmount()
 })
 
-test('git keeps refreshing while a 20 s fetch holds the heavy lane, and a second fetch waits its turn', async ($, on) => {
+test('git keeps refreshing while a 20 s fetch holds the heavy lane, and a second fetch waits its turn', CLOCK_HEAVY, async ($, on) => {
   const w = engine(on, { status: 0, fetch: 20_000 })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -217,7 +221,7 @@ test('git keeps refreshing while a 20 s fetch holds the heavy lane, and a second
   await ui.unmount()
 })
 
-test('when git and CI come due on the same tick, CI waits for git, so it reads the branch git just found', async ($, on) => {
+test('when git and CI come due on the same tick, CI waits for git, so it reads the branch git just found', CLOCK_HEAVY, async ($, on) => {
   const w = engine(on, { status: 3000, fetch: 0 })
   const start = w.clock.now()
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })

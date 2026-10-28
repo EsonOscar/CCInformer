@@ -134,6 +134,24 @@ export type EnvTask = {
   startedAt: number
 }
 
+// Now's views: what runs and where it points, and the other sessions.
+export type NowView = 'env' | 'sessions'
+// A process on this machine that a pack matcher knows, started by Claude or not. Only these fields are kept: never
+// its command line.
+export type MachineProcess = {
+  matcherId: string
+  label: string
+  kind: string
+  pid: number
+  ramMb: number
+  // The matcher's own warning level, 0 when it has none.
+  ramWarnMb: number
+  envLabel: string
+  tone: EnvTone | ''
+}
+export type ProcessList = { list: MachineProcess[]; at: number; ms: number; error: string }
+export type MemoryReading = { freeMb: number; totalMb: number; at: number; isLow: boolean }
+
 // The pack this repo resolved to, as Debug › Pack shows it: each layer's file and how it went, every value with the
 // layer that set it, and whether the repo's own tools may run.
 export type PackLayer = 'built-in' | 'user' | 'repo' | 'local'
@@ -213,6 +231,11 @@ declare module 'claude-code' {
       pack: PackReport | null
       // The processes this session started that target an environment; the band shows the shared and prod ones.
       envTasks: EnvTask[]
+      nowView: NowView
+      // The pack's processes on this machine, read while Now › Env shows; free memory, read with them and while a
+      // heavy task of this session runs.
+      processes: ProcessList | null
+      memory: MemoryReading | null
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null
