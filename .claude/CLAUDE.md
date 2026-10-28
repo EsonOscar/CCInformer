@@ -1,6 +1,6 @@
 # CCInformer
 
-CCInformer, a mod for Claude Code (a right-docked pane: git and CI, agents and workflow runs, other sessions, debug), published as a public GitHub repo that is its own plugin marketplace, so any machine installs it with one script and auto-updates.
+CCInformer, a mod for Claude Code (a right-docked pane in five areas: Now, Code, Work, Timeline, Debug), published as a public GitHub repo that is its own plugin marketplace, so any machine installs it with one script and auto-updates.
 
 ## This repo is public
 
@@ -12,6 +12,7 @@ The leak guard backs this up where the clone has `ccinformer.denylist` set: `pre
 
 - **Load the `plugin-authoring` skill first**, before changing anything under `hooks/`, `types/` or `.claude-plugin/`.
 - Rules the validator holds the mod to: one hooks module, `hooks/register.tsx`, which declares every state atom it reads and writes; `$` is passed only to a function declaration (`function f($, …)`), at the top of that file or imported from another file of the mod, never to an arrow function (`const f = ($) => …`); types are imported with `import type`.
+- Keys live in `hooks/areas.ts`: an area's views and actions, each key once per area plus the global keys (`1`-`5`, `r`). Views take their hotkeys from it, never a literal, and `tests/areas.test.tsx` holds both. An area or view with nothing built isn't listed, so it isn't drawn.
 - Commands run only through the exec lanes (`hooks/core/lanes.ts`): `register.tsx` makes the one `$.process.run` call that builds them, and `.githooks/check-exec.sh` (in CI and pre-push) fails on any other `$.process.run` or `$.process.spawn`. Logic that decides something takes data and returns data, without `$`, so a plain test reaches it; a `$` helper only reads and writes.
 - Done means both pass from the repo root:
   ```bash

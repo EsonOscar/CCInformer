@@ -1,6 +1,7 @@
 import type { Color } from 'claude-code'
 
 import type { AgentRow, WorkflowRun } from '../types'
+import { ACTIONS } from './areas'
 import { ago, duration, shortModel, spinner, tokens } from './format'
 import { barSpan } from './insight'
 import { agentsOf, isFinished, isLive, phaseElapsed, phasesOf, shownPhase, shownRun, totalsOf } from './phases'
@@ -82,7 +83,7 @@ const Run = (k: Kit, run: WorkflowRun, agents: AgentRow[], now: number, width: n
     <Box flexDirection="row" columnGap={1}>
       <Text color={glyph.color}>{glyph.char + ' ' + duration(runElapsed(run, totals, now))}</Text>
       {nav.run && (
-        <Button key="run-close" plain hotkey="x" onPress={() => nav.pickRun('')}>
+        <Button key="run-close" plain hotkey={ACTIONS.work.closeRun} onPress={() => nav.pickRun('')}>
           <Text dimColor>×</Text>
         </Button>
       )}
@@ -117,7 +118,7 @@ const PhaseBrowser = (k: Kit, run: WorkflowRun, phases: Phase[], now: number, wi
       </Box>
       {Timeline(k, run, phases, index, now, width)}
       <Box flexDirection="row" columnGap={1} marginTop={1}>
-        <Button key="phase-prev" plain hotkey="p" onPress={() => step(-1)}>
+        <Button key="phase-prev" plain hotkey={ACTIONS.work.phasePrev} onPress={() => step(-1)}>
           <Text color={index > 0 ? ACCENT : 'inactive'}>‹</Text>
         </Button>
         <Text color={glyph.color}>{glyph.char}</Text>
@@ -127,11 +128,11 @@ const PhaseBrowser = (k: Kit, run: WorkflowRun, phases: Phase[], now: number, wi
           </Text>
         </Box>
         {nav.phase && (
-          <Button key="phase-live" plain hotkey="l" onPress={() => nav.pickPhase('')}>
+          <Button key="phase-live" plain hotkey={ACTIONS.work.followLive} onPress={() => nav.pickPhase('')}>
             <Text dimColor>live</Text>
           </Button>
         )}
-        <Button key="phase-next" plain hotkey="n" onPress={() => step(1)}>
+        <Button key="phase-next" plain hotkey={ACTIONS.work.phaseNext} onPress={() => step(1)}>
           <Text color={index < phases.length - 1 ? ACCENT : 'inactive'}>›</Text>
         </Button>
       </Box>

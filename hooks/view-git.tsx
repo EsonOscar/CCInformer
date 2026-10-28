@@ -1,6 +1,7 @@
 import type { Color } from 'claude-code'
 
 import type { BaseCi, CheckBucket, CiCheck, CiSnapshot, Commit, DiffPreview, FileChange, GitSnapshot, PullRequest } from '../types'
+import { ACTIONS } from './areas'
 import { ago, duration, lastSegment, since } from './format'
 import { groupChanges } from './parse'
 import { ACCENT, Empty, Line, Section, checkGlyph } from './ui'
@@ -103,7 +104,7 @@ const Branch = (k: Kit, git: GitSnapshot, now: number, isPaused: boolean, nav: G
       <Box flexDirection="row" columnGap={1}>
         <Text dimColor>{git.fetchedAt ? 'fetched ' + ago(now - git.fetchedAt) : 'never fetched'}</Text>
         <Box flexGrow={1} />
-        <Button key="git-fetch" plain hotkey="u" onPress={nav.fetch}>
+        <Button key="git-fetch" plain hotkey={ACTIONS.code.fetch} onPress={nav.fetch}>
           <Text color={ACCENT} dimColor>
             fetch
           </Text>
@@ -251,10 +252,10 @@ const Changes = (k: Kit, files: FileChange[], nav: GitNav): JSX.Element => {
   const hidden = files.length - sections.reduce((n, s) => n + s.shown.length, 0)
   const note = (
     <Box flexDirection="row" columnGap={1}>
-      <Button key="git-all" plain hotkey="f" onPress={nav.toggleAll}>
+      <Button key="git-all" plain hotkey={ACTIONS.code.allFiles} onPress={nav.toggleAll}>
         <Text dimColor>{nav.showAll ? 'fewer' : 'all'}</Text>
       </Button>
-      <Button key="git-diffpane" plain hotkey="d" onPress={nav.openDiffPane}>
+      <Button key="git-diffpane" plain hotkey={ACTIONS.code.diffPane} onPress={nav.openDiffPane}>
         <Text dimColor>/diff</Text>
       </Button>
     </Box>

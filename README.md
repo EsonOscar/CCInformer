@@ -1,12 +1,14 @@
 # CCInformer
 
-A Claude Code mod: a pane docked on the right of the terminal (a quarter of its width), with four tabs.
+A Claude Code mod: a pane docked on the right of the terminal (a quarter of its width), in five areas, switched with `1`-`5`. An area shows once it has something built; Timeline (`4`) has nothing yet, so it isn't drawn, and the digits stay where they are.
 
-- **Git**: branch, upstream and ahead/behind, when it last fetched (`u` fetches), and a warning while a rebase, merge, cherry-pick or revert is in progress. CI for the branch's open PR, with its review, merge state and size (or the commit's Actions runs); a failed check links to its run. The newest runs on the branch it merges into. Every change grouped as git does (conflicts, staged, unstaged, untracked): compact, `f` shows all, pressing a file shows its diff under it, `d` opens Claude Code's `/diff`. The commits a push would send and those waiting upstream, recent commits, other branches, stashes, worktrees. When a commit's checks finish, a toast and a desktop notification say how it went (one session pings for all).
-- **Agents** › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
-- **Agents** › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
-- **Sessions**: the other Claude sessions on this machine, those in this folder first, with what each is working on. A warning shows when another session is working in this folder.
-- **Debug**: every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
+- **Now** (`1`) › **Sessions**: the other Claude sessions on this machine, those in this folder first, with what each is working on. A warning shows when another session is working in this folder.
+- **Code** (`2`) › **Git**: branch, upstream and ahead/behind, when it last fetched (`u` fetches), and a warning while a rebase, merge, cherry-pick or revert is in progress. CI for the branch's open PR, with its review, merge state and size (or the commit's Actions runs); a failed check links to its run. The newest runs on the branch it merges into. Every change grouped as git does (conflicts, staged, unstaged, untracked): compact, `f` shows all, pressing a file shows its diff under it, `d` opens Claude Code's `/diff`. The commits a push would send and those waiting upstream, recent commits, other branches, stashes, worktrees. When a commit's checks finish, a toast and a desktop notification say how it went (one session pings for all).
+- **Work** (`3`) › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
+- **Work** (`3`) › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
+- **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
+
+Each area keeps its selected row (a pressed file in Code, a picked run in Work) while another area shows; the keys that act on a row act on that one.
 
 ## Install
 
@@ -36,8 +38,8 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Use
 
-- `/ccinformer` opens or closes the pane; `/ccinformer git|agents|sessions|debug` opens it on a tab. `/side` is a short alias for the same thing.
-- Ctrl+X Tab gives it the keyboard: `1`-`4` switch tabs, `r` refreshes, Esc gives the keyboard back. Clicking works without that.
+- `/ccinformer` opens or closes the pane. `/ccinformer now|code|work|debug` opens it on an area, and a view's name opens its area on that view (`/ccinformer stats`); the old tab names (`git`, `agents`, `sessions`) still work. With an argument it never closes the pane. `/side` is a short alias for the same thing.
+- Ctrl+X Tab gives it the keyboard: `1`-`5` switch areas, the letters shown switch an area's views and run its actions, `r` refreshes, Esc gives the keyboard back. A key is used once per area. Clicking works without that.
 
 ## Numbers
 
@@ -47,14 +49,26 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Polling
 
-A session counts as active while a turn runs, for 3 minutes after one, and while the pane is being used (mods can't see whether the terminal is in front). Git is polled every 5 s only while the pane is open, on the Git tab, in an active session; otherwise it refreshes after Claude changes files, on activity, or on `r`. CI is polled every 8 s while checks run and for 3 minutes after a push (also with the pane closed, for the ping), every 60 s on an active Git tab, and not otherwise.
+A session counts as active while a turn runs, for 3 minutes after one, and while the pane is being used (mods can't see whether the terminal is in front).
+
+| Collector | Every | While | Also |
+|---|---|---|---|
+| Git | 5 s | the pane is open on Code, in an active session | after Claude changes files, on activity, on opening Code, on `r` |
+| CI | 60 s | the pane is open on Code, in an active session | every 8 s while checks run and for 3 minutes after a push, pane open or closed (for the ping) |
+| Subagents | 2 s | the pane is open | |
+| Run records | 10 s | always | 3 s after a subagent ends |
+| Run history | 60 s | the pane is open on Work | on opening Work, on `r` |
+| Stats | 120 s | the pane is open on Work › Stats | on opening Work › Stats, on `r` |
+| Session beat | 15 s | always | |
+| Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s), so a fetch never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
 
 ## Where things live
 
 - `hooks/register.tsx`: every hook and every call on `$` (the validator requires them in one module, with the state atoms). Views in `hooks/view-*.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
-- The mod's own state is kept per session; the tab, the open pane, CI pings and the session list are in the store all sessions share (`~/.claude/plugins/store/`).
+- `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
+- The mod's own state is kept per session; the area, the open pane, CI pings and the session list are in the store all sessions share (`~/.claude/plugins/store/`).
 
 ## Changing it
 

@@ -42,59 +42,59 @@ test('/ccinformer and its alias /side both open the pane, which names itself as 
 
   const typed = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
   await $.command.run({ ...typed, command: 'ccinformer', args: '' })
-  // With the pane open, a tab argument switches the tab and keeps it open, so the alias opens it again.
+  // With the pane open, an area argument switches the area and keeps it open, so the alias opens it again.
   await $.command.run({ ...typed, command: 'side', args: 'debug' })
   expect(opened).toEqual(['ccinformer', 'ccinformer'])
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // A test loads the mod from its folder, not from the plugin cache, so the pane says it's a working copy.
   expect(await ui.find({ type: 'Text', text: 'CCInformer · dev' })).toBeDefined()
-  expect(await ui.find({ key: 'tab-debug' })).toBeDefined()
+  expect(await ui.find({ key: 'area-debug' })).toBeDefined()
   await ui.unmount()
 })
 
-test('the tabs draw, and a tool call shows on the Debug tab', async ($, on) => {
+test('the areas draw, and a tool call shows in Debug', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: 'Bash', command: 'git status' })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ key: 'tab-git' })).toBeDefined()
-  expect(await ui.find({ key: 'tab-agents' })).toBeDefined()
+  expect(await ui.find({ key: 'area-code' })).toBeDefined()
+  expect(await ui.find({ key: 'area-work' })).toBeDefined()
 
-  await ui.press({ key: 'tab-debug' })
+  await ui.press({ key: 'area-debug' })
   expect(await ui.find({ type: 'Text', text: /git status/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('the Agents tab says so when nothing has run', async ($, on) => {
+test('Work says so when nothing has run', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'tab-agents' })
+  await ui.press({ key: 'area-work' })
   expect(await ui.find({ type: 'Text', text: /No workflow has run/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /No subagents yet/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('the Sessions tab lists this session, alone in its folder', async ($, on) => {
+test('Now lists this session, alone in its folder', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'tab-sessions' })
+  await ui.press({ key: 'area-now' })
   expect(await ui.find({ type: 'Text', text: /this session/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /No other session in this folder/ })).toBeDefined()
   await ui.unmount()
 })
 
-test('the Git tab says what git said when the folder is no repository', async ($, on) => {
+test('Code says what git said when the folder is no repository', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'tab-git' })
+  await ui.press({ key: 'area-code' })
   expect(await ui.find({ type: 'Text', text: /not a git repository/ })).toBeDefined()
   await ui.unmount()
 })

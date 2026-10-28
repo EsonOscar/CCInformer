@@ -86,12 +86,12 @@ const engine = (on: Parameters<TestBody>[1]) => {
   on('session.start', (_, e) => ({ cwd: e.cwd }))
 }
 
-test('the Git tab groups the changes, lists unpushed commits, and shows a file’s diff when it is pressed', async ($, on) => {
+test('Code groups the changes, lists unpushed commits, and shows a file’s diff when it is pressed', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  await ui.press({ key: 'tab-git' })
+  await ui.press({ key: 'area-code' })
   expect(await ui.find({ type: 'Text', text: /Unstaged · 1/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: /Fix the ping/ })).toBeDefined()
 

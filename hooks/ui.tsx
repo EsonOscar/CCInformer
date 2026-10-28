@@ -1,6 +1,8 @@
 import type { Color, ElementTable } from 'claude-code'
 
-import type { AgentState, CheckBucket, ToolOutcome } from '../types'
+import type { AgentState, Area, CheckBucket, ToolOutcome } from '../types'
+import { AREAS, REFRESH_KEY, isBuilt } from './areas'
+import type { KeyDef } from './areas'
 import { spinner } from './format'
 
 // The pane is drawn for the terminal; other surfaces get the same tree through this table.
@@ -92,4 +94,47 @@ export const bar = (value: number, max: number, width: number): string => {
   if (!(max > 0) || !(value > 0)) return ''
   const eighths = Math.max(1, Math.round((Math.min(value, max) / max) * width * 8))
   return '█'.repeat(Math.floor(eighths / 8)) + EIGHTHS[eighths % 8]
+}
+
+export type Badge = { char: string; color: Color }
+
+// The areas across the top, each with its badge (its worst item), and refresh at the right. Only built areas show.
+export const AreaBar = (k: Kit, area: Area, badges: Record<Area, Badge | null>, pick: (id: Area) => void, refresh: () => void): JSX.Element => {
+  const { Box, Button, Text } = k
+  return (
+    <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+      {AREAS.filter(isBuilt).map(a => {
+        const badge = badges[a.id]
+        return (
+          <Button key={'area-' + a.id} plain hotkey={a.digit} onPress={() => pick(a.id)}>
+            <Text color={area === a.id ? ACCENT : 'text'} weight={area === a.id ? 'semibold' : 'regular'} dimColor={area !== a.id}>
+              {a.label}
+            </Text>
+            {badge && <Text color={badge.color}>{' ' + badge.char}</Text>}
+          </Button>
+        )
+      })}
+      <Box flexGrow={1} />
+      <Button key="refresh" plain hotkey={REFRESH_KEY} onPress={refresh}>
+        <Text dimColor>⟳</Text>
+      </Button>
+    </Box>
+  )
+}
+
+// An area's sub-views, drawn when it has more than one, each with an optional count after its label.
+export const ViewBar = (k: Kit, views: KeyDef[], view: string, pick: (id: string) => void, counts: Record<string, string> = {}): JSX.Element => {
+  const { Box, Button, Text } = k
+  return (
+    <Box flexDirection="row" columnGap={2} marginTop={1}>
+      {views.map(v => (
+        <Button key={'view-' + v.id} plain hotkey={v.key} onPress={() => pick(v.id)}>
+          <Text color={view === v.id ? ACCENT : 'text'} weight={view === v.id ? 'semibold' : 'regular'} dimColor={view !== v.id}>
+            {v.label}
+          </Text>
+          <Text dimColor>{counts[v.id] ? ' ' + counts[v.id] : ''}</Text>
+        </Button>
+      ))}
+    </Box>
+  )
 }
