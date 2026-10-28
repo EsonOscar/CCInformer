@@ -5,7 +5,7 @@ import {
 } from './parse'
 
 export type Ran = { exitCode: number; stdout: string; stderr: string }
-// Runs one command; the hooks module makes it from $.process.run.
+// Runs one command; the hooks module hands in the light exec lane (core/lanes.ts).
 export type Exec = (argv: string[]) => Promise<Ran>
 
 const COMMITS_SHOWN = 6

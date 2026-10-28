@@ -7,6 +7,7 @@ import type {
 } from '../types'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
+import { createLanes, createSolo } from './core/lanes'
 import { paneTitle, spinner } from './format'
 import { ciOutcome, sessionGroups } from './insight'
 import { OPERATION_MARKERS, parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
@@ -57,7 +58,6 @@ const SESSIONS_EVERY_TICKS = 5
 const ACTIVE_MS = 3 * 60_000
 const TOUCH_SETTLE_MS = 400
 const RECORD_SETTLE_MS = 3000
-const RUN_TIMEOUT_MS = 20_000
 const FETCH_TIMEOUT_MS = 60_000
 const CI_PINGS_KEPT = 20
 const BEAT_FORGOTTEN_MS = 24 * 60 * 60_000
@@ -151,10 +151,12 @@ export const register: Register = on => {
       (await $.env.get('CLAUDE_CONFIG_DIR')) || ((await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || '') + '/.claude'
     const projectsDir = configDir + '/projects/' + projectDirName(cwd)
 
-    const exec: Exec = argv => $.process.run(argv, { timeoutMs: RUN_TIMEOUT_MS })
+    // The one place the mod runs commands: everything else goes through a lane (a CI check holds this).
+    const lanes = createLanes((argv, timeoutMs) => $.process.run(argv, { timeoutMs }))
+    const exec: Exec = lanes.light
+    // Each poll below runs alone: one that comes due while its last run is busy is skipped.
+    const solo = createSolo()
     let ticks = 0
-    let isGitBusy = false
-    let isCiBusy = false
     let isGitQueued = false
     let isRecordQueued = false
     let ciHotUntil = 0
@@ -174,23 +176,17 @@ export const register: Register = on => {
       $.ui.toast((outcome.isOk ? '✓ ' : '✗ ') + outcome.text)
       await $.ui.notify(outcome.text, { title: outcome.isOk ? 'CI passed' : 'CI failed' })
     }
-    const refreshCi = async () => {
-      const git = await read($, gitAtom)
-      if (isCiBusy || !git || git.error) return
-      isCiBusy = true
-      try {
+    const refreshCi = () =>
+      solo('ci', async () => {
+        const git = await read($, gitAtom)
+        if (!git || git.error) return
         const prev = await read($, ciAtom)
         const ci = await collectCi(exec, git.branch, git.head, await $.clock.now())
         await update($, ciAtom, () => ci)
         await pingCi(prev, ci)
-      } finally {
-        isCiBusy = false
-      }
-    }
-    const refreshGit = async () => {
-      if (isGitBusy) return
-      isGitBusy = true
-      try {
+      })
+    const refreshGit = () =>
+      solo('git', async () => {
         const before = await read($, gitAtom)
         const collected = await collectGit(exec, await $.clock.now())
         const git = collected.gitDir ? { ...collected, ...(await gitFolderFacts(collected.gitDir)) } : collected
@@ -201,10 +197,7 @@ export const register: Register = on => {
         if (diff && !diff.isLoading && !changed) await update($, diffAtom, () => null)
         if (changed) void loadDiff(changed, git.root)
         if (!before || before.branch !== git.branch || before.head !== git.head) await refreshCi()
-      } finally {
-        isGitBusy = false
-      }
-    }
+      })
     // What the git folder itself says: an operation in the middle (rebase, merge, ...) and when it last fetched.
     const gitFolderFacts = async (gitDir: string): Promise<{ operation: string; fetchedAt: number }> => {
       let operation = ''
@@ -333,6 +326,7 @@ export const register: Register = on => {
       await update($, sessionsAtom, () => beats)
     }
     // Once a second: keep this session's beat and CI pings going, and while the pane is open, poll what it shows.
+    // Git and CI run commands, so the tick starts them without waiting: a slow gh call never holds up the next tick.
     const tick = async () => {
       const now = await $.clock.now()
       ticks += 1
@@ -342,13 +336,17 @@ export const register: Register = on => {
       if (ticks % RECORDS_EVERY_TICKS === 0) await checkRecords()
       const ci = await read($, ciAtom)
       const isCiLive = now < ciHotUntil || (ci?.checks.some(c => c.bucket === 'pending') ?? false)
-      if (isCiLive && ticks % CI_LIVE_EVERY_TICKS === 0) await refreshCi()
-      if (!(await read($, isOpenAtom))) return
+      const isOpen = await read($, isOpenAtom)
+      const tab = await read($, tabAtom)
+      const isOnGitTab = isOpen && active && tab === 'git'
+      const isGitDue = isOnGitTab && ticks % GIT_EVERY_TICKS === 0
+      const isCiDue = isCiLive ? ticks % CI_LIVE_EVERY_TICKS === 0 : isOnGitTab && ticks % CI_IDLE_EVERY_TICKS === 0
+      // When both are due, git goes first, so CI reads the branch git just found.
+      if (isGitDue) void refreshGit().then(() => (isCiDue ? refreshCi() : undefined))
+      else if (isCiDue) void refreshCi()
+      if (!isOpen) return
       await update($, nowAtom, () => now)
       if (ticks % AGENTS_EVERY_TICKS === 0) await pollAgents()
-      const tab = await read($, tabAtom)
-      if (tab === 'git' && active && ticks % GIT_EVERY_TICKS === 0) await refreshGit()
-      if (tab === 'git' && active && !isCiLive && ticks % CI_IDLE_EVERY_TICKS === 0) await refreshCi()
       if (tab === 'agents' && ticks % HISTORY_EVERY_TICKS === 0) await loadHistory()
       if (tab === 'agents' && ticks % STATS_EVERY_TICKS === 0 && (await read($, agentsViewAtom)) === 'stats') await loadStats()
       if (tab === 'sessions' && ticks % SESSIONS_EVERY_TICKS === 0) await readSessions()
@@ -405,7 +403,7 @@ export const register: Register = on => {
       // The person asked for a fetch: refresh what the upstream has, then the tab.
       fetch: async () => {
         $.ui.toast('Fetching…')
-        const fetched = await $.process.run(['git', 'fetch', '--quiet'], { timeoutMs: FETCH_TIMEOUT_MS }).catch(() => null)
+        const fetched = await lanes.heavy(['git', 'fetch', '--quiet'], FETCH_TIMEOUT_MS).catch(() => null)
         $.ui.toast(fetched?.exitCode === 0 ? 'Fetched' : 'Fetch failed: ' + (fetched?.stderr.trim().split('\n')[0] || 'git did not answer'))
         await refreshGit()
       },

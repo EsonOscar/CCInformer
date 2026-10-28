@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Runs before anything leaves this machine. First the leak guard over every commit the push sends (see
-# check-text.sh); then the plugin job from CI: validate the manifest and hooks module, then run the mod's
-# tests, skipped with a notice if Claude Code can't be started.
+# check-text.sh); then the plugin job from CI: the exec check (check-exec.sh), validate the manifest and hooks
+# module, then run the mod's tests, skipped with a notice if Claude Code can't be started.
 #
 # Set CLAUDE_BIN when the first `claude` on PATH isn't a working one (e.g. a broken shim), in your
 # shell profile: export CLAUDE_BIN="$HOME/.local/bin/claude.exe"
@@ -27,6 +27,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   fi
   [ "$status" -eq 0 ] || exit 1
 done
+
+sh "$root/.githooks/check-exec.sh" || exit 1
 
 if ! "$claude" --version > /dev/null 2>&1; then
   echo "pre-push: '$claude' doesn't run, so the plugin checks are skipped. Set CLAUDE_BIN to a working binary." >&2

@@ -12,6 +12,7 @@ The leak guard backs this up where the clone has `ccinformer.denylist` set: `pre
 
 - **Load the `plugin-authoring` skill first**, before changing anything under `hooks/`, `types/` or `.claude-plugin/`.
 - Rules the validator holds the mod to: one hooks module, `hooks/register.tsx`, which declares every state atom it reads and writes; `$` is passed only to a function declaration (`function f($, …)`), at the top of that file or imported from another file of the mod, never to an arrow function (`const f = ($) => …`); types are imported with `import type`.
+- Commands run only through the exec lanes (`hooks/core/lanes.ts`): `register.tsx` makes the one `$.process.run` call that builds them, and `.githooks/check-exec.sh` (in CI and pre-push) fails on any other `$.process.run` or `$.process.spawn`. Logic that decides something takes data and returns data, without `$`, so a plain test reaches it; a `$` helper only reads and writes.
 - Done means both pass from the repo root:
   ```bash
   claude plugin validate --strict .
