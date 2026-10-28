@@ -16,7 +16,7 @@ export type DebugData = { tools: ToolRow[]; steps: StepRow[]; compactions: Compa
 // What each Debug view's label counts: calls, requests, and the context the latest main request carried.
 export const debugCounts = (data: DebugData): Record<DebugView, string> => {
   const latest = mainSteps(data.steps).at(-1)
-  return { tools: String(data.tools.length), requests: String(data.steps.length), context: latest ? tokens(stepContext(latest)) : '' }
+  return { tools: String(data.tools.length), requests: String(data.steps.length), context: latest ? tokens(stepContext(latest)) : '', pack: '' }
 }
 
 const mainSteps = (steps: StepRow[]) => steps.filter(s => !s.agent && s.ms > 0)

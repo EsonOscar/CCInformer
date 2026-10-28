@@ -2,8 +2,8 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, FileChange, GitSnapshot, RunSummary, SessionBeat, StepRow, ToolOutcome,
-  ToolRow, WorkView, WorkflowRun,
+  AgentRow, Area, CiSnapshot, Compaction, DebugView, DiffPreview, FileChange, GitSnapshot, PackReport, RunSummary, SessionBeat, StepRow,
+  ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, areaFor, areaNames } from './areas'
 import { collectCi, collectDiff, collectGit } from './collect'
@@ -13,6 +13,7 @@ import { paneTitle, spinner } from './format'
 import { ciOutcome, sessionGroups } from './insight'
 import { OPERATION_MARKERS, parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
 import { isFinished } from './phases'
+import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
 import { mergeRecord, parseHead, projectDirName, recordKey, runFromRecord, upgradeRun } from './records'
 import {
   LISTED_STATES, TOUCHING_TOOLS, capped, contextTokens, endedState, isOver, isPush, pruneAgents, summarize, taskOf, toolLabel,
@@ -21,6 +22,7 @@ import { ACCENT, AreaBar, ViewBar } from './ui'
 import type { Badge, Kit } from './ui'
 import { AgentsView as AgentsPanel } from './view-agents'
 import { DebugPanel, debugCounts } from './view-debug'
+import { PackView } from './view-pack'
 import { GitView } from './view-git'
 import { SessionsView } from './view-sessions'
 import { summarizeRun } from './stats'
@@ -91,6 +93,7 @@ const toolsAtom = atom({ plugin: 'ccinformer', key: 'tools' } as const, [] as To
 const stepsAtom = atom({ plugin: 'ccinformer', key: 'steps' } as const, [] as StepRow[])
 const compactionsAtom = atom({ plugin: 'ccinformer', key: 'compactions' } as const, [] as Compaction[])
 const sessionsAtom = atom({ plugin: 'ccinformer', key: 'sessions' } as const, [] as SessionBeat[])
+const packAtom = atom({ plugin: 'ccinformer', key: 'pack' } as const, null as PackReport | null)
 
 const MAX_AGENTS = 300
 const MAX_RUNS = 12
@@ -117,6 +120,8 @@ type Live = {
   recordsSoon: () => void
   openDiff: (file: FileChange) => Promise<void>
   fetch: () => Promise<void>
+  checkPack: () => Promise<void>
+  setTrust: (isAllowed: boolean) => Promise<string>
 }
 let live: Live | null = null
 
@@ -153,6 +158,22 @@ export const register: Register = on => {
     const exec: Exec = lanes.light
     // Each poll below runs alone: one that comes due while its last run is busy is skipped.
     const solo = createSolo()
+    // The pack: read at start, and again when a file it comes from has changed. A reload asked for while one
+    // runs joins it. The latest report is kept here too: a hook reads state as it stood when its event began, so
+    // one that waited for a load reads the load's result from here.
+    let packStamp = ''
+    let packReport: PackReport | null = null
+    let packLoad: Promise<PackReport> | null = null
+    const reloadPack = (): Promise<PackReport> =>
+      (packLoad ??= (async () => {
+        const { report } = await loadPack($, exec, cwd, configDir)
+        packReport = report
+        await update($, packAtom, () => report)
+        packStamp = await packSignature($, report.root, configDir)
+        return report
+      })().finally(() => {
+        packLoad = null
+      }))
     let ticks = 0
     let isGitQueued = false
     let isRecordQueued = false
@@ -364,7 +385,7 @@ export const register: Register = on => {
       showArea: async ({ area, view }) => {
         await update($, areaAtom, () => area)
         if (view === 'runs' || view === 'stats') await update($, workViewAtom, () => view)
-        if (view === 'tools' || view === 'requests' || view === 'context') await update($, debugViewAtom, () => view)
+        if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack') await update($, debugViewAtom, () => view)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
       },
@@ -412,6 +433,19 @@ export const register: Register = on => {
         $.ui.toast(fetched?.exitCode === 0 ? 'Fetched' : 'Fetch failed: ' + (fetched?.stderr.trim().split('\n')[0] || 'git did not answer'))
         await refreshGit()
       },
+      // A main turn starts: read the pack again if a file it comes from changed.
+      checkPack: async () => {
+        if (packReport && (await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
+      },
+      // Lets the repo's own tools run (asking first) or stops them; says how it went.
+      setTrust: async isAllowed => {
+        const report = packReport ?? (await reloadPack())
+        if (report.trust.by === 'user pack') return 'A user pack matches this repo, so its tools may run; change that in the pack.'
+        if (isAllowed && !(await askTrust($, report))) return "Not allowed: the repo's own tools still wait."
+        if (!isAllowed) await forgetTrust($, report)
+        await reloadPack()
+        return isAllowed ? "The repo's own tools may run here." : "The repo's own tools wait again until you allow them."
+      },
       // An agent ended: its run's record may be written now, so look for it shortly.
       recordsSoon: () => {
         if (isRecordQueued) return
@@ -424,6 +458,7 @@ export const register: Register = on => {
     }
     $.clock.every(TICK_MS, () => void tick())
     void beat(startedAt)
+    void reloadPack()
 
     // Reopen where it was left; the engine seats a pane opened unasked only in a wide terminal.
     if ((await $.store.get(STORE_OPEN)) === true) {
@@ -453,7 +488,8 @@ export const register: Register = on => {
       await $.store.set(STORE_OPEN, false)
       return {}
     }
-    const target = arg ? areaFor(arg) : null
+    const [name = '', sub = ''] = arg.split(/\s+/)
+    const target = name ? areaFor(name) : null
     // The area is set before the pane opens, so its first drawing is the right one.
     if (target) await update($, areaAtom, () => target.area)
     const columns = Math.max(MIN_COLUMNS, Math.round(e.presentation.columns * SHARE))
@@ -465,7 +501,9 @@ export const register: Register = on => {
     await $.store.set(STORE_COLUMNS, columns)
     if (target) void live?.showArea(target)
     else void live?.refresh(await read($, areaAtom))
-    return arg && !target ? { text: `CCInformer has no area "${arg}". Try: ${areaNames().join(', ')}.` } : {}
+    if (!target) return arg ? { text: `CCInformer has no area "${name}". Try: ${areaNames().join(', ')}.` } : {}
+    if (name === 'pack' && (sub === 'trust' || sub === 'untrust')) return { text: (await live?.setTrust(sub === 'trust')) ?? '' }
+    return sub ? { text: `/${COMMAND} ${name} takes no "${sub}"` + (name === 'pack' ? ': try trust or untrust.' : '.') } : {}
   }).catch(($, e, next) => next(e))
 
   on('ui.close', async ($, e, next) => {
@@ -497,6 +535,7 @@ export const register: Register = on => {
       isTurnRunning = true
       if (e.text) lastTask = taskOf(e.text)
       void live?.wake()
+      void live?.checkPack()
     }
     return next(e)
   })
@@ -632,8 +671,8 @@ export const register: Register = on => {
         read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, agentsAtom), read($, runsAtom), read($, toolsAtom), read($, stepsAtom),
         read($, compactionsAtom), read($, sessionsAtom),
       ])
-    const [statsName, stats, showAllFiles, diff] = await Promise.all([
-      read($, statsNameAtom), read($, statsAtom), read($, showAllFilesAtom), read($, diffAtom),
+    const [statsName, stats, showAllFiles, diff, pack] = await Promise.all([
+      read($, statsNameAtom), read($, statsAtom), read($, showAllFilesAtom), read($, diffAtom), read($, packAtom),
     ])
     const gitNav = {
       showAll: showAllFiles,
@@ -645,13 +684,14 @@ export const register: Register = on => {
     }
     const width = e.props.bodyColumns
     const busy: Badge = { char: spinner(now), color: ACCENT }
+    const isPackBroken = !!pack?.layers.some(l => l.state === 'refused' || l.state === 'broken')
     const othersBusy = sessionGroups(sessions, selfId, cwd, now).here.filter(b => b.id !== selfId && b.isBusy).length
     const badges: Record<Area, Badge | null> = {
       now: othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
       code: ci?.checks.some(c => c.bucket === 'fail') ? { char: '✗', color: 'error' } : ci?.checks.some(c => c.bucket === 'pending') ? busy : null,
       work: agents.some(a => a.status === 'running') ? busy : null,
       timeline: null,
-      debug: tools.some(t => t.outcome === 'error') ? { char: '•', color: 'error' } : null,
+      debug: tools.some(t => t.outcome === 'error') || isPackBroken ? { char: '•', color: 'error' } : null,
     }
     const nav = {
       phase,
@@ -687,7 +727,8 @@ export const register: Register = on => {
         {area === 'code' && GitView(k, git, ci, now, width - 2, !isActive, gitNav)}
         {area === 'work' && workView === 'runs' && AgentsPanel(k, agents, runs, now, width - 2, nav)}
         {area === 'work' && workView === 'stats' && StatsView(k, stats, statsName, width - 2, n => void update($, statsNameAtom, () => n))}
-        {area === 'debug' && DebugPanel(k, debugView, debugData, now, width - 2)}
+        {area === 'debug' && debugView !== 'pack' && DebugPanel(k, debugView, debugData, now, width - 2)}
+        {area === 'debug' && debugView === 'pack' && PackView(k, pack, now, { toggleTrust: () => void live?.setTrust(!pack?.trust.isTrusted) })}
       </Box>
     )
   })
