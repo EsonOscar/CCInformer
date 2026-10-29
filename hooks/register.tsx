@@ -2,10 +2,11 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaFor, areaNames } from './areas'
+import { createBudgets } from './budgets/run'
 import { createChecks } from './checks/run'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
@@ -87,6 +88,7 @@ const codeViewAtom = atom({ plugin: 'ccinformer', key: 'codeView' } as const, 'g
 const findingsAtom = atom({ plugin: 'ccinformer', key: 'findings' } as const, [] as Finding[])
 const dismissedAtom = atom({ plugin: 'ccinformer', key: 'dismissed' } as const, [] as string[])
 const checkRunAtom = atom({ plugin: 'ccinformer', key: 'checkRun' } as const, null as CheckRun | null)
+const budgetsAtom = atom({ plugin: 'ccinformer', key: 'budgets' } as const, null as BudgetState | null)
 const NOTHING_SELECTED: Record<Area, string> = { now: '', code: '', work: '', timeline: '', debug: '' }
 const selectedAtom = atom({ plugin: 'ccinformer', key: 'selected' } as const, NOTHING_SELECTED)
 const phaseAtom = atom({ plugin: 'ccinformer', key: 'phase' } as const, '')
@@ -131,6 +133,8 @@ let contextWindow = 0
 let envTasks: EnvTask[] = []
 // What the status line says, so it is written only when that changes.
 let shownStatus: string | undefined
+// When Claude last wrote a file: a build older than that no longer measures the tree.
+let lastWriteAt = 0
 
 // Writes the tracked processes; the status line names a production one too, as a backup for the band.
 async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void> {
@@ -159,6 +163,7 @@ type Live = {
   runChecks: () => Promise<void>
   turnNote: () => Promise<string>
   dismiss: (id: string) => Promise<void>
+  measure: () => Promise<void>
 }
 let live: Live | null = null
 
@@ -180,7 +185,7 @@ export const register: Register = on => {
     const restored = typeof stored === 'string' ? areaFor(stored) : null
     if (restored) await update($, areaAtom, () => restored.area)
     if (restored?.view === 'env' || restored?.view === 'sessions') await update($, nowViewAtom, () => restored.view as NowView)
-    if (restored?.view === 'git' || restored?.view === 'rules') await update($, codeViewAtom, () => restored.view as CodeView)
+    if (restored?.view === 'git' || restored?.view === 'rules' || restored?.view === 'budgets') await update($, codeViewAtom, () => restored.view as CodeView)
     // Runs this session recorded with an older version of the mod get a status now.
     const recorded = await read($, agentsAtom)
     await update($, runsAtom, list => list.map(r => upgradeRun(r, recorded)))
@@ -258,6 +263,15 @@ export const register: Register = on => {
       saveFindings: (check, files, found) => update($, findingsAtom, list => [...list.filter(f => f.check !== check || !files.includes(f.file)), ...found]),
       saveRun: run => update($, checkRunAtom, () => run),
       dismissed: () => read($, dismissedAtom),
+    })
+    // The pack's budgets (budgets/run.ts), read on opening Code › Budgets, on r, and after a build on m.
+    const budgets = createBudgets($, {
+      light: lanes.light,
+      heavy: lanes.heavy,
+      pack: async () => packResolved ?? (await reloadPack(), packResolved),
+      report: () => packReport,
+      lastWriteAt: () => lastWriteAt,
+      save: state => update($, budgetsAtom, () => state),
     })
 
     let ticks = 0
@@ -423,6 +437,7 @@ export const register: Register = on => {
     }
     const refresh = async (area: Area) => {
       if (area === 'code') await refreshGit().then(refreshCi)
+      if (area === 'code' && (await read($, codeViewAtom)) === 'budgets') await budgets.refresh()
       if (area === 'work') await checkRecords().then(loadHistory)
       if (area === 'work' && (await read($, workViewAtom)) === 'stats') await loadStats()
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
@@ -436,7 +451,7 @@ export const register: Register = on => {
         await update($, areaAtom, () => area)
         if (view === 'runs' || view === 'stats') await update($, workViewAtom, () => view)
         if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
-        if (view === 'git' || view === 'rules') await update($, codeViewAtom, () => view)
+        if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
         if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack') await update($, debugViewAtom, () => view)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
@@ -512,6 +527,8 @@ export const register: Register = on => {
       checkFile: checks.checkFile,
       runChecks: checks.runChecks,
       turnNote: checks.turnNote,
+      // The person asked for a measurement: build, then read the budgets.
+      measure: budgets.measure,
       // The person dismissed a finding: hidden for the rest of the session, and never told to the model.
       dismiss: async id => {
         await update($, dismissedAtom, list => (list.includes(id) ? list : [...list, id]))
@@ -676,6 +693,7 @@ export const register: Register = on => {
     if (!e.agentId && isPush(input.command)) live?.pushed()
     // A file written by any agent: the inline checks read it, and the model reads what they found with the result.
     const isWritten = WRITING_TOOLS.includes(tool) && typeof input.file_path === 'string' && !('deny' in result && result.deny) && !result.isError
+    if (isWritten) lastWriteAt = await $.clock.now()
     const note = isWritten ? await live?.checkFile(input.file_path as string) : ''
     return note ? ({ ...result, context: [...(result.context ?? []), note] } as typeof result) : result
   }).catch(($, e, next) => next(e))
@@ -772,19 +790,21 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
+      read($, budgetsAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, tasks, processes, memory, selfId, cwd, width: e.props.bodyColumns,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, tasks, processes, memory, selfId, cwd,
+      width: e.props.bodyColumns,
     }
     return PaneView(k, paneTitle(TITLE, $.plugin.root), data, {
       showArea: a => void live?.showArea({ area: a }),
       pickView: view => {
         if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
-        if (area === 'code') void update($, codeViewAtom, () => view as CodeView)
+        if (area === 'code') void update($, codeViewAtom, () => view as CodeView).then(() => (view === 'budgets' ? live?.refresh('code') : undefined))
         if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
         if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
       },
@@ -802,6 +822,7 @@ export const register: Register = on => {
       toggleTrust: () => void live?.setTrust(!pack?.trust.isTrusted),
       pickFinding: id => void update($, selectedAtom, s => ({ ...s, code: id })),
       dismissFinding: id => void live?.dismiss(id),
+      measure: () => void live?.measure(),
     })
   })
 }

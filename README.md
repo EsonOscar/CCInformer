@@ -6,6 +6,7 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Now** (`1`) › **Sessions** (`s`): the other Claude sessions on this machine, those in this folder first, with what each is working on. A warning shows when another session is working in this folder.
 - **Code** (`2`) › **Git**: branch, upstream and ahead/behind, when it last fetched (`u` fetches), and a warning while a rebase, merge, cherry-pick or revert is in progress. CI for the branch's open PR, with its review, merge state and size (or the commit's Actions runs); a failed check links to its run. The newest runs on the branch it merges into. Every change grouped as git does (conflicts, staged, unstaged, untracked): compact, `f` shows all, pressing a file shows its diff under it, `d` opens Claude Code's `/diff`. The commits a push would send and those waiting upstream, recent commits, other branches, stashes, worktrees. When a commit's checks finish, a toast and a desktop notification say how it went (one session pings for all).
 - **Code** (`2`) › **Rules** (`k`): what the pack's [checks](#checks) found in the files Claude wrote, per file, marked `CI` where pushing as is would fail the repo's CI. A file over its size limit, a lint error, a suppression nothing needs any more. Pressing a finding selects it, `x` dismisses it for the session. Code's badge shows `!` while something would fail CI. The model is told too: about the file it just wrote with that tool's result, and about the turn's ESLint run with the next prompt you type.
+- **Code** (`2`) › **Budgets** (`b`): the pack's [budgets](#budgets), such as a start-up bundle's size: each one's value against its limit (against a baseline it reads as the repo's own report does: "1.5% over the baseline, within the 5% budget"), where the value came from, and whether it still measures the tree as it is. `m` builds first, then reads, which takes as long as the build. Code's badge shows `!` while a fresh reading is over its budget.
 - **Work** (`3`) › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
 - **Work** (`3`) › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
 - **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
@@ -48,7 +49,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Packs
 
-A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band and Now › Env (environments and processes) and Code › Rules (checks); Debug › Pack shows what this repo resolved to.
+A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band and Now › Env (environments and processes), Code › Rules (checks) and Code › Budgets (budgets); Debug › Pack shows what this repo resolved to.
 
 Four layers, lowest first. Lists merge by `id`, and a later layer's fields win:
 
@@ -92,6 +93,26 @@ A user pack adds checks with the repo's own values:
 
 Files changed by a shell command, not a file tool, aren't checked.
 
+### Budgets
+
+A budget is a number the repo keeps under (or over) a limit: a fixed one, or a share of a baseline it reads from a JSON file (`"relative": 1.05` is 5 % over it). Its sources are tried in order, and the first fresh value shows; with none fresh, the first value shows marked stale, with why.
+
+- **`command`** runs the repo's own report (repo trust needed) and reads the number from its output with `parse` (a regex; its first group, times `scale`, 1024 for KB), whatever the exit code: a report that finds the budget broken still prints its reading. It is fresh while its `freshAfter` file (the build it measures) is newer than HEAD's commit and Claude's last file write. Its `build` is what `m` runs first.
+- **`ci-log`** reads the same line from the log of the newest CI run of HEAD that has the named job (fresh), else of the branch (stale). A finished job's log never changes, so each is fetched once.
+
+```jsonc
+"budgets": [
+  { "id": "start-brotli", "label": "Start-up bundle, brotli", "unit": "bytes", "direction": "max",
+    "limit": { "relative": 1.05, "baseline": { "kind": "json", "path": "<baseline>.json", "pointer": "/start/brotli" } },
+    "sources": [
+      { "kind": "command", "argv": ["node", "<report script>", "--check"], "parse": "brotli: ([0-9.]+) KB", "scale": 1024,
+        "freshAfter": "dist/index.html", "build": ["npm", "run", "build"] },
+      { "kind": "ci-log", "job": "<job name>", "step": "<step name>", "parse": "brotli: ([0-9.]+) KB", "scale": 1024 }
+    ],
+    "cost": "cheap" }
+]
+```
+
 ## Numbers
 
 - **Context** (`ctx`) is what one request carried in: an agent's figure is its latest request's, as Claude Code's workflow bar counts it; a run's total is the bar's own.
@@ -118,8 +139,9 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Processes Claude starts | no polling | always | placed when the Bash call starts; cleared by its task's notification, a TaskStop, or the call returning |
 | Inline checks (`size-lines`) | no polling | always | on each Edit or Write, inside the mod: no command runs |
 | Turn checks (ESLint) | no polling | always | once a main turn ends that wrote files a check covers, in a trusted repo; at most 40 files a run, the rest in the next |
+| Budgets | no polling | | on opening Code › Budgets, on `r`; on `m` after a build (up to 10 minutes) |
 
-Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s, ESLint 120 s), so a fetch or a lint never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
+Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s, ESLint and a budget's report 120 s, a build 10 minutes), so a fetch or a lint never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
 
 ## Where things live
 
@@ -127,6 +149,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 - `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files), and the process and memory queries with their parsers (`procs.ts`). The band is `hooks/view-band.tsx`, Now › Env `hooks/view-env.tsx`.
 - `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/checks/`: the checks. `run.ts` runs them (reads the written files, runs ESLint through the heavy lane, keeps what the model hasn't read yet) and hands its findings back to `register.tsx`, which writes them to state; the rest is plain logic: `findings.ts` (the analyzers and the note the model reads), `suppressions.ts` (ESLint's suppression rule), `glob.ts`. Code › Rules is `hooks/view-rules.tsx`.
+- `hooks/budgets/`: the budgets, built the same way: `run.ts` reads the sources (the report through the heavy lane, CI's job logs through `gh`) and hands the readings back; `gauge.ts` is plain logic (reading a value, the limit, which reading shows, the words). Code › Budgets is `hooks/view-budgets.tsx`.
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
 - The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
 

@@ -185,8 +185,27 @@ export type PackReport = {
   at: number
 }
 
-// Code's views: git and CI, and what the pack's checks found.
-export type CodeView = 'git' | 'rules'
+// Code's views: git and CI, what the pack's checks found, and its budgets.
+export type CodeView = 'git' | 'rules' | 'budgets'
+// A budget's latest reading: the value (null when no source gave one), its limit (and the baseline a relative limit
+// is a share of), which source it came from and when. `staleWhy` says why it doesn't measure what's in the tree now
+// ('' when it does); `error` why there's no value.
+export type BudgetReading = {
+  id: string
+  label: string
+  unit: 'bytes' | 'ms' | 'fps' | 'mb' | 'count' | 'lines'
+  direction: 'max' | 'min'
+  value: number | null
+  limit: number | null
+  baseline: number | null
+  from: 'json' | 'command' | 'ci-log' | 'telemetry' | 'dir-size' | 'file-lines' | ''
+  at: number
+  staleWhy: string
+  error: string
+}
+// The budgets as Code › Budgets shows them, and what the gauge is doing now ('' for nothing): reading the sources,
+// or building first after `m`.
+export type BudgetState = { readings: BudgetReading[]; doing: string; at: number; error: string }
 // Something a check found in a file: a file over its size limit, a lint error, a suppression nothing needs any more.
 // `ci` is a rule the repo's CI enforces, `advise` one only the project asks for; `ciWouldFail` says pushing the file
 // as it is fails CI. `line` is 0 for a finding about the whole file.
@@ -262,6 +281,7 @@ declare module 'claude-code' {
       findings: Finding[]
       dismissed: string[]
       checkRun: CheckRun | null
+      budgets: BudgetState | null
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null

@@ -23,6 +23,7 @@ export const AREAS: AreaDef[] = [
     views: [
       { id: 'git', label: 'Git', key: 'g' },
       { id: 'rules', label: 'Rules', key: 'k' },
+      { id: 'budgets', label: 'Budgets', key: 'b' },
     ],
   },
   {
@@ -53,7 +54,7 @@ export const REFRESH_KEY = 'r'
 // Each area's actions; the views take their hotkeys from here.
 export const ACTIONS = {
   now: {},
-  code: { fetch: 'u', allFiles: 'f', diffPane: 'd', dismiss: 'x' },
+  code: { fetch: 'u', allFiles: 'f', diffPane: 'd', dismiss: 'x', measure: 'm' },
   work: { phasePrev: 'p', phaseNext: 'n', followLive: 'l', closeRun: 'x', nextWorkflow: 'o' },
   timeline: {},
   debug: { trust: 'a' },
