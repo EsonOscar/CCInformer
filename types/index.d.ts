@@ -244,6 +244,15 @@ export type UsageReading = {
   sevenDayResetsAt: number | null
 }
 
+// Active CI mode: this repo's mode, the main turn that is read-only while it looks into a failed check ('' for none),
+// and the latest look: its logs being read, its turn waiting for an idle moment, handed over, or failed.
+export type CiRunState = 'investigating' | 'waiting' | 'sent' | 'failed'
+export type CiActiveState = {
+  mode: 'passive' | 'active'
+  guardedTurn: string
+  run: { head: string; state: CiRunState; why: string; marker: string; at: number } | null
+}
+
 export type ToolOutcome ='running' | 'ok' | 'error' | 'denied'
 export type ToolRow = { id: string; tool: string; summary: string; agent: string; startedAt: number; ms: number; outcome: ToolOutcome }
 export type StepRow = {
@@ -304,6 +313,7 @@ declare module 'claude-code' {
       budgets: BudgetState | null
       plans: PlansState | null
       usage: UsageReading | null
+      ciActive: CiActiveState
       // How far the pane has scrolled its own content (it scrolls itself, so the footer stays put).
       paneTop: number
       // Code's Git view: whether it lists every changed file, and the diff it shows.

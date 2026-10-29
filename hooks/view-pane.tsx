@@ -1,5 +1,5 @@
 import type {
-  AgentRow, Area, BudgetState, CheckRun, PlansState, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, CiActiveState, PlansState, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef } from './areas'
@@ -51,6 +51,7 @@ export type PaneData = {
   budgets: BudgetState | null
   plans: PlansState | null
   usage: UsageReading | null
+  ciActive: CiActiveState
   tasks: EnvTask[]
   processes: ProcessList | null
   memory: MemoryReading | null
@@ -82,6 +83,7 @@ export type PaneNav = {
   pickView: (view: string) => void
   refresh: () => void
   toggleAllFiles: () => void
+  toggleCiMode: () => void
   openDiff: (file: FileChange) => void
   fetch: () => void
   openDiffPane: () => void
@@ -135,7 +137,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
   const width = d.width - 2
-  const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane }
+  const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane, ciActive: d.ciActive, toggleCiMode: nav.toggleCiMode }
   // Work keeps one selected row: a run, or a plan (marked by its prefix), which Runs leaves alone.
   const isPlanSelected = d.selected.work.startsWith(PLAN_SELECTED)
   const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: isPlanSelected ? '' : d.selected.work, pickRun: nav.pickRun }

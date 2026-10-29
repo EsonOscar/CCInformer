@@ -1,7 +1,8 @@
 import type { Color } from 'claude-code'
 
-import type { BaseCi, CheckBucket, CiCheck, CiSnapshot, Commit, DiffPreview, FileChange, GitSnapshot, PullRequest } from '../types'
+import type { BaseCi, CheckBucket, CiActiveState, CiCheck, CiSnapshot, Commit, DiffPreview, FileChange, GitSnapshot, PullRequest } from '../types'
 import { ACTIONS } from './areas'
+import { CI_TEXTS } from './ci/investigate'
 import { ago, duration, lastSegment, since } from './format'
 import { groupChanges } from './parse'
 import { ACCENT, Empty, Line, Section, checkGlyph } from './ui'
@@ -22,6 +23,9 @@ export type GitNav = {
   openDiff: (file: FileChange) => void
   fetch: () => void
   openDiffPane: () => void
+  // Active CI mode: this repo's mode and latest investigation, and the switch.
+  ciActive: CiActiveState
+  toggleCiMode: () => void
 }
 
 // `isPaused`: the session has been idle a while, so git is not polled until something happens or `r` is pressed.
@@ -45,7 +49,7 @@ export const GitView = (
           {`  ⚠ ${git.operation} in progress` + (groupChanges(git.files).conflicts.length ? ': resolve the conflicts below' : '')}
         </Text>
       )}
-      {Ci(k, ci, now, width)}
+      {Ci(k, ci, now, width, nav)}
       {ci?.base && Base(k, ci.base, now)}
       {Changes(k, git.files, nav)}
       {git.unpushed.length > 0 && Section(k, 'Unpushed', String(git.unpushed.length))}
@@ -145,21 +149,56 @@ const PrFacts = (k: Kit, pr: PullRequest): JSX.Element => {
   )
 }
 
-const Ci = (k: Kit, ci: CiSnapshot | null, now: number, width: number): JSX.Element => {
+const Ci = (k: Kit, ci: CiSnapshot | null, now: number, width: number, nav: GitNav): JSX.Element => {
   const { Box, Link } = k
-  if (!ci) return <Box flexDirection="column">{Section(k, 'CI')}{Empty(k, 'Asking GitHub…')}</Box>
+  if (!ci) return <Box flexDirection="column">{Section(k, 'CI')}{CiMode(k, nav)}{Empty(k, 'Asking GitHub…')}</Box>
   const pr = ci.pr && ci.pr.state === 'OPEN' ? ci.pr : null
   const title = pr ? `CI · PR #${pr.number} → ${pr.base}${pr.isDraft ? ' · draft' : ''}` : 'CI · this commit'
   const sorted = [...ci.checks].sort((a, b) => ORDER.indexOf(a.bucket) - ORDER.indexOf(b.bucket))
   return (
     <Box flexDirection="column">
       {Section(k, title, Elapsed(k, ci.checks, now))}
+      {CiMode(k, nav)}
       {pr && <Link href={pr.url} label={'  ' + pr.title} />}
       {pr && PrFacts(k, pr)}
       {ci.error && Empty(k, ci.error)}
       {!ci.error && ci.checks.length === 0 && Empty(k, pr ? 'No checks reported yet.' : 'No runs for this branch.')}
       {ci.checks.length > 0 && Tally(k, ci.checks, Math.min(BAR_MAX, Math.max(8, width - 22)))}
       {sorted.map(c => Check(k, c, now))}
+    </Box>
+  )
+}
+
+// What a failed check leads to here (a toast, or Claude looking into it read-only), with `i` to switch, and how the
+// latest investigation went.
+const CiMode = (k: Kit, nav: GitNav): JSX.Element => {
+  const { Box, Button, Text } = k
+  const { mode, run } = nav.ciActive
+  const isActive = mode === 'active'
+  const head = run?.head.slice(0, 7) ?? ''
+  const state =
+    run?.state === 'investigating'
+      ? Line(k, { char: '◐', color: ACCENT }, CI_TEXTS.viewInvestigating(head))
+      : run?.state === 'waiting'
+        ? Line(k, { char: '◐', color: 'warning' }, CI_TEXTS.viewWaiting)
+        : run?.state === 'sent'
+          ? Line(k, { char: '✓', color: 'success' }, CI_TEXTS.viewSent)
+          : run?.state === 'failed'
+            ? Line(k, { char: '✗', color: 'error' }, CI_TEXTS.viewFailed(run.why))
+            : null
+  return (
+    <Box flexDirection="column">
+      <Box flexDirection="row" columnGap={1}>
+        <Box flexGrow={1} flexShrink={1}>
+          <Text dimColor wrap="truncate-end">
+            {'  ' + (isActive ? CI_TEXTS.viewActive : CI_TEXTS.viewPassive)}
+          </Text>
+        </Box>
+        <Button key="ci-mode" plain hotkey={ACTIONS.code.ciMode} onPress={nav.toggleCiMode}>
+          <Text dimColor>{`${ACTIONS.code.ciMode} ${isActive ? 'passive' : 'active'}`}</Text>
+        </Button>
+      </Box>
+      {state}
     </Box>
   )
 }

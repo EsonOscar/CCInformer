@@ -82,6 +82,7 @@ To try a change before it's released, start one session with the working copy lo
 
 - `hooks/register.tsx`: every hook and every state atom (the validator requires them in one module), and the writes to state. Files are read by `$` helpers in `hooks/read-*.ts` (run records, sessions, the git folder), which only fetch and return. Views in `hooks/view-*.tsx`, the pane's layout and badges in `view-pane.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
 - `hooks/git/run.ts` (Code › Git: git and CI through the light lane, the CI ping, a file's diff) and `hooks/runs/run.ts` (Work › Runs and Stats: subagents, run records, the history and stats): `$` helpers built at session start, like the folders below; the state they show is written through callbacks, as its atoms live in `register.tsx`.
+- `hooks/ci/`: active CI mode. `run.ts` (a `$` helper) reads the repo's mode, claims a failed commit, fetches each failed job's log and the diff through the light lane and hands them to the session as one turn that looks into the failure; `investigate.ts` is plain logic (that turn's prompt, which turn is read-only, the texts). It is a turn and not a subagent because a plugin's own agent start has no model request behind it, so auto mode's classifier gives it no verdict and it never runs. The read-only guard itself lives in `register.tsx`'s `tool.call` hook, decided from a synchronous mirror of the state (`ciState`), so it needs no `$` call that could fail.
 - `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files), and the process and memory queries with their parsers (`procs.ts`). The band is `hooks/view-band.tsx`, Now › Env `hooks/view-env.tsx`.
 - `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/checks/`: the checks. `run.ts` runs them (reads the written files, runs ESLint through the heavy lane, keeps what the model hasn't read yet) and hands its findings back to `register.tsx`, which writes them to state; the rest is plain logic: `findings.ts` (the analyzers and the note the model reads), `source.ts` (JS and TS read without comments and regex literals, with ESLint's line for a template string, for `regex-lines`), `suppressions.ts` (ESLint's suppression rule), `glob.ts`. Code › Rules is `hooks/view-rules.tsx`.
@@ -89,7 +90,7 @@ To try a change before it's released, start one session with the working copy lo
 - `hooks/plans/`: the checkpoint board, built the same way: `run.ts` finds the plan files, reads the changed ones, asks gh about their PRs and archives a plan; `parse.ts` (what a checkpoint is, its status), `drift.ts` (which PRs to ask about, what to warn about, when a plan is finished) and `archive.ts` (where a plan goes, how references to it change, the dialog and reminder words) are plain logic. Work › Plans is `hooks/view-plans.tsx`.
 - `skills/`: the planning skills. `plan-feature` holds the shared parts: the workflow scripts (`plan-fanout.js`, which `plan-handoff` uses too, and `build-fanout.js`), the wave snapshot script and `planning-template.md`; `plan-feature-small` and `plan-handoff` refer to them there.
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
-- The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
+- The mod's own state is kept per session; the area, the open pane, CI pings, each repo's CI mode and the commits looked into, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
 
 ### Polling
 
@@ -98,7 +99,7 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Collector | Every | While | Also |
 |---|---|---|---|
 | Git | 5 s | the pane is open on Code, in an active session | after Claude changes files, on activity, on opening Code, on `r` |
-| CI | 60 s | the pane is open on Code, in an active session | every 8 s while checks run and for 3 minutes after a push, pane open or closed (for the ping) |
+| CI | 60 s | the pane is open on Code, in an active session | every 8 s while checks run and for 3 minutes after a push, pane open or closed (for the ping). Each poll also reads the repo's CI mode. A failure in active mode: each failed job's log and the diff, read one at a time, then one turn handed to the session |
 | Subagents | 2 s | the pane is open | |
 | Run records | 10 s | always | 3 s after a subagent ends |
 | Run history | 60 s | the pane is open on Work | on opening Work, on `r` |
