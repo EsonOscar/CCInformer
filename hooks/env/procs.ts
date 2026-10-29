@@ -19,7 +19,7 @@ export const isLowMemory = (freeMb: number, totalMb: number): boolean => freeMb 
 const reading = (freeMb: number, totalMb: number, at: number): MemoryReading => ({ freeMb, totalMb, at, isLow: isLowMemory(freeMb, totalMb) })
 
 const quote = (text: string) => "'" + text.replace(/'/g, "''") + "'"
-const powershell = (script: string): string[] => ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script]
+export const powershell = (script: string): string[] => ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script]
 
 // Windows: one PowerShell call lists the runtimes' processes, matches each command line against the pack's regexes
 // there, and sends back only ids, pids and working sets, with the machine's free memory. Command lines never leave

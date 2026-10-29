@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import {
+  archiveDirFor,
+  archivePath,
+  archiveQuestion,
+  isReminderDue,
+  markdownLinks,
+  moveOwnLinks,
+  reminderText,
+  removeCommand,
+  rewriteRefs,
+} from '../hooks/plans/archive'
 import { isFinished, mergedPrs, mergedToast, mergedWarnings, prState, prsToAsk } from '../hooks/plans/drift'
 import { leadingIds, parsePlan } from '../hooks/plans/parse'
 import type { PlanCheckpoint, PlanFile, PlanStatus } from '../types'
@@ -198,5 +209,65 @@ describe('where a plan and GitHub disagree', () => {
     expect(prState('')).toBeNull()
     expect(prState('{"number":4}')).toBeNull()
     expect(prState('GraphQL: Could not resolve to a PullRequest')).toBeNull()
+  })
+})
+
+describe('archiving a plan', () => {
+  const FROM = '.local/plans/x.md'
+  const TO = '.local/plans/archive/x.md'
+
+  test('a plan in .local/plans is archived beside it; a pack plan only where the pack says', async () => {
+    expect(archiveDirFor(FROM, undefined)).toBe('.local/plans/archive')
+    expect(archiveDirFor('docs/plans/y.md', { archiveDir: 'docs/plans/archive/' })).toBe('docs/plans/archive')
+    expect(archiveDirFor('docs/plans/y.md', {})).toBeNull()
+    expect(archivePath(FROM, '.local/plans/archive')).toBe(TO)
+  })
+
+  test('links that lead to the plan, from any folder, lead to the archive copy', async () => {
+    expect(rewriteRefs('See [the plan](plans/x.md#cp2).', '.local', FROM, TO)).toBe('See [the plan](plans/archive/x.md#cp2).')
+    expect(rewriteRefs('[x](../plans/x.md "title")', '.local/notes', FROM, TO)).toBe('[x](../plans/archive/x.md "title")')
+    // Another file, a URL and an anchor stay as they are.
+    const others = '[y](plans/y.md) [web](https://example.com/plans/x.md) [here](#plans)'
+    expect(rewriteRefs(others, '.local', FROM, TO)).toBe(others)
+  })
+
+  test('plain mentions of the path move too, only where the whole path is named', async () => {
+    expect(rewriteRefs('plan in `.local/plans/x.md`, done', '.local', FROM, TO)).toBe('plan in `.local/plans/archive/x.md`, done')
+    expect(rewriteRefs('C:/repo/.local/plans/x.md', null, FROM, TO)).toBe('C:/repo/.local/plans/archive/x.md')
+    const untouched = '.local/plans/archive/x.md, foo.local/plans/x.md, .local/plans/x.md5'
+    expect(rewriteRefs(untouched, '.local', FROM, TO)).toBe(untouched)
+    // A note outside the repo has no links to work out, only mentions.
+    expect(rewriteRefs('[n](x.md) and .local/plans/x.md', null, FROM, TO)).toBe('[n](x.md) and .local/plans/archive/x.md')
+  })
+
+  test("the moved plan's own links lead where they did before", async () => {
+    const text = '[dev](../DEV-PLAN.md) [sibling](y.md#cp1) [web](https://example.com)'
+    expect(moveOwnLinks(text, '.local/plans', '.local/plans/archive')).toBe('[dev](../../DEV-PLAN.md) [sibling](../y.md#cp1) [web](https://example.com)')
+    expect(markdownLinks(text)).toEqual(['../DEV-PLAN.md', 'y.md'])
+  })
+
+  test('removing a file: PowerShell with the path quoted, or rm', async () => {
+    expect(removeCommand('windows', "C:/repo/.local/plans/it's.md").at(-1)).toBe("Remove-Item -LiteralPath 'C:/repo/.local/plans/it''s.md' -ErrorAction Stop")
+    expect(removeCommand('posix', '/repo/.local/plans/x.md')).toEqual(['rm', '--', '/repo/.local/plans/x.md'])
+  })
+
+  test('the reminder comes at most once a day; the words', async () => {
+    const hour = 60 * 60_000
+    expect(isReminderDue(null, 0)).toBe(true)
+    expect(isReminderDue(0, 23 * hour)).toBe(false)
+    expect(isReminderDue(0, 24 * hour)).toBe(true)
+    expect(reminderText(1)).toBe('1 finished plan: archive it in Work › Plans (select it, then a)')
+    expect(reminderText(2)).toBe('2 finished plans: archive them in Work › Plans (select one, then a)')
+  })
+
+  test('the dialog names the move, the files it changes and what is still open', async () => {
+    expect(archiveQuestion(FROM, TO, [], 0)).toBe('Move .local/plans/x.md to .local/plans/archive/x.md?')
+    expect(archiveQuestion(FROM, TO, ['.local/DEV-PLAN.md'], 1)).toBe(
+      'Move .local/plans/x.md to .local/plans/archive/x.md and update references in 1 file (.local/DEV-PLAN.md)? 1 checkpoint is still open.',
+    )
+    const files = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'].map(f => f + '.md')
+    expect(archiveQuestion(FROM, TO, files, 3)).toBe(
+      'Move .local/plans/x.md to .local/plans/archive/x.md and update references in 8 files (a.md, b.md, c.md, d.md, e.md, f.md, and 2 more)? 3 checkpoints are still open.',
+    )
   })
 })
