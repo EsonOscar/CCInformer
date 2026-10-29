@@ -233,7 +233,14 @@ export type CheckRun = { check: string; label: string; at: number; ms: number; f
 
 // The pane's footer: how full the context window is, and how much of the subscription's 5-hour and 7-day windows is
 // used, each a percentage; null where there's no reading (before the first response, or without a subscription).
-export type UsageReading = { contextPercent: number | null; fiveHour: number | null; sevenDay: number | null }
+export type UsageReading = {
+  contextPercent: number | null
+  fiveHour: number | null
+  sevenDay: number | null
+  // When each window resets, in ms since the epoch.
+  fiveHourResetsAt: number | null
+  sevenDayResetsAt: number | null
+}
 
 export type ToolOutcome ='running' | 'ok' | 'error' | 'denied'
 export type ToolRow = { id: string; tool: string; summary: string; agent: string; startedAt: number; ms: number; outcome: ToolOutcome }
