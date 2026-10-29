@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'claude-code/testing'
 
+import { isFinished, mergedPrs, mergedToast, mergedWarnings, prState, prsToAsk } from '../hooks/plans/drift'
 import { leadingIds, parsePlan } from '../hooks/plans/parse'
+import type { PlanCheckpoint, PlanFile, PlanStatus } from '../types'
 
 const board = (text: string, spec = {}) => parsePlan(text, spec).checkpoints.map(c => [c.id, c.status, c.title, c.prs])
 
@@ -129,4 +131,72 @@ test('the ids a definition starts with', async () => {
   expect(leadingIds('PR 4a, zones', id)).toEqual(['PR 4a'])
   expect(leadingIds('R5a (server signing)', id)).toEqual([])
   expect(leadingIds('Requirements', id)).toEqual([])
+})
+
+describe('where a plan and GitHub disagree', () => {
+  const checkpoint = (id: string, status: PlanStatus, prs: number[]): PlanCheckpoint => ({ id, title: '', status, prs, line: 1 })
+  const plan = (...checkpoints: PlanCheckpoint[]): PlanFile => ({ path: 'p.md', title: '', checkpoints })
+
+  test("only an open or partly checkpoint's PRs are asked about, once each, until their state is final", async () => {
+    const plans = [
+      plan(checkpoint('C1', 'done', [1]), checkpoint('C2', 'open', [3, 2]), checkpoint('C3', 'dropped', [4])),
+      plan(checkpoint('C1', 'partly', [2, 5, 6, 7])),
+    ]
+    const known = new Map([
+      [5, 'MERGED'],
+      [6, 'CLOSED'],
+      [7, 'OPEN'],
+    ])
+    expect(prsToAsk(plans, known)).toEqual([2, 3, 7])
+    // The poll asks only about PRs not asked about yet: the open #7 waits for a recheck.
+    expect(prsToAsk(plans, known, false)).toEqual([2, 3])
+  })
+
+  test('a merged PR is warned about on a checkpoint that still reads open, never on a done or dropped one', async () => {
+    const merged = new Set([2, 3])
+    expect(mergedPrs(checkpoint('C1', 'open', [1, 2, 3]), merged)).toEqual([2, 3])
+    expect(mergedPrs(checkpoint('C1', 'partly', [2]), merged)).toEqual([2])
+    expect(mergedPrs(checkpoint('C1', 'done', [2]), merged)).toEqual([])
+    expect(mergedPrs(checkpoint('C1', 'dropped', [2]), merged)).toEqual([])
+  })
+
+  test('a plan is finished when every checkpoint is done or dropped', async () => {
+    expect(isFinished(plan(checkpoint('C1', 'done', []), checkpoint('C2', 'dropped', [])))).toBe(true)
+    expect(isFinished(plan(checkpoint('C1', 'done', []), checkpoint('C2', 'partly', [])))).toBe(false)
+    expect(isFinished(plan())).toBe(false)
+  })
+
+  test('a toast for PRs seen to turn from open to merged under an open checkpoint, one per PR', async () => {
+    const plans = [plan(checkpoint('C1', 'open', [2]), checkpoint('C2', 'partly', [2, 3]), checkpoint('C3', 'done', [4]))]
+    const after = new Map([
+      [2, 'MERGED'],
+      [3, 'MERGED'],
+      [4, 'MERGED'],
+    ])
+    // Already merged when first asked about: badge only. #4's checkpoint is done: nothing.
+    expect(mergedToast(plans, new Map(), after)).toBeNull()
+    expect(mergedToast(plans, new Map([[4, 'OPEN']]), after)).toBeNull()
+    expect(mergedToast(plans, new Map([[2, 'OPEN']]), after)).toBe('PR #2 merged, but C1 in p.md still reads open')
+    expect(
+      mergedToast(
+        plans,
+        new Map([
+          [2, 'OPEN'],
+          [3, 'OPEN'],
+        ]),
+        after,
+      ),
+    ).toBe('2 PRs merged while their checkpoints still read open: see Work › Plans')
+    expect(mergedWarnings(plans, new Set([2, 4]))).toEqual([
+      { pr: 2, id: 'C1', path: 'p.md' },
+      { pr: 2, id: 'C2', path: 'p.md' },
+    ])
+  })
+
+  test("a PR's state, read from gh's JSON", async () => {
+    expect(prState('{"state":"MERGED"}\n')).toBe('MERGED')
+    expect(prState('')).toBeNull()
+    expect(prState('{"number":4}')).toBeNull()
+    expect(prState('GraphQL: Could not resolve to a PullRequest')).toBeNull()
+  })
 })

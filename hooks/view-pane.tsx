@@ -14,6 +14,7 @@ import { GitView } from './view-git'
 import { PackView } from './view-pack'
 import { PlansView } from './view-plans'
 import { isOver } from './budgets/gauge'
+import { mergedWarnings } from './plans/drift'
 import { BudgetsView } from './view-budgets'
 import { RulesView, shownFindings } from './view-rules'
 import { SessionsView } from './view-sessions'
@@ -109,7 +110,12 @@ export const badgesOf = (d: PaneData): Record<Area, Badge | null> => {
         : wouldFail
           ? { char: '!', color: 'warning' }
           : null,
-    work: d.agents.some(a => a.status === 'running') ? busy : null,
+    // A PR merged under a checkpoint that still reads open: the plan wants updating.
+    work: d.agents.some(a => a.status === 'running')
+      ? busy
+      : d.plans && mergedWarnings(d.plans.plans, new Set(d.plans.merged ?? [])).length
+        ? { char: '!', color: 'warning' }
+        : null,
     timeline: null,
     debug: d.tools.some(t => t.outcome === 'error') || isPackBroken ? { char: '•', color: 'error' } : null,
   }

@@ -76,6 +76,12 @@ const BEAT_FORGOTTEN_MS = 24 * 60 * 60_000
 const HISTORY_SESSIONS = 12
 const HISTORY_RECORDS = 8
 const STATS_EVERY_TICKS = 120
+// The plan files while Work › Plans shows, so a checkpoint marked done shows without a refresh. GitHub is asked again
+// about the open PRs they name every minute while it shows, and every 10 minutes otherwise in an active session (pane
+// open or closed), so a PR merged under an open checkpoint raises Work's badge and a toast.
+const PLANS_EVERY_TICKS = 5
+const PLANS_RECHECK_SHOWN_TICKS = 60
+const PLANS_RECHECK_TICKS = 600
 // The pack's processes on this machine while Now › Env shows; free memory while a heavy task of this session runs.
 const PROCESSES_EVERY_TICKS = 30
 const MEMORY_EVERY_TICKS = 30
@@ -291,11 +297,13 @@ export const register: Register = on => {
       lastWriteAt: () => lastWriteAt,
       save: state => update($, budgetsAtom, () => state),
     })
-    // The plan files' checkpoints (plans/run.ts), read on opening Work › Plans and on r.
+    // The plan files' checkpoints (plans/run.ts), read on opening Work › Plans, on r, and on the tick (see PLANS_*).
     const plans = createPlans($, {
+      light: lanes.light,
       pack: async () => packResolved ?? (await reloadPack(), packResolved),
       report: () => packReport,
       save: state => update($, plansAtom, () => state),
+      notify: text => void $.ui.toast(text),
     })
 
     let ticks = 0
@@ -452,6 +460,10 @@ export const register: Register = on => {
       const isEnvShown = isOpen && active && area === 'now' && (await read($, nowViewAtom)) === 'env'
       if (isEnvShown && ticks % PROCESSES_EVERY_TICKS === 0) void refreshProcesses()
       else if (envTasks.some(t => t.isHeavy) && ticks % MEMORY_EVERY_TICKS === 0) void probeMemory()
+      const isPlansShown = isOpen && area === 'work' && (await read($, workViewAtom)) === 'plans'
+      if (isPlansShown && ticks % PLANS_RECHECK_SHOWN_TICKS === 0) void plans.refresh()
+      else if (isPlansShown && ticks % PLANS_EVERY_TICKS === 0) void plans.refresh({ isRecheck: false })
+      else if (!isPlansShown && active && ticks % PLANS_RECHECK_TICKS === 0) void plans.refresh()
       if (!isOpen) return
       await update($, nowAtom, () => now)
       if (ticks % AGENTS_EVERY_TICKS === 0) await pollAgents()
