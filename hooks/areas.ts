@@ -56,7 +56,7 @@ export const REFRESH_KEY = 'r'
 export const ACTIONS = {
   now: {},
   code: { fetch: 'u', allFiles: 'f', diffPane: 'd', dismiss: 'x', measure: 'm' },
-  work: { phasePrev: 'p', phaseNext: 'n', followLive: 'l', closeRun: 'x', nextWorkflow: 'o' },
+  work: { phasePrev: 'p', phaseNext: 'n', followLive: 'l', closeRun: 'x', nextWorkflow: 'o', archive: 'a' },
   timeline: {},
   debug: { trust: 'a' },
 } as const satisfies Record<Area, Record<string, string>>

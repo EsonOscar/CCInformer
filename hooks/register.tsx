@@ -34,6 +34,7 @@ import { summarizeRun } from './stats'
 import type { Kit } from './ui'
 import { EnvBand, bandTasks } from './view-band'
 import { PaneView, scrolledTop } from './view-pane'
+import { PLAN_SELECTED } from './view-plans'
 
 const PANE = 'ccinformer'
 const TITLE = 'CCInformer'
@@ -185,6 +186,7 @@ type Live = {
   turnNote: () => Promise<string>
   dismiss: (id: string) => Promise<void>
   measure: () => Promise<void>
+  archive: (path: string) => Promise<void>
 }
 let live: Live | null = null
 
@@ -300,8 +302,10 @@ export const register: Register = on => {
     // The plan files' checkpoints (plans/run.ts), read on opening Work › Plans, on r, and on the tick (see PLANS_*).
     const plans = createPlans($, {
       light: lanes.light,
+      platform,
       pack: async () => packResolved ?? (await reloadPack(), packResolved),
       report: () => packReport,
+      memoryDir: projectsDir + '/memory',
       save: state => update($, plansAtom, () => state),
       notify: text => void $.ui.toast(text),
     })
@@ -463,7 +467,7 @@ export const register: Register = on => {
       const isPlansShown = isOpen && area === 'work' && (await read($, workViewAtom)) === 'plans'
       if (isPlansShown && ticks % PLANS_RECHECK_SHOWN_TICKS === 0) void plans.refresh()
       else if (isPlansShown && ticks % PLANS_EVERY_TICKS === 0) void plans.refresh({ isRecheck: false })
-      else if (!isPlansShown && active && ticks % PLANS_RECHECK_TICKS === 0) void plans.refresh()
+      else if (!isPlansShown && active && ticks % PLANS_RECHECK_TICKS === 0) void plans.refresh({ isReminder: true })
       if (!isOpen) return
       await update($, nowAtom, () => now)
       if (ticks % AGENTS_EVERY_TICKS === 0) await pollAgents()
@@ -571,6 +575,11 @@ export const register: Register = on => {
       dismiss: async id => {
         await update($, dismissedAtom, list => (list.includes(id) ? list : [...list, id]))
         await update($, selectedAtom, s => ({ ...s, code: '' }))
+      },
+      // The person asked to archive the selected plan: it asks first; the selection goes once it's done.
+      archive: async path => {
+        await plans.archive(path)
+        await update($, selectedAtom, s => ({ ...s, work: s.work === PLAN_SELECTED + path ? '' : s.work }))
       },
     }
     $.clock.every(TICK_MS, () => void tick())
@@ -871,6 +880,9 @@ export const register: Register = on => {
         void update($, phaseAtom, () => '')
       },
       pickStats: name => void update($, statsNameAtom, () => name),
+      // A plan's header: selects it (Work keeps one selected row, so a run's selection gives way), or clears it.
+      pickPlan: path => void update($, selectedAtom, s => ({ ...s, work: s.work === PLAN_SELECTED + path ? '' : PLAN_SELECTED + path })),
+      archivePlan: path => void live?.archive(path),
       toggleTrust: () => void live?.setTrust(!pack?.trust.isTrusted),
       pickFinding: id => void update($, selectedAtom, s => ({ ...s, code: id })),
       dismissFinding: id => void live?.dismiss(id),

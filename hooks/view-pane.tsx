@@ -12,7 +12,7 @@ import { DebugPanel, debugCounts } from './view-debug'
 import { EnvView } from './view-env'
 import { GitView } from './view-git'
 import { PackView } from './view-pack'
-import { PlansView } from './view-plans'
+import { PLAN_SELECTED, PlansView } from './view-plans'
 import { isOver } from './budgets/gauge'
 import { mergedWarnings } from './plans/drift'
 import { BudgetsView } from './view-budgets'
@@ -88,6 +88,8 @@ export type PaneNav = {
   pickPhase: (title: string) => void
   pickRun: (key: string) => void
   pickStats: (name: string) => void
+  pickPlan: (path: string) => void
+  archivePlan: (path: string) => void
   toggleTrust: () => void
   pickFinding: (id: string) => void
   dismissFinding: (id: string) => void
@@ -134,7 +136,10 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
   const width = d.width - 2
   const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane }
-  const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: d.selected.work, pickRun: nav.pickRun }
+  // Work keeps one selected row: a run, or a plan (marked by its prefix), which Runs leaves alone.
+  const isPlanSelected = d.selected.work.startsWith(PLAN_SELECTED)
+  const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: isPlanSelected ? '' : d.selected.work, pickRun: nav.pickRun }
+  const planNav = { selected: isPlanSelected ? d.selected.work.slice(PLAN_SELECTED.length) : '', pick: nav.pickPlan, archive: nav.archivePlan }
   const hasViewBar = def.views.length > 1
   const headerRows = hasViewBar ? HEADER_ROWS + VIEW_BAR_ROWS : HEADER_ROWS
   return (
@@ -150,7 +155,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
         {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
         {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
         {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
-        {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now)}
+        {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now, planNav)}
         {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}
         {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust })}
       </Box>

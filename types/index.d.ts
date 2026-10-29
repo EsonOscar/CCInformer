@@ -124,7 +124,8 @@ export type PlanCheckpoint = { id: string; title: string; status: PlanStatus; pr
 // A plan file the pack names: its path from the repo's top folder, its first heading, and its checkpoints.
 export type PlanFile = { path: string; title: string; checkpoints: PlanCheckpoint[] }
 // `merged`: the PRs GitHub reported merged, for the board to warn about on checkpoints that still read open.
-export type PlansState = { plans: PlanFile[]; merged: number[]; at: number; error: string }
+// `archiveDir`: the pack's archive folder ('' for none), where a plan outside .local/plans/ is archived.
+export type PlansState = { plans: PlanFile[]; merged: number[]; archiveDir: string; at: number; error: string }
 
 // A process this session started (a Bash call, foreground or background) that the pack places in an
 // environment. Only a short label is kept, never the command line or an env file's values.
