@@ -9,6 +9,7 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Code** (`2`) › **Budgets** (`b`): the pack's [budgets](#budgets), such as a start-up bundle's size: each one's value against its limit (against a baseline it reads as the repo's own report does: "1.5% over the baseline, within the 5% budget"), where the value came from, and whether it still measures the tree as it is. `m` builds first, then reads, which takes as long as the build. Code's badge shows `!` while a fresh reading is over its budget.
 - **Work** (`3`) › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
 - **Work** (`3`) › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
+- **Work** (`3`) › **Plans** (`t`): the checkpoint board. Each plan file the pack names (see [Plans](#plans)), how many of its checkpoints are done, and every checkpoint with its status (✓ done, ◐ partly, ○ open, – dropped) and the PRs its line names.
 - **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
 - **Debug** (`5`) › **Pack** (`p`): the pack this repo resolved to (see [Packs](#packs)): each layer and how it went, whether the repo's own tools may run (`a` allows or stops them), and every value with the layer that set it.
 
@@ -49,7 +50,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Packs
 
-A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band and Now › Env (environments and processes), Code › Rules (checks) and Code › Budgets (budgets); Debug › Pack shows what this repo resolved to.
+A pack tells CCInformer about a kind of project: which processes, environments, checks, budgets, locks and generated files it has. Packs are data; the mod's own code acts on them. Today they drive the band and Now › Env (environments and processes), Code › Rules (checks), Code › Budgets (budgets) and Work › Plans (plans); Debug › Pack shows what this repo resolved to.
 
 Four layers, lowest first. Lists merge by `id`, and a later layer's fields win:
 
@@ -113,6 +114,14 @@ A budget is a number the repo keeps under (or over) a limit: a fixed one, or a s
 ]
 ```
 
+### Plans
+
+`plans.globs` names a repo's plan files (Markdown); files under `plans.archiveDir` are left out, and so is a file that defines no checkpoint. The board reads what a plan already says; nothing is written to it.
+
+- **A checkpoint** is an id at the start of a heading (below the plan's `#` title), of a table row's first cell, or of a bold label that starts a line or a list item, followed by punctuation or the end of the label: `### R3: foundation`, `| C7 | ... |`, `- **CP1, storage:**`. A mention mid-sentence, or an id followed by prose (`**R1 done when** ...`), is not one. A label that starts with several ids or a range (`CP1–CP3, CP1b`) defines each, and an id defined twice is one checkpoint.
+- **Its status** comes from the markers on its own line (for a table row, its first two cells): done for `merged as #N`, ✅, done or passed, or the id struck through; dropped for dropped, superseded or obsolete; partly for 🟡 or PARTLY; otherwise open. An id defined twice takes the strongest.
+- **Ids** look like `CP3`, `C7`, `R3a` or `PR 4` unless the pack's `plans.checkpoint` sets its own regex; `plans.done` replaces the done markers, and `plans.prRef` the PR pattern (`#(\d+)`).
+
 ## Numbers
 
 - **Context** (`ctx`) is what one request carried in: an agent's figure is its latest request's, as Claude Code's workflow bar counts it; a run's total is the bar's own.
@@ -140,6 +149,7 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Inline checks (`size-lines`) | no polling | always | on each Edit or Write, inside the mod: no command runs |
 | Turn checks (ESLint) | no polling | always | once a main turn ends that wrote files a check covers, in a trusted repo; at most 40 files a run, the rest in the next |
 | Budgets | no polling | | on opening Code › Budgets, on `r`; on `m` after a build (up to 10 minutes) |
+| Plans | no polling | | on opening Work › Plans, on `r`; a file is parsed again only when its modified time changed |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s, ESLint and a budget's report 120 s, a build 10 minutes), so a fetch or a lint never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
 
@@ -150,6 +160,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 - `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
 - `hooks/checks/`: the checks. `run.ts` runs them (reads the written files, runs ESLint through the heavy lane, keeps what the model hasn't read yet) and hands its findings back to `register.tsx`, which writes them to state; the rest is plain logic: `findings.ts` (the analyzers and the note the model reads), `suppressions.ts` (ESLint's suppression rule), `glob.ts`. Code › Rules is `hooks/view-rules.tsx`.
 - `hooks/budgets/`: the budgets, built the same way: `run.ts` reads the sources (the report through the heavy lane, CI's job logs through `gh`) and hands the readings back; `gauge.ts` is plain logic (reading a value, the limit, which reading shows, the words). Code › Budgets is `hooks/view-budgets.tsx`.
+- `hooks/plans/`: the checkpoint board, built the same way: `run.ts` finds the plan files and reads the changed ones; `parse.ts` is plain logic (what a checkpoint is, its status). Work › Plans is `hooks/view-plans.tsx`.
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
 - The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
 

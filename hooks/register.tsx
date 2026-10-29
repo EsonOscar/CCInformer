@@ -2,12 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, PlansState, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaFor, areaNames } from './areas'
 import { createBudgets } from './budgets/run'
 import { createChecks } from './checks/run'
+import { createPlans } from './plans/run'
 import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
@@ -89,6 +90,7 @@ const findingsAtom = atom({ plugin: 'ccinformer', key: 'findings' } as const, []
 const dismissedAtom = atom({ plugin: 'ccinformer', key: 'dismissed' } as const, [] as string[])
 const checkRunAtom = atom({ plugin: 'ccinformer', key: 'checkRun' } as const, null as CheckRun | null)
 const budgetsAtom = atom({ plugin: 'ccinformer', key: 'budgets' } as const, null as BudgetState | null)
+const plansAtom = atom({ plugin: 'ccinformer', key: 'plans' } as const, null as PlansState | null)
 const NOTHING_SELECTED: Record<Area, string> = { now: '', code: '', work: '', timeline: '', debug: '' }
 const selectedAtom = atom({ plugin: 'ccinformer', key: 'selected' } as const, NOTHING_SELECTED)
 const phaseAtom = atom({ plugin: 'ccinformer', key: 'phase' } as const, '')
@@ -273,6 +275,12 @@ export const register: Register = on => {
       lastWriteAt: () => lastWriteAt,
       save: state => update($, budgetsAtom, () => state),
     })
+    // The plan files' checkpoints (plans/run.ts), read on opening Work › Plans and on r.
+    const plans = createPlans($, {
+      pack: async () => packResolved ?? (await reloadPack(), packResolved),
+      report: () => packReport,
+      save: state => update($, plansAtom, () => state),
+    })
 
     let ticks = 0
     let isGitQueued = false
@@ -440,6 +448,7 @@ export const register: Register = on => {
       if (area === 'code' && (await read($, codeViewAtom)) === 'budgets') await budgets.refresh()
       if (area === 'work') await checkRecords().then(loadHistory)
       if (area === 'work' && (await read($, workViewAtom)) === 'stats') await loadStats()
+      if (area === 'work' && (await read($, workViewAtom)) === 'plans') await plans.refresh()
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
       if (area === 'now' && (await read($, nowViewAtom)) === 'env') await refreshProcesses()
     }
@@ -449,7 +458,7 @@ export const register: Register = on => {
       // An area, and one of its views when one is named; the area is kept for the next session.
       showArea: async ({ area, view }) => {
         await update($, areaAtom, () => area)
-        if (view === 'runs' || view === 'stats') await update($, workViewAtom, () => view)
+        if (view === 'runs' || view === 'stats' || view === 'plans') await update($, workViewAtom, () => view)
         if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
         if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
         if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack') await update($, debugViewAtom, () => view)
@@ -790,14 +799,14 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
-      read($, budgetsAtom),
+      read($, budgetsAtom), read($, plansAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, tasks, processes, memory, selfId, cwd,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, tasks, processes, memory, selfId, cwd,
       width: e.props.bodyColumns,
     }
     return PaneView(k, paneTitle(TITLE, $.plugin.root), data, {

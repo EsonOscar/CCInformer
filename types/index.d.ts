@@ -116,7 +116,14 @@ export type RunSummary = {
   spans: { title: string; ms: number }[]
   agents: AgentSample[]
 }
-export type WorkView = 'runs' | 'stats'
+export type WorkView = 'runs' | 'stats' | 'plans'
+// A checkpoint a plan file defines (an id at the start of a heading, a table row or a bold label), with the status
+// the markers on its line give and the PR numbers named there; `line` is where it is defined.
+export type PlanStatus = 'done' | 'partly' | 'dropped' | 'open'
+export type PlanCheckpoint = { id: string; title: string; status: PlanStatus; prs: number[]; line: number }
+// A plan file the pack names: its path from the repo's top folder, its first heading, and its checkpoints.
+export type PlanFile = { path: string; title: string; checkpoints: PlanCheckpoint[] }
+export type PlansState = { plans: PlanFile[]; at: number; error: string }
 
 // A process this session started (a Bash call, foreground or background) that the pack places in an
 // environment. Only a short label is kept, never the command line or an env file's values.
@@ -282,6 +289,7 @@ declare module 'claude-code' {
       dismissed: string[]
       checkRun: CheckRun | null
       budgets: BudgetState | null
+      plans: PlansState | null
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null
