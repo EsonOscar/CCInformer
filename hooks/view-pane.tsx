@@ -1,5 +1,5 @@
 import type {
-  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, PlansState, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef } from './areas'
@@ -12,6 +12,7 @@ import { DebugPanel, debugCounts } from './view-debug'
 import { EnvView } from './view-env'
 import { GitView } from './view-git'
 import { PackView } from './view-pack'
+import { PlansView } from './view-plans'
 import { isOver } from './budgets/gauge'
 import { BudgetsView } from './view-budgets'
 import { RulesView, shownFindings } from './view-rules'
@@ -46,6 +47,7 @@ export type PaneData = {
   dismissed: string[]
   checkRun: CheckRun | null
   budgets: BudgetState | null
+  plans: PlansState | null
   tasks: EnvTask[]
   processes: ProcessList | null
   memory: MemoryReading | null
@@ -104,6 +106,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const counts: Record<string, string> = d.area === 'debug' ? debugCounts(debugData) : d.area === 'code' && ruleCount ? { rules: String(ruleCount) } : {}
   const hasChecks = !!d.pack?.entries.some(e => e.section === 'checks' && !e.removedBy)
   const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
+  const hasPlans = !!d.pack?.entries.some(e => e.section === 'plans' && !e.removedBy)
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
   const width = d.width - 2
   const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane }
@@ -129,6 +132,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
       {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
       {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
       {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
+      {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, hasPlans, d.now)}
       {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}
       {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust })}
     </Box>

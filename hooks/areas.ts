@@ -33,6 +33,7 @@ export const AREAS: AreaDef[] = [
     views: [
       { id: 'runs', label: 'Runs', key: 'w' },
       { id: 'stats', label: 'Stats', key: 's' },
+      { id: 'plans', label: 'Plans', key: 't' },
     ],
   },
   { id: 'timeline', digit: '4', label: 'Timeline', views: [] },
