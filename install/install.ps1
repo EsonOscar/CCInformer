@@ -23,7 +23,39 @@ foreach ($candidate in @($env:CLAUDE_BIN, 'claude', (Join-Path $HOME '.local\bin
 if (-not $claude) { throw "Claude Code doesn't run here. Install it, or set CLAUDE_BIN to a working claude, and run this again." }
 Step "Using $claude ($(& $claude --version))"
 
-# 2. The marketplace.
+# 2. The tools the mod uses (README "Requirements"): git, then gh and Node, which are optional. A missing one is
+#    offered, one at a time, through winget, and installed only on a yes; with no console to ask in, the commands are
+#    only shown.
+$canAsk = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+function Ask($question) { $canAsk -and ((Read-Host "$question [y/N]") -match '^(y|yes)$') }
+$hasWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+$tools = @(
+  @{ Name = 'git'; Id = 'Git.Git'; Why = "adding the marketplace and Code > Git (needed); Git for Windows also brings Git Bash, for plan-feature's build waves" }
+  @{ Name = 'node'; Id = 'OpenJS.NodeJS.LTS'; Why = "switching on auto-update below, and a repo's own tools" }
+  @{ Name = 'gh'; Id = 'GitHub.cli'; Why = 'CI in Code > Git, budget readings from CI, merged-PR warnings in Work > Plans' }
+)
+foreach ($tool in $tools) {
+  if (Get-Command $tool.Name -ErrorAction SilentlyContinue) { continue }
+  Step "$($tool.Name) isn't installed. It's used for $($tool.Why)."
+  if (-not $hasWinget) { Write-Host "    winget isn't available here; install $($tool.Name) from its website."; continue }
+  $command = "winget install --id $($tool.Id) -e --source winget"
+  if (-not (Ask "    Install it now with: $command ?")) { Write-Host "    To install it later: $command"; continue }
+  & winget install --id $tool.Id -e --source winget --accept-package-agreements --accept-source-agreements
+  if ($LASTEXITCODE -ne 0) { Write-Warning "winget couldn't install $($tool.Name) (exit $LASTEXITCODE); carrying on without it." }
+  # What winget installed is on the PATH of new consoles; this one reads it again.
+  $env:Path += ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+}
+if (Get-Command gh -ErrorAction SilentlyContinue) {
+  $isLoggedIn = $false
+  try { & gh auth status *> $null; $isLoggedIn = $LASTEXITCODE -eq 0 } catch {}
+  if (-not $isLoggedIn) {
+    if (Ask "gh isn't logged in to GitHub. Log in now (gh auth login)?") { & gh auth login }
+    else { Write-Host "    gh isn't logged in to GitHub; to log in later: gh auth login" }
+  }
+}
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw "git is needed to add the marketplace. Install it, and run this again." }
+
+# 3. The marketplace.
 $markets = (& $claude plugin marketplace list --json) -join "`n"
 if ($markets -match "`"name`":\s*`"$Marketplace`"") {
   Step "Marketplace $Marketplace is already added; refreshing it"
@@ -34,8 +66,8 @@ if ($markets -match "`"name`":\s*`"$Marketplace`"") {
 }
 if ($LASTEXITCODE -ne 0) { throw "The marketplace step failed (exit $LASTEXITCODE)." }
 
-# 3. Auto-update on, and no local copy of the mod overriding the installed one. Node writes settings.json
-#    the way Claude Code does (2-space JSON), so nothing else in the file changes; a backup is kept.
+# 4. Auto-update on, and no local copy of the mod overriding the installed one. Node (16 or later) writes
+#    settings.json the way Claude Code does (2-space JSON), so nothing else in the file changes; a backup is kept.
 $settingsScript = @'
 const fs = require('fs'), path = require('path'), os = require('os')
 const file = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json')
@@ -78,18 +110,21 @@ for (const d of shellDirs) {
   else console.error('Warning: CLAUDE_CODE_PLUGIN_DIRS in this shell names a copy of the mod (' + d + '), which overrides the installed one. Remove it from your shell profile.')
 }
 '@
-if (Get-Command node -ErrorAction SilentlyContinue) {
+$nodeMajor = 0
+if (Get-Command node -ErrorAction SilentlyContinue) { try { $nodeMajor = [int](& node -p "process.versions.node.split('.')[0]") } catch {} }
+if ($nodeMajor -ge 16) {
   Step "Switching on auto-update"
   $settingsScript | node -
   if ($LASTEXITCODE -ne 0) { throw "Updating settings.json failed (exit $LASTEXITCODE); nothing was written." }
 } else {
-  Write-Warning "Node isn't installed, so auto-update isn't switched on. In a Claude Code session: /plugin, Marketplaces, $Marketplace, Enable auto-update."
+  $why = if ($nodeMajor) { "this Node (v$nodeMajor) is older than 16" } else { "Node isn't installed" }
+  Write-Warning "Auto-update isn't switched on: $why. In a Claude Code session: /plugin, Marketplaces, $Marketplace, Enable auto-update."
   if ($env:CLAUDE_CODE_PLUGIN_DIRS) {
     Write-Warning "CLAUDE_CODE_PLUGIN_DIRS is set in this shell ($env:CLAUDE_CODE_PLUGIN_DIRS). A copy of the mod named there overrides the installed one; remove it from settings.json or your shell profile."
   }
 }
 
-# 4. The mod.
+# 5. The mod.
 $installed = (& $claude plugin list --json) -join "`n"
 if ($installed -match "`"id`":\s*`"$Plugin@$Marketplace`"") {
   Step "Updating $Plugin"
