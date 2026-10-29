@@ -61,7 +61,7 @@ One change per PR, in English.
 
 ## Versions
 
-Installed machines only pick up a change when `version` in `.claude-plugin/plugin.json` goes up. So a PR that changes what ships (`.claude-plugin/`, `hooks/`, `types/`, `tsconfig.json`) raises it in the same PR. The `version-bump` check fails the PR otherwise. Docs, tests and CI changes don't need a bump.
+Installed machines only pick up a change when `version` in `.claude-plugin/plugin.json` goes up. So a PR that changes what ships (`.claude-plugin/`, `hooks/`, `skills/`, `types/`, `tsconfig.json`) raises it in the same PR. The `version-bump` check fails the PR otherwise. Docs, tests and CI changes don't need a bump.
 
 - **Where:** `plugin.json` only. `marketplace.json` carries no version, so the two can't disagree.
 - **How much, while on 0.x:** patch for a fix, minor for a feature *or* a breaking change. CCInformer stays on 0.x until the planned feature set is complete; 1.0.0 is a deliberate decision, after which a breaking change is a major bump.

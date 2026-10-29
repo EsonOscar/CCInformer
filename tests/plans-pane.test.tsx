@@ -126,13 +126,30 @@ test('r reads the plans again, parsing only the files that changed', async ($, o
   await ui.unmount()
 })
 
-test("a pack that names no plan files says so", async ($, on) => {
+test('.local/plans/ is read in every repo, its archive left out, even when the pack names no plans', async ($, on) => {
+  const { clock } = engine(on, {
+    [PACKS + '/shop.pack.jsonc']: USER_PACK.replace(/,"plans":\{[^}]*\}/, ''),
+    '/repo/.local/plans/2026-10-29-search.md': '# Search\n### CP1: index \u2014 merged as #41\n### CP2: results page',
+    '/repo/.local/plans/archive/2026-09-01-old.md': '# Old\n### CP1: done long ago \u2014 done',
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'plans' })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '▍2026-10-29-SEARCH.MD' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '1/2 done' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /2026-09-01-OLD/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('with no plans anywhere, the board says where a plan goes', async ($, on) => {
   const { clock } = engine(on, { [PACKS + '/shop.pack.jsonc']: USER_PACK.replace(/,"plans":\{[^}]*\}/, '') })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.settle()
   await $.command.run({ ...TYPED, command: 'ccinformer', args: 'plans' })
   await clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /names no plan files/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No plans yet: a plan in \.local\/plans\// })).toBeDefined()
   await ui.unmount()
 })

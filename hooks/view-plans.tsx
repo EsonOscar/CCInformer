@@ -11,18 +11,16 @@ const STATUS_LOOK: Record<PlanCheckpoint['status'], Glyph> = {
 }
 const PRS_SHOWN = 3
 
-// The checkpoint board: each plan file the pack names, how many of its checkpoints are done, and every checkpoint with
-// its status (from the markers on its own line) and the PRs it names.
-export const PlansView = (k: Kit, state: PlansState | null, hasPlans: boolean, now: number): JSX.Element => {
+// The checkpoint board: each plan file (in .local/plans/, or named by the pack), how many of its checkpoints are done,
+// and every checkpoint with its status (from the markers on its own line) and the PRs it names.
+export const PlansView = (k: Kit, state: PlansState | null, now: number): JSX.Element => {
   const { Box } = k
   return (
     <Box flexDirection="column">
-      {!hasPlans && Section(k, 'Plans')}
-      {!hasPlans && Empty(k, "This repo's pack names no plan files.")}
-      {hasPlans && !state && Section(k, 'Plans')}
-      {hasPlans && !state && Empty(k, 'Reading the plans…')}
-      {hasPlans && state && state.plans.length === 0 && Section(k, 'Plans', ago(now - state.at))}
-      {hasPlans && state && state.plans.length === 0 && Empty(k, 'No plan file defines a checkpoint.')}
+      {!state && Section(k, 'Plans')}
+      {!state && Empty(k, 'Reading the plans…')}
+      {state && state.plans.length === 0 && Section(k, 'Plans', ago(now - state.at))}
+      {state && state.plans.length === 0 && Empty(k, 'No plans yet: a plan in .local/plans/ (as /ccinformer:plan-feature saves it) shows here.')}
       {state?.plans.map(p => Plan(k, p))}
     </Box>
   )
