@@ -9,7 +9,6 @@ import { areaFor, areaNames } from './areas'
 import { createBudgets } from './budgets/run'
 import { createChecks } from './checks/run'
 import { createPlans } from './plans/run'
-import { collectCi, collectDiff, collectGit } from './collect'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
 import { endedTaskIds, envTaskFor } from './env/classify'
@@ -18,19 +17,14 @@ import type { Platform } from './env/procs'
 import { classifyCommand } from './env/read'
 import { paneTitle } from './format'
 import { readUsage } from './usage'
-import { ciOutcome } from './insight'
-import { parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
-import { isFinished } from './phases'
+import { createGit } from './git/run'
+import { parseWorkflowMeta } from './parse'
 import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
 import type { ResolvedPack } from './packs/types'
-import { gitFolderFacts } from './read-git'
-import { listRecordFiles, readText } from './read-records'
 import { readBeats, readBranch } from './read-sessions'
-import { mergeRecord, projectDirName, recordKey, runFromRecord, upgradeRun } from './records'
-import {
-  LISTED_STATES, TOUCHING_TOOLS, capped, contextTokens, endedState, isOver, isPush, pruneAgents, summarize, taskOf, toolLabel,
-} from './rows'
-import { summarizeRun } from './stats'
+import { projectDirName, upgradeRun } from './records'
+import { TOUCHING_TOOLS, capped, contextTokens, endedState, isPush, summarize, taskOf, toolLabel } from './rows'
+import { MAX_AGENTS, MAX_RUNS, createRuns } from './runs/run'
 import type { Kit } from './ui'
 import { EnvBand, bandTasks } from './view-band'
 import { PaneView, scrolledTop } from './view-pane'
@@ -50,7 +44,6 @@ const STORE_AREA = 'area'
 const STORE_OLD_TAB = 'tab'
 const STORE_OPEN = 'isOpen'
 const STORE_COLUMNS = 'columns'
-const STORE_CI_PINGED = 'ciPinged'
 const STORE_SESSION = 'session:'
 
 // Everything below counts in ticks of a second.
@@ -72,10 +65,7 @@ const ACTIVE_MS = 3 * 60_000
 const TOUCH_SETTLE_MS = 400
 const RECORD_SETTLE_MS = 3000
 const FETCH_TIMEOUT_MS = 60_000
-const CI_PINGS_KEPT = 20
 const BEAT_FORGOTTEN_MS = 24 * 60 * 60_000
-const HISTORY_SESSIONS = 12
-const HISTORY_RECORDS = 8
 const STATS_EVERY_TICKS = 120
 // The plan files while Work › Plans shows, so a checkpoint marked done shows without a refresh. GitHub is asked again
 // about the open PRs they name every minute while it shows, and every 10 minutes otherwise in an active session (pane
@@ -127,8 +117,6 @@ const nowViewAtom = atom({ plugin: 'ccinformer', key: 'nowView' } as const, 'env
 const processesAtom = atom({ plugin: 'ccinformer', key: 'processes' } as const, null as ProcessList | null)
 const memoryAtom = atom({ plugin: 'ccinformer', key: 'memory' } as const, null as MemoryReading | null)
 
-const MAX_AGENTS = 300
-const MAX_RUNS = 12
 const MAX_TOOLS = 150
 const MAX_STEPS = 200
 const MAX_COMPACTIONS = 30
@@ -314,113 +302,29 @@ export const register: Register = on => {
     let isGitQueued = false
     let isRecordQueued = false
     let ciHotUntil = 0
-    // Records already read, by path, with the mtime they were read at.
-    const readRecords = new Map<string, number>()
 
     const isActive = (now: number) => isTurnRunning || now - lastActive < ACTIVE_MS
 
-    // Tells the person once when this commit's checks finish; one session pings for all of them.
-    const pingCi = async (prev: CiSnapshot | null, ci: CiSnapshot) => {
-      const outcome = ciOutcome(prev, ci)
-      if (!outcome) return
-      const pinged = await $.store.get(STORE_CI_PINGED)
-      const list = Array.isArray(pinged) ? (pinged as string[]) : []
-      if (list.includes(ci.head)) return
-      await $.store.set(STORE_CI_PINGED, [...list, ci.head].slice(-CI_PINGS_KEPT))
-      $.ui.toast((outcome.isOk ? '✓ ' : '✗ ') + outcome.text)
-      await $.ui.notify(outcome.text, { title: outcome.isOk ? 'CI passed' : 'CI failed' })
-    }
-    const refreshCi = () =>
-      solo('ci', async () => {
-        const git = await read($, gitAtom)
-        if (!git || git.error) return
-        const prev = await read($, ciAtom)
-        const ci = await collectCi(exec, git.branch, git.head, await $.clock.now())
-        await update($, ciAtom, () => ci)
-        await pingCi(prev, ci)
-      })
-    const refreshGit = () =>
-      solo('git', async () => {
-        const before = await read($, gitAtom)
-        const collected = await collectGit(exec, await $.clock.now())
-        const git = collected.gitDir ? { ...collected, ...(await gitFolderFacts($, collected.gitDir)) } : collected
-        await update($, gitAtom, () => git)
-        // An open diff follows its file, and closes once the file is no longer changed (committed, reverted).
-        const diff = await read($, diffAtom)
-        const changed = diff && !diff.isLoading ? git.files.find(f => f.path === diff.path) : undefined
-        if (diff && !diff.isLoading && !changed) {
-          await update($, diffAtom, () => null)
-          await update($, selectedAtom, s => ({ ...s, code: '' }))
-        }
-        if (changed) void loadDiff(changed, git.root)
-        if (!before || before.branch !== git.branch || before.head !== git.head) await refreshCi()
-      })
-    // A file's diff for the preview: against HEAD, or an untracked file's first lines as added.
-    const loadDiff = async (file: FileChange, root: string) => {
-      const text = file.code === '??' ? previewNewFile(await readText($, `${root}/${file.path}`)) : previewDiff(await collectDiff(exec, file.path))
-      const shown = await read($, diffAtom)
-      if (shown?.path === file.path) await update($, diffAtom, () => ({ path: file.path, text, isLoading: false }))
-    }
-    // Subagents the session lists; workflow agents aren't listed, their turn.complete and run record end them.
-    const pollAgents = async () => {
-      const listed = await $.agent.list()
-      if (listed.length === 0) return
-      const byId = new Map(listed.map(a => [a.id, LISTED_STATES[a.status]]))
-      const now = await $.clock.now()
-      await update($, agentsAtom, list =>
-        list.map(a => {
-          const status = byId.get(a.id)
-          if (!status || status === a.status) return a
-          return { ...a, status, endedAt: isOver(status) ? a.endedAt || now : 0 }
-        }),
-      )
-    }
-    // A run this session started is finished once Claude Code has written its record: take its status and totals.
-    const checkRecords = async () => {
-      const runs = await read($, runsAtom)
-      for (const run of runs.filter(r => !r.session && r.runId && !isFinished(r))) {
-        const path = `${projectsDir}/${selfId}/workflows/${run.runId}.json`
-        if (!(await $.fs.exists(path))) continue
-        const record = runFromRecord(await readText($, path), run.toolUseId, '')
-        if (!record || !isFinished(record.run)) continue
-        const done = { ...record.run, phases: record.run.phases.length ? record.run.phases : run.phases }
-        await update($, runsAtom, list => list.map(r => (r.toolUseId === run.toolUseId ? done : r)))
-        await update($, agentsAtom, list => mergeRecord(list, record))
-        readRecords.set(path, Number.MAX_SAFE_INTEGER)
-      }
-    }
-    // Finished runs from this project's recent sessions, newest first, read once each.
-    const loadHistory = async () => {
-      const fresh = (await listRecordFiles($, projectsDir, HISTORY_SESSIONS))
-        .sort((a, b) => b.mtime - a.mtime)
-        .slice(0, HISTORY_RECORDS)
-        .filter(f => (readRecords.get(f.path) ?? -1) < f.mtime)
-      for (const f of fresh) {
-        readRecords.set(f.path, f.mtime)
-        const runs = await read($, runsAtom)
-        const runId = f.path.split('/').pop()?.replace(/\.json$/, '') ?? ''
-        if (runs.some(r => r.runId === runId)) continue
-        const record = runFromRecord(await readText($, f.path), recordKey(runId), f.session === selfId ? '' : f.session.slice(0, 8))
-        if (!record) continue
-        const kept = [...runs, record.run].sort((a, b) => a.startedAt - b.startedAt).slice(-MAX_RUNS)
-        await update($, runsAtom, () => kept)
-        await update($, agentsAtom, list => pruneAgents([...list, ...record.agents], kept).slice(-MAX_AGENTS))
-      }
-    }
-    // Every finished run in this project, for the Stats view: each record is read once, again only when it changes.
-    const statsCache = new Map<string, { mtime: number; summary: RunSummary | null }>()
-    const loadStats = async () => {
-      let isChanged = false
-      for (const f of await listRecordFiles($, projectsDir)) {
-        if (statsCache.get(f.path)?.mtime === f.mtime) continue
-        const record = runFromRecord(await readText($, f.path), recordKey(f.name.replace(/\.json$/, '')), f.session === selfId ? '' : f.session.slice(0, 8))
-        statsCache.set(f.path, { mtime: f.mtime, summary: record ? summarizeRun(record) : null })
-        isChanged = true
-      }
-      if (!isChanged) return
-      const summaries = [...statsCache.values()].flatMap(c => (c.summary ? [c.summary] : []))
-      await update($, statsAtom, () => summaries.sort((a, b) => a.startedAt - b.startedAt))
-    }
+    // Code › Git (git/run.ts): git, CI with its ping, and a file's diff.
+    const { refreshGit, refreshCi, loadDiff } = createGit($, {
+      exec,
+      git: () => read($, gitAtom),
+      saveGit: git => update($, gitAtom, () => git),
+      ci: () => read($, ciAtom),
+      saveCi: ci => update($, ciAtom, () => ci),
+      diff: () => read($, diffAtom),
+      saveDiff: diff => update($, diffAtom, () => diff),
+      clearSelection: () => update($, selectedAtom, s => ({ ...s, code: '' })),
+    })
+    // Work › Runs and Stats (runs/run.ts): subagents, this session's runs as their records arrive, the history, stats.
+    const { pollAgents, checkRecords, loadHistory, loadStats } = createRuns($, {
+      projectsDir,
+      selfId,
+      runs: () => read($, runsAtom),
+      saveRuns: change => update($, runsAtom, change),
+      saveAgents: change => update($, agentsAtom, change),
+      saveStats: stats => update($, statsAtom, () => stats),
+    })
     // Tells the other sessions what this one is doing, through the store they all share.
     const beat = async (now: number) => {
       const usage = await $.session.usage()
