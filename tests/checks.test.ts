@@ -125,6 +125,28 @@ describe("ESLint's JSON", () => {
     expect(findings.map(f => [f.rule, f.line, f.ciWouldFail])).toEqual([['parse', 7, true]])
     expect(eslintFindings(ESLINT, 'Oops', '/repo', {}, () => []).error).toBe("ESLint's output could not be read")
   })
+
+  test('module-boundaries rules are findings like any other: CI errors told to the model, suppressible', async () => {
+    const out = JSON.stringify([
+      { filePath: '/repo/src/modules/orders/page.tsx', messages: [message('module-boundaries/no-internal-import', 3), message('module-boundaries/no-cross-module-import', 8)] },
+      { filePath: '/repo/src/modules/users/view.tsx', messages: [message('module-boundaries/no-internal-import', 5)] },
+      { filePath: '/repo/src/modules/users/list.tsx', messages: [] },
+    ])
+    const suppressions = {
+      'src/modules/users/view.tsx': { 'module-boundaries/no-internal-import': { count: 1 } },
+      'src/modules/users/list.tsx': { 'module-boundaries/no-cross-module-import': { count: 1 } },
+    }
+    const { findings } = eslintFindings(ESLINT, out, '/repo', suppressions, () => [])
+    expect(findings.map(f => [f.file, f.line, f.rule, f.severity, f.ciWouldFail])).toEqual([
+      ['src/modules/orders/page.tsx', 3, 'module-boundaries/no-internal-import', 'error', true],
+      ['src/modules/orders/page.tsx', 8, 'module-boundaries/no-cross-module-import', 'error', true],
+      // view.tsx: its one violation is suppressed. list.tsx: a suppression with nothing left to suppress.
+      ['src/modules/users/list.tsx', 0, 'module-boundaries/no-cross-module-import', 'error', true],
+    ])
+    const note = noteFor(findings, 'turn')
+    expect(note).toContain('- src/modules/orders/page.tsx:3 module-boundaries/no-internal-import: module-boundaries/no-internal-import at 3 [CI will fail]')
+    expect(note).toContain('- src/modules/orders/page.tsx:8 module-boundaries/no-cross-module-import: module-boundaries/no-cross-module-import at 8 [CI will fail]')
+  })
 })
 
 test('the note for the model lists what fails CI and the project rules, never information', async () => {
