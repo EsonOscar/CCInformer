@@ -8,6 +8,10 @@ import { parsePlan } from './parse'
 
 // How deep a `**` glob looks for plan files.
 const MAX_DEPTH = 6
+// Where the plan-feature skill saves the plan it builds from: read in every repo, beside what the pack names, with
+// its archive folder left out.
+export const PLANS_GLOB = '.local/plans/*.md'
+const PLANS_ARCHIVE = '.local/plans/archive'
 
 // What the plans take from the session: its pack and the report it came with, and where their state goes (the atom
 // lives in the hooks module).
@@ -22,8 +26,8 @@ export type Plans = {
   refresh: () => Promise<void>
 }
 
-// The checkpoint board's data: every file the pack's plan globs match (outside the archive folder), each parsed for
-// the checkpoints it defines. Files that define none aren't listed.
+// The checkpoint board's data: every plan in `.local/plans/` and every file the pack's plan globs match (outside the
+// archive folders), each parsed for the checkpoints it defines. Files that define none aren't listed.
 export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
   const parsed = new Map<string, { mtime: number; plan: PlanFile }>()
 
@@ -48,7 +52,7 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     return (await listFiles(root, dir, depth)).filter(f => matchesGlob([glob], f))
   }
 
-  const readPlan = async (root: string, path: string, spec: PlanSpec): Promise<PlanFile | null> => {
+  const readPlan = async (root: string, path: string, spec: Pick<PlanSpec, 'checkpoint' | 'done' | 'prRef'>): Promise<PlanFile | null> => {
     const stat = await $.fs.stat(`${root}/${path}`).catch(() => null)
     if (!stat) return null
     const cached = parsed.get(path)
@@ -65,13 +69,14 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
       const root = deps.report()?.root ?? ''
       const spec = pack?.plans
       const at = await $.clock.now()
-      if (!root || !spec?.globs.length) return void (await deps.save({ plans: [], at, error: '' }))
-      const archive = spec.archiveDir ? spec.archiveDir.replace(/\/+$/, '') + '/' : ''
+      if (!root) return void (await deps.save({ plans: [], at, error: '' }))
+      const globs = [...new Set([PLANS_GLOB, ...(spec?.globs ?? [])])]
+      const archives = [PLANS_ARCHIVE, spec?.archiveDir ?? ''].filter(Boolean).map(a => a.replace(/\/+$/, '') + '/')
       const paths = new Set<string>()
-      for (const glob of spec.globs) for (const f of await filesOf(root, glob)) if (!archive || !f.startsWith(archive)) paths.add(f)
+      for (const glob of globs) for (const f of await filesOf(root, glob)) if (!archives.some(a => f.startsWith(a))) paths.add(f)
       const plans: PlanFile[] = []
       for (const path of [...paths].sort()) {
-        const plan = await readPlan(root, path, spec)
+        const plan = await readPlan(root, path, spec ?? {})
         if (plan?.checkpoints.length) plans.push(plan)
       }
       await deps.save({ plans, at, error: '' })

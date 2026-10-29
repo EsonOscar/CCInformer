@@ -21,7 +21,7 @@ The leak guard backs this up where the clone has `ccinformer.denylist` set: `pre
   claude plugin test .
   ```
 - `.claude-plugin/types/` is written by Claude Code and ignores itself; leave it alone.
-- What **ships** to installed machines: `.claude-plugin/`, `hooks/`, `types/`, `tsconfig.json`. Every merge into `main` is a release, so a PR that changes any of them raises `version` in `plugin.json`, or machines never see it. On 0.x: patch for a fix, minor for a feature or a breaking change (CONTRIBUTING.md "Versions" says what counts as breaking). Releases are tagged by CI; the GitHub releases page is the changelog.
+- What **ships** to installed machines: `.claude-plugin/`, `hooks/`, `skills/`, `types/`, `tsconfig.json`. Every merge into `main` is a release, so a PR that changes any of them raises `version` in `plugin.json`, or machines never see it. On 0.x: patch for a fix, minor for a feature or a breaking change (CONTRIBUTING.md "Versions" says what counts as breaking). Releases are tagged by CI; the GitHub releases page is the changelog.
 
 ## Git and PRs
 

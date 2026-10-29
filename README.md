@@ -9,7 +9,7 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Code** (`2`) › **Budgets** (`b`): the pack's [budgets](#budgets), such as a start-up bundle's size: each one's value against its limit (against a baseline it reads as the repo's own report does: "1.5% over the baseline, within the 5% budget"), where the value came from, and whether it still measures the tree as it is. `m` builds first, then reads, which takes as long as the build. Code's badge shows `!` while a fresh reading is over its budget.
 - **Work** (`3`) › **Runs** (`w`): the running workflow with its phases (click a chip, or `p`/`n`, `l` to follow the live one), a timeline of its agents, and each agent's model, tools, context and output tokens. A list of runs from this session and the project's recent sessions, read from the run records Claude Code writes; click one to see it in full (`x` closes it). Ordinary subagents below.
 - **Work** (`3`) › **Stats** (`s`): every finished run of a workflow in this project (`o` for the next workflow). Full runs and partial ones (a re-check) are averaged apart; a trend of the full runs' durations; each phase's average time and share of the run; per phase, how each model's agents did (time and context per agent, over the agents that ran rather than being replayed from cache).
-- **Work** (`3`) › **Plans** (`t`): the checkpoint board. Each plan file the pack names (see [Plans](#plans)), how many of its checkpoints are done, and every checkpoint with its status (✓ done, ◐ partly, ○ open, – dropped) and the PRs its line names.
+- **Work** (`3`) › **Plans** (`t`): the checkpoint board. Each plan in `.local/plans/` and each plan file the pack names (see [Plans](#plans)), how many of its checkpoints are done, and every checkpoint with its status (✓ done, ◐ partly, ○ open, – dropped) and the PRs its line names.
 - **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
 - **Debug** (`5`) › **Pack** (`p`): the pack this repo resolved to (see [Packs](#packs)): each layer and how it went, whether the repo's own tools may run (`a` allows or stops them), and every value with the layer that set it.
 
@@ -47,6 +47,26 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 - `/ccinformer` opens or closes the pane. `/ccinformer now|code|work|debug` opens it on an area, and a view's name opens its area on that view (`/ccinformer stats`); the old tab names (`git`, `agents`, `sessions`) still work. With an argument it never closes the pane. `/ccinformer pack trust` and `/ccinformer pack untrust` allow or stop the repo's own tools. `/side` is a short alias for the same thing.
 - Ctrl+X Tab gives it the keyboard: `1`-`5` switch areas, the letters shown switch an area's views and run its actions, `r` refreshes, Esc gives the keyboard back. A key is used once per area. Clicking works without that.
+
+## Skills
+
+Three planning skills come with the mod. Each plans in plan mode, asks you only the decisions that are really yours, and writes a plan whose checkpoints the [checkpoint board](#plans) (Work › Plans) shows, so you can follow the work as it happens.
+
+| Skill | Use it for | What it costs |
+|---|---|---|
+| `/ccinformer:plan-feature <task>` | A feature worth a thorough review: several parts of the code, data, access rules | A workflow of agents: read-only scouts, 1 to 3 planners, then critics whose every finding is checked against the code. Often 10 to 20 agents |
+| `/ccinformer:plan-feature-small <task>` | A smaller change, or a tighter token budget | No workflow: Claude reads the code itself (with at most two helpers) and reviews its own plan against it |
+| `/ccinformer:plan-handoff <feature>` | Planning for someone who isn't a developer | Like plan-feature, but it asks only product questions in plain words and ends with a doc a developer builds from, instead of building |
+
+**A run, step by step:**
+
+1. Switch to plan mode (Shift+Tab until the bottom of the screen says plan mode) and run the skill with what you want built.
+2. Answer the questions it asks: only real decisions, each with a recommended option.
+3. Read the plan and approve it. plan-feature and plan-feature-small then save it to `.local/plans/<date>-<slug>.md` (only if git ignores that folder; otherwise they ask where) and build it checkpoint by checkpoint. A larger plan-feature build can run in waves of work packages, which needs bash (Git Bash on Windows).
+4. Follow along in Work › Plans (`3`, then `t`): each checkpoint's line is marked as it is done or merged. Nothing is committed or pushed unless you ask.
+5. When every checkpoint is done, the plan stays where it is, for the board to offer archiving.
+
+**Planning settings.** What makes plans fit a repo (its checks, the areas every plan should read, the risks to review for, which actions need your OK, its commit and PR rules, where plans go) can be written down once. The skills read a committed `## Planning` section in the repo's CLAUDE.md (or a `.claude/planning.md`), and then the private `.local/ccinformer-planning.md`, which adds to it or overrides it. A repo with neither works too: after its first run, the skill offers to save what it learned as `.local/ccinformer-planning.md`, from the template in `skills/plan-feature/planning-template.md`, so every later plan in that repo starts from it. Edit the file as you like; delete a section to fall back to the defaults.
 
 ## Packs
 
@@ -116,10 +136,10 @@ A budget is a number the repo keeps under (or over) a limit: a fixed one, or a s
 
 ### Plans
 
-`plans.globs` names a repo's plan files (Markdown); files under `plans.archiveDir` are left out, and so is a file that defines no checkpoint. The board reads what a plan already says; nothing is written to it.
+The board reads every plan in `.local/plans/` (where `/ccinformer:plan-feature` saves the plan it builds from), in every repo, plus the files a pack's `plans.globs` names (Markdown). Files under `.local/plans/archive/` or the pack's `plans.archiveDir` are left out, and so is a file that defines no checkpoint. The board reads what a plan already says; nothing is written to it.
 
 - **A checkpoint** is an id at the start of a heading (below the plan's `#` title), of a table row's first cell, or of a bold label that starts a line or a list item, followed by punctuation or the end of the label: `### R3: foundation`, `| C7 | ... |`, `- **CP1, storage:**`. A mention mid-sentence, or an id followed by prose (`**R1 done when** ...`), is not one. A label that starts with several ids or a range (`CP1–CP3, CP1b`) defines each, and an id defined twice is one checkpoint.
-- **Its status** comes from the markers on its own line (for a table row, its first two cells): done for `merged as #N`, ✅, done or passed, or the id struck through; dropped for dropped, superseded or obsolete; partly for 🟡 or PARTLY; otherwise open. An id defined twice takes the strongest.
+- **Its status** comes from the markers on its own line (for a table row, its first two cells): done for `merged as #N`, a check-mark emoji, done or passed, or the id struck through; dropped for dropped, superseded or obsolete; partly for a yellow-circle emoji or PARTLY; otherwise open. An id defined twice takes the strongest.
 - **Ids** look like `CP3`, `C7`, `R3a` or `PR 4` unless the pack's `plans.checkpoint` sets its own regex; `plans.done` replaces the done markers, and `plans.prRef` the PR pattern (`#(\d+)`).
 
 ## Numbers
@@ -161,6 +181,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 - `hooks/checks/`: the checks. `run.ts` runs them (reads the written files, runs ESLint through the heavy lane, keeps what the model hasn't read yet) and hands its findings back to `register.tsx`, which writes them to state; the rest is plain logic: `findings.ts` (the analyzers and the note the model reads), `suppressions.ts` (ESLint's suppression rule), `glob.ts`. Code › Rules is `hooks/view-rules.tsx`.
 - `hooks/budgets/`: the budgets, built the same way: `run.ts` reads the sources (the report through the heavy lane, CI's job logs through `gh`) and hands the readings back; `gauge.ts` is plain logic (reading a value, the limit, which reading shows, the words). Code › Budgets is `hooks/view-budgets.tsx`.
 - `hooks/plans/`: the checkpoint board, built the same way: `run.ts` finds the plan files and reads the changed ones; `parse.ts` is plain logic (what a checkpoint is, its status). Work › Plans is `hooks/view-plans.tsx`.
+- `skills/`: the planning skills. `plan-feature` holds the shared parts: the workflow scripts (`plan-fanout.js`, which `plan-handoff` uses too, and `build-fanout.js`), the wave snapshot script and `planning-template.md`; `plan-feature-small` and `plan-handoff` refer to them there.
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
 - The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
 
