@@ -24,6 +24,8 @@ export type GitDeps = {
   diff: () => Promise<DiffPreview | null>
   saveDiff: (diff: DiffPreview | null) => Promise<unknown>
   clearSelection: () => Promise<unknown>
+  // A commit's checks finished with a failure, in the session that pinged for it (active CI mode decides what follows).
+  onCiFailed?: (ci: CiSnapshot) => Promise<void>
 }
 
 export type Git = {
@@ -50,6 +52,8 @@ export function createGit($: EngineInterface, deps: GitDeps): Git {
     await $.store.set(STORE_CI_PINGED, [...list, ci.head].slice(-CI_PINGS_KEPT))
     $.ui.toast((outcome.isOk ? '✓ ' : '✗ ') + outcome.text)
     await $.ui.notify(outcome.text, { title: outcome.isOk ? 'CI passed' : 'CI failed' })
+    // Not awaited: what follows a failure (fetching logs, an agent) must never hold up the CI poll.
+    if (!outcome.isOk) void deps.onCiFailed?.(ci).catch(() => undefined)
   }
   const refreshCi = () =>
     solo('ci', async () => {

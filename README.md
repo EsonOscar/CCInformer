@@ -6,7 +6,7 @@ A Claude Code mod: a pane docked on the right of the terminal, in five areas you
   - **Env** (`e`): the processes this session started, which environment each points at and how long it has run; the processes your pack knows on this machine, with their memory; and free memory, with a toast when it runs low. Command lines and env values are never kept.
   - **Sessions** (`s`): the other Claude sessions on this machine and what each is working on, with a warning when another one works in this folder.
 - **Code** (`2`)
-  - **Git** (`g`): branch, upstream, ahead/behind, and a warning during a rebase or merge. CI for the branch's PR, a failed check linking to its run, and a toast plus a desktop notification when a commit's checks finish. Changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits to push and pull, recent commits, branches, stashes and worktrees. `u` fetches.
+  - **Git** (`g`): branch, upstream, ahead/behind, and a warning during a rebase or merge. CI for the branch's PR, a failed check linking to its run, and a toast plus a desktop notification when a commit's checks finish. In active mode (`i`, per repo, off by default), a failed check makes Claude look into it and present the cause and a fix idea in a turn of its own, which stays read-only until it ends or you type into it. It uses tokens. Changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits to push and pull, recent commits, branches, stashes and worktrees. `u` fetches.
   - **Rules** (`k`): what the pack's [checks](#checks) found in the files Claude wrote, marked `CI` where pushing would fail CI and `rule` where it's the project's own rule. Press a finding, then `x` to dismiss it. Claude is told about them too.
   - **Budgets** (`b`): the pack's [budgets](#budgets), such as a bundle's size, against their limits. `m` builds, then measures.
 - **Work** (`3`)
@@ -30,7 +30,7 @@ The rest is optional; without it, only the parts that use it stay empty:
 
 | Tool | Used for | Without it |
 |---|---|---|
-| `gh`, logged in (`gh auth status`) | CI in Code › Git, a budget's `ci-log` source, merged-PR warnings in Work › Plans | no CI, no CI readings, no merged-PR warnings |
+| `gh`, logged in (`gh auth status`) | CI in Code › Git and looking into a failed check, a budget's `ci-log` source, merged-PR warnings in Work › Plans | no CI, no CI readings, no merged-PR warnings |
 | Node | the install script's auto-update step; a repo's own tools | the script leaves auto-update off, and says how to switch it on |
 | Windows PowerShell (Windows) / `ps`, `/proc/meminfo`, `rm` (elsewhere) | Now › Env's processes and memory; removing a plan's original when it's archived | Env says the process list could not be read; an archive keeps the original |
 | bash (Git Bash on Windows) | the build waves of `/ccinformer:plan-feature` | build that plan in the main session instead |
@@ -63,7 +63,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Use
 
-- `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/side` is a short alias.
+- `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/side` is a short alias.
 - Ctrl+X Tab gives the pane the keyboard: `1`-`5` switch areas, the letters shown switch views and run actions, `r` refreshes, Esc gives the keyboard back. Clicking works without it.
 
 ## Skills
