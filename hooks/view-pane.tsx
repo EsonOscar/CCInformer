@@ -1,5 +1,5 @@
 import type {
-  AgentRow, Area, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef } from './areas'
@@ -12,6 +12,8 @@ import { DebugPanel, debugCounts } from './view-debug'
 import { EnvView } from './view-env'
 import { GitView } from './view-git'
 import { PackView } from './view-pack'
+import { isOver } from './budgets/gauge'
+import { BudgetsView } from './view-budgets'
 import { RulesView, shownFindings } from './view-rules'
 import { SessionsView } from './view-sessions'
 import { StatsView } from './view-stats'
@@ -43,6 +45,7 @@ export type PaneData = {
   findings: Finding[]
   dismissed: string[]
   checkRun: CheckRun | null
+  budgets: BudgetState | null
   tasks: EnvTask[]
   processes: ProcessList | null
   memory: MemoryReading | null
@@ -66,6 +69,7 @@ export type PaneNav = {
   toggleTrust: () => void
   pickFinding: (id: string) => void
   dismissFinding: (id: string) => void
+  measure: () => void
 }
 
 // Each area's badge: its worst item.
@@ -73,7 +77,8 @@ export const badgesOf = (d: PaneData): Record<Area, Badge | null> => {
   const busy: Badge = { char: spinner(d.now), color: ACCENT }
   const othersBusy = sessionGroups(d.sessions, d.selfId, d.cwd, d.now).here.filter(b => b.id !== d.selfId && b.isBusy).length
   const isPackBroken = !!d.pack?.layers.some(l => l.state === 'refused' || l.state === 'broken')
-  const wouldFail = shownFindings(d.findings, d.dismissed).some(f => f.ciWouldFail)
+  // A fresh budget reading that's over counts as much as a finding that would fail CI.
+  const wouldFail = shownFindings(d.findings, d.dismissed).some(f => f.ciWouldFail) || !!d.budgets?.readings.some(r => isOver(r) && !r.staleWhy)
   return {
     now: d.memory?.isLow ? { char: '!', color: 'error' } : othersBusy ? { char: String(othersBusy), color: 'warning' } : null,
     code: d.ci?.checks.some(c => c.bucket === 'fail')
@@ -98,6 +103,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const ruleCount = shownFindings(d.findings, d.dismissed).length
   const counts: Record<string, string> = d.area === 'debug' ? debugCounts(debugData) : d.area === 'code' && ruleCount ? { rules: String(ruleCount) } : {}
   const hasChecks = !!d.pack?.entries.some(e => e.section === 'checks' && !e.removedBy)
+  const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
   const width = d.width - 2
   const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane }
@@ -120,6 +126,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
       {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
       {d.area === 'code' && d.codeView === 'git' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
       {d.area === 'code' && d.codeView === 'rules' && RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)}
+      {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
       {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
       {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
       {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}

@@ -86,7 +86,9 @@ export type CheckSpec = {
 
 export type Source =
   | { kind: 'json'; path: string; pointer: string }
-  | { kind: 'command'; argv: string[]; parse: string; scale?: number; freshAfter?: string }
+  // `build` runs first when the person asks for a measurement (`m`); `freshAfter` is the file whose age says whether
+  // the output measures the tree as it is now.
+  | { kind: 'command'; argv: string[]; parse: string; scale?: number; freshAfter?: string; build?: string[] }
   | { kind: 'ci-log'; job: string; step: string; parse: string; scale?: number }
   | { kind: 'telemetry'; metric: string; stat: 'p95' | 'min' | 'max' | 'last' }
   | { kind: 'dir-size'; path: string }
