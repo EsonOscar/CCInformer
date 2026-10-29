@@ -21,6 +21,20 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 
 Each area keeps its selected row (a pressed file or finding in Code, a picked run in Work) while another area shows; the keys that act on a row act on that one.
 
+## Requirements
+
+- **Claude Code** with mods (plugins with a hooks module). Releases are tested against the latest Claude Code.
+- **git** on the PATH: Code › Git, and finding the repo a pack or a plan belongs to.
+
+The rest is optional; without it, only the parts that use it stay empty, and nothing else breaks:
+
+| Tool | Used for | Without it |
+|---|---|---|
+| `gh`, logged in (`gh auth status`) | CI in Code › Git and its ping, a budget's `ci-log` source, the merged-PR warnings in Work › Plans | no CI, no CI readings, no merged-PR warnings |
+| Node | the install script's auto-update step; a repo's own tools, which the mod runs as `node <script>` | the script installs the mod but leaves auto-update off, and says how to switch it on |
+| Windows PowerShell (Windows) / `ps`, `/proc/meminfo` and `rm` (elsewhere) | Now › Env's processes and free memory; removing the original when a plan is archived | Env says the process list could not be read; an archive keeps the original and says so |
+| bash (Git Bash on Windows) | the tree snapshots in the build waves of `/ccinformer:plan-feature` | the waves can't snapshot the tree, so build that plan in the main session instead |
+
 ## Install
 
 The install script adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. It is safe to run again.
