@@ -37,7 +37,7 @@ The rest is optional; without it, only the parts that use it stay empty:
 
 ## Install
 
-The install script adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. It is safe to run again.
+The install script adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. If git, Node or `gh` is missing, it says what each is for and offers to install it (winget on Windows; brew, apt-get, dnf or pacman elsewhere), one at a time; nothing is installed without your yes. It is safe to run again.
 
 Windows (PowerShell):
 
