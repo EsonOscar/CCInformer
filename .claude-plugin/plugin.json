@@ -1,6 +1,6 @@
 {
   "name": "ccinformer",
-  "version": "0.17.0",
+  "version": "0.18.0",
   "description": "A side pane in five areas: other sessions, live git and CI with the repo's rule checks and budgets, workflow runs, stats and plan checkpoints, and a debug log of tools, requests and context growth; plus planning skills whose plans the pane follows",
   "author": { "name": "EsonOscar" },
   "types": "./types/index.d.ts"
