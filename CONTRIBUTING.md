@@ -37,7 +37,7 @@ The repo is public, and gitleaks only knows what a secret looks like. The leak g
 4. **Squash-merge** once the checks are green. The PR title becomes the commit on `main`.
 5. **Clean up:** GitHub deletes the remote branch on merge. Once `gh pr view <n> --json state` shows `MERGED`, run `git switch main && git pull && git branch -D <branch>` (`-D`, because git doesn't recognise a squashed branch as merged).
 
-Never push to `main` directly; the ruleset rejects it once it's imported (see [Repo settings](#repo-settings)).
+Never push to `main` directly; its ruleset ([`.github/rulesets/main.json`](.github/rulesets/main.json)) requires a PR with green checks and allows squash merges only.
 
 ## Titles: `type(scope): subject`
 
@@ -74,6 +74,49 @@ Installed machines only pick up a change when `version` in `.claude-plugin/plugi
   Say so in the PR's Context.
 - **Releases:** after the merge, [`release.yml`](.github/workflows/release.yml) tags the commit `vX.Y.Z` and creates a GitHub release that lists the PRs since the previous one. The releases page is the changelog; there is no `CHANGELOG.md`.
 
+## Working on the mod
+
+To try a change before it's released, start one session with the working copy loaded (`claude --plugin-dir <folder>`); that session runs the working copy in place of the installed release, reloads it when a file is saved, and its pane says `CCInformer · dev`. Other sessions keep the release. The working copy keeps its own store, so its Sessions tab sees only other sessions running a working copy. Load the `plugin-authoring` skill before changing the mod, and check with `claude plugin validate --strict .` and `claude plugin test .`. Rules the validator holds a mod to: one hooks module, `hooks/register.tsx`, which declares every state atom it reads and writes; `$` is passed only to a function declaration (`function f($, …)`), at the top of that file or imported from another file of the mod, never to an arrow function; and types are imported with `import type`.
+
+### Code layout
+
+- `hooks/register.tsx`: every hook and every state atom (the validator requires them in one module), and the writes to state. Files are read by `$` helpers in `hooks/read-*.ts` (run records, sessions, the git folder), which only fetch and return. Views in `hooks/view-*.tsx`, the pane's layout and badges in `view-pane.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
+- `hooks/git/run.ts` (Code › Git: git and CI through the light lane, the CI ping, a file's diff) and `hooks/runs/run.ts` (Work › Runs and Stats: subagents, run records, the history and stats): `$` helpers built at session start, like the folders below; the state they show is written through callbacks, as its atoms live in `register.tsx`.
+- `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files), and the process and memory queries with their parsers (`procs.ts`). The band is `hooks/view-band.tsx`, Now › Env `hooks/view-env.tsx`.
+- `hooks/packs/`: the pack loader. `load.ts` reads the files; the rest is plain logic: `validate.ts` (what each layer may hold), `merge.ts`, `resolve.ts`, `trust.ts`, and the built-ins (`node-vite.ts`).
+- `hooks/checks/`: the checks. `run.ts` runs them (reads the written files, runs ESLint through the heavy lane, keeps what the model hasn't read yet) and hands its findings back to `register.tsx`, which writes them to state; the rest is plain logic: `findings.ts` (the analyzers and the note the model reads), `suppressions.ts` (ESLint's suppression rule), `glob.ts`. Code › Rules is `hooks/view-rules.tsx`.
+- `hooks/budgets/`: the budgets, built the same way: `run.ts` reads the sources (the report through the heavy lane, CI's job logs through `gh`) and hands the readings back; `gauge.ts` is plain logic (reading a value, the limit, which reading shows, the words). Code › Budgets is `hooks/view-budgets.tsx`.
+- `hooks/plans/`: the checkpoint board, built the same way: `run.ts` finds the plan files, reads the changed ones, asks gh about their PRs and archives a plan; `parse.ts` (what a checkpoint is, its status), `drift.ts` (which PRs to ask about, what to warn about, when a plan is finished) and `archive.ts` (where a plan goes, how references to it change, the dialog and reminder words) are plain logic. Work › Plans is `hooks/view-plans.tsx`.
+- `skills/`: the planning skills. `plan-feature` holds the shared parts: the workflow scripts (`plan-fanout.js`, which `plan-handoff` uses too, and `build-fanout.js`), the wave snapshot script and `planning-template.md`; `plan-feature-small` and `plan-handoff` refer to them there.
+- `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
+- The mod's own state is kept per session; the area, the open pane, CI pings, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
+
+### Polling
+
+A session counts as active while a turn runs, for 3 minutes after one, and while the pane is being used (mods can't see whether the terminal is in front).
+
+| Collector | Every | While | Also |
+|---|---|---|---|
+| Git | 5 s | the pane is open on Code, in an active session | after Claude changes files, on activity, on opening Code, on `r` |
+| CI | 60 s | the pane is open on Code, in an active session | every 8 s while checks run and for 3 minutes after a push, pane open or closed (for the ping) |
+| Subagents | 2 s | the pane is open | |
+| Run records | 10 s | always | 3 s after a subagent ends |
+| Run history | 60 s | the pane is open on Work | on opening Work, on `r` |
+| Stats | 120 s | the pane is open on Work › Stats | on opening Work › Stats, on `r` |
+| Session beat | 15 s | always | |
+| Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` |
+| Pack files | each main turn | always | read again only when a file changed (a `stat` of each) |
+| Processes on this machine, with free memory | 30 s | the pane is open on Now › Env, in an active session | on opening Env, on `r` |
+| Free memory alone | 30 s | a heavy process this session started runs, pane open or closed | |
+| Processes Claude starts | no polling | always | placed when the Bash call starts; cleared by its task's notification, a TaskStop, or the call returning |
+| Inline checks (`size-lines`) | no polling | always | on each Edit or Write, inside the mod: no command runs |
+| Turn checks (ESLint) | no polling | always | once a main turn ends that wrote files a check covers, in a trusted repo; at most 40 files a run, the rest in the next |
+| Budgets | no polling | | on opening Code › Budgets, on `r`; on `m` after a build (up to 10 minutes) |
+| Footer (context and limits) | no polling | always | read once at start, then each time Claude Code measures a change |
+| Plans | 5 s | the pane is open on Work › Plans | on opening Work › Plans, on `r`; a file is parsed again only when its modified time changed. Then `gh pr view` for each PR an open checkpoint names: on opening, on `r` and every minute, every one whose state isn't final (a merged or closed PR is not asked about again in the session); every 5 s, only those not asked about yet. Away from Work › Plans, every 10 minutes in an active session, pane open or closed, the open ones again (for Work's badge and the toast) |
+
+Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s, ESLint and a budget's report 120 s, a build 10 minutes), so a fetch or a lint never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
+
 ## Checks
 
 | Check | Workflow | What fails it |
@@ -83,20 +126,6 @@ Installed machines only pick up a change when `version` in `.claude-plugin/plugi
 | `pr-title` | `pr-gates.yml` | The PR title isn't `type(scope): subject` |
 | `version-bump` | `pr-gates.yml` | Shipped files changed and `plugin.json`'s version didn't go up |
 
-Job names are required status checks in [`.github/rulesets/main.json`](.github/rulesets/main.json). Renaming a job means updating the ruleset in the same PR.
+Job names are required status checks in [`.github/rulesets/main.json`](.github/rulesets/main.json). Renaming a job means updating the ruleset in the same PR. The file isn't applied by CI: the maintainer re-imports it on GitHub, so say so in the PR.
 
 The workflows pin Actions to a major version (`@v7`), so minor and patch releases arrive by themselves; a new major version is a deliberate change in a PR. GitHub's Dependabot security updates are on in the repo settings.
-
-## Repo settings
-
-Applied by hand, once, by an admin. The ruleset requires a PR and green checks on `main`, with no approval count (a sole maintainer can't approve their own PR), and allows squash merges only. The merge settings make the PR title the commit's subject and the PR's commit messages its body, and delete the branch after the merge. Squash rather than merge commits: every commit on `main` is a release that passed CI, which keeps reverting and bisecting simple, and the commit messages keep the detail.
-
-```bash
-repo=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-gh api -X POST "repos/$repo/rulesets" --input .github/rulesets/main.json
-gh api -X PATCH "repos/$repo" \
-  -F delete_branch_on_merge=true -F allow_merge_commit=false -F allow_rebase_merge=false \
-  -f squash_merge_commit_title=PR_TITLE -f squash_merge_commit_message=COMMIT_MESSAGES
-```
-
-Import the ruleset only after the workflows are on `main`, or the required checks never report and every PR is stuck.
