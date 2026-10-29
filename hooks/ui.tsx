@@ -98,11 +98,12 @@ export const bar = (value: number, max: number, width: number): string => {
 
 export type Badge = { char: string; color: Color }
 
-// The areas across the top, each with its badge (its worst item), and refresh at the right. Only built areas show.
+// The areas across the top, each with its badge (its worst item), and refresh at the right. Only built areas show. One
+// row always, as the pane's header has a fixed height.
 export const AreaBar = (k: Kit, area: Area, badges: Record<Area, Badge | null>, pick: (id: Area) => void, refresh: () => void): JSX.Element => {
   const { Box, Button, Text } = k
   return (
-    <Box flexDirection="row" columnGap={2} flexWrap="wrap">
+    <Box flexDirection="row" columnGap={2}>
       {AREAS.filter(isBuilt).map(a => {
         const badge = badges[a.id]
         return (

@@ -231,6 +231,10 @@ export type Finding = {
 // what went wrong ('' for nothing). `waitsForTrust` while the repo's tools may not run yet.
 export type CheckRun = { check: string; label: string; at: number; ms: number; files: number; isRunning: boolean; waitsForTrust: boolean; error: string }
 
+// The pane's footer: how full the context window is, and how much of the subscription's 5-hour and 7-day windows is
+// used, each a percentage; null where there's no reading (before the first response, or without a subscription).
+export type UsageReading = { contextPercent: number | null; fiveHour: number | null; sevenDay: number | null }
+
 export type ToolOutcome ='running' | 'ok' | 'error' | 'denied'
 export type ToolRow = { id: string; tool: string; summary: string; agent: string; startedAt: number; ms: number; outcome: ToolOutcome }
 export type StepRow = {
@@ -290,6 +294,9 @@ declare module 'claude-code' {
       checkRun: CheckRun | null
       budgets: BudgetState | null
       plans: PlansState | null
+      usage: UsageReading | null
+      // How far the pane has scrolled its own content (it scrolls itself, so the footer stays put).
+      paneTop: number
       // Code's Git view: whether it lists every changed file, and the diff it shows.
       showAllFiles: boolean
       diff: DiffPreview | null

@@ -1,5 +1,5 @@
 import type {
-  AgentRow, Area, BudgetState, CheckRun, PlansState, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, PlansState, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef } from './areas'
@@ -18,6 +18,7 @@ import { BudgetsView } from './view-budgets'
 import { RulesView, shownFindings } from './view-rules'
 import { SessionsView } from './view-sessions'
 import { StatsView } from './view-stats'
+import { usageLine } from './usage'
 
 // Everything the pane draws from: the state the hooks keep, and who and where this session is.
 export type PaneData = {
@@ -48,13 +49,31 @@ export type PaneData = {
   checkRun: CheckRun | null
   budgets: BudgetState | null
   plans: PlansState | null
+  usage: UsageReading | null
   tasks: EnvTask[]
   processes: ProcessList | null
   memory: MemoryReading | null
   selfId: string
   cwd: string
   width: number
+  // The rows the pane shows at once, and the first row its window shows: the footer is drawn at the window's bottom.
+  rows: number
+  scrollTop: number
+  // How far the pane has scrolled its own content (see scrolledTop).
+  contentTop: number
 }
+
+// The footer's rows: a line, then the usage. The header's: the title, the areas and a line, then, for an area with
+// several views, a blank row and the view bar.
+const FOOTER_ROWS = 2
+const HEADER_ROWS = 3
+const VIEW_BAR_ROWS = 2
+
+// The pane scrolls its own content, so the footer drawn over it never moves: a scroll of `by` rows moves the content
+// from `top`, clamped so its last row still clears the footer. `contentRows` is the tree's height as drawn now, which
+// is the content's own height less the `top` rows already scrolled away.
+export const scrolledTop = (top: number, by: number, contentRows: number, bodyRows: number): number =>
+  Math.min(Math.max(0, contentRows + top - bodyRows), Math.max(0, top + by))
 
 // What a press in the pane does; the hooks module makes each from its state and the session's work.
 export type PaneNav = {
@@ -110,30 +129,57 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const width = d.width - 2
   const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane }
   const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: d.selected.work, pickRun: nav.pickRun }
+  const hasViewBar = def.views.length > 1
+  const headerRows = hasViewBar ? HEADER_ROWS + VIEW_BAR_ROWS : HEADER_ROWS
   return (
-    <Box flexDirection="column" paddingX={1}>
-      {/* Claude Code draws a pane's title only as a tab beside other panes, so the pane names itself. */}
-      <Box key="title" flexDirection="row">
-        <Text color={ACCENT} weight="bold">
-          ✻{' '}
-        </Text>
-        <Text dimColor>{title}</Text>
+    // The padding leaves room for the header above the content and the footer below it, so a long view scrolls clear
+    // of both.
+    <Box flexDirection="column" paddingX={1} paddingBottom={FOOTER_ROWS} minHeight={d.rows}>
+      {/* The content, moved up by the rows the pane has scrolled itself; the header and footer stay where they are. */}
+      <Box key="content" flexDirection="column" paddingTop={headerRows} marginTop={d.contentTop ? -d.contentTop : 0}>
+        {d.area === 'now' && d.nowView === 'env' && EnvView(k, d.tasks, d.processes, d.memory, d.now)}
+        {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
+        {d.area === 'code' && d.codeView === 'git' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
+        {d.area === 'code' && d.codeView === 'rules' && RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)}
+        {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
+        {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
+        {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
+        {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now)}
+        {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}
+        {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust })}
       </Box>
-      {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh)}
-      <Text color={ACCENT} dimColor>
-        {'─'.repeat(Math.max(1, width))}
-      </Text>
-      {def.views.length > 1 && ViewBar(k, def.views, views[d.area], nav.pickView, counts)}
-      {d.area === 'now' && d.nowView === 'env' && EnvView(k, d.tasks, d.processes, d.memory, d.now)}
-      {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
-      {d.area === 'code' && d.codeView === 'git' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
-      {d.area === 'code' && d.codeView === 'rules' && RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)}
-      {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
-      {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
-      {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
-      {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now)}
-      {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}
-      {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust })}
+      {/* The header, laid over the tree at the window's top rows, as the footer is at its bottom: the pane scrolls its
+          own content, so neither moves, and the area and view hotkeys stay in view. A layer of blank rows is drawn first
+          and the header over it, so the gaps between its buttons cover the content beneath too. */}
+      <Box key="header" position="absolute" top={d.scrollTop} left={1} width={width} flexDirection="column">
+        <Box key="header-blank" position="absolute" top={0} left={0} flexDirection="column">
+          {Array.from({ length: headerRows }, (_, i) => (
+            <Text key={'header-blank-' + i}>{' '.repeat(Math.max(1, width))}</Text>
+          ))}
+        </Box>
+        {/* Claude Code draws a pane's title only as a tab beside other panes, so the pane names itself. */}
+        <Box key="title" flexDirection="row">
+          <Text color={ACCENT} weight="bold">
+            ✻{' '}
+          </Text>
+          <Text dimColor>{title}</Text>
+        </Box>
+        {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh)}
+        <Text color={ACCENT} dimColor>
+          {'─'.repeat(Math.max(1, width))}
+        </Text>
+        {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts)}
+      </Box>
+      {/* The footer, in every area, laid over the tree at the window's bottom rows. Its rows run the full width,
+          covering what's beneath. */}
+      <Box key="footer" position="absolute" top={Math.max(0, d.scrollTop + d.rows - FOOTER_ROWS)} left={1} width={width} flexDirection="column">
+        <Text color={ACCENT} dimColor>
+          {'─'.repeat(Math.max(1, width))}
+        </Text>
+        <Text dimColor wrap="truncate-end">
+          {usageLine(d.usage ?? { contextPercent: null, fiveHour: null, sevenDay: null }).padEnd(width)}
+        </Text>
+      </Box>
     </Box>
   )
 }

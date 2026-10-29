@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, PlansState, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, CiSnapshot, PlansState, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaFor, areaNames } from './areas'
@@ -17,6 +17,7 @@ import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/pr
 import type { Platform } from './env/procs'
 import { classifyCommand } from './env/read'
 import { paneTitle } from './format'
+import { readUsage } from './usage'
 import { ciOutcome } from './insight'
 import { parseWorkflowMeta, previewDiff, previewNewFile } from './parse'
 import { isFinished } from './phases'
@@ -32,7 +33,7 @@ import {
 import { summarizeRun } from './stats'
 import type { Kit } from './ui'
 import { EnvBand, bandTasks } from './view-band'
-import { PaneView } from './view-pane'
+import { PaneView, scrolledTop } from './view-pane'
 
 const PANE = 'ccinformer'
 const TITLE = 'CCInformer'
@@ -91,6 +92,9 @@ const dismissedAtom = atom({ plugin: 'ccinformer', key: 'dismissed' } as const, 
 const checkRunAtom = atom({ plugin: 'ccinformer', key: 'checkRun' } as const, null as CheckRun | null)
 const budgetsAtom = atom({ plugin: 'ccinformer', key: 'budgets' } as const, null as BudgetState | null)
 const plansAtom = atom({ plugin: 'ccinformer', key: 'plans' } as const, null as PlansState | null)
+const usageAtom = atom({ plugin: 'ccinformer', key: 'usage' } as const, null as UsageReading | null)
+// How far the pane has scrolled its own content: it does its own scrolling so the footer never moves.
+const paneTopAtom = atom({ plugin: 'ccinformer', key: 'paneTop' } as const, 0)
 const NOTHING_SELECTED: Record<Area, string> = { now: '', code: '', work: '', timeline: '', debug: '' }
 const selectedAtom = atom({ plugin: 'ccinformer', key: 'selected' } as const, NOTHING_SELECTED)
 const phaseAtom = atom({ plugin: 'ccinformer', key: 'phase' } as const, '')
@@ -137,6 +141,15 @@ let envTasks: EnvTask[] = []
 let shownStatus: string | undefined
 // When Claude last wrote a file: a build older than that no longer measures the tree.
 let lastWriteAt = 0
+// The pane's own scroll position, kept here as well as in state: scroll events that arrive together each move it from
+// here, so none undoes another.
+let paneTop = 0
+
+async function setPaneTop($: EngineInterface, top: number): Promise<void> {
+  if (top === paneTop) return
+  paneTop = top
+  await update($, paneTopAtom, () => top)
+}
 
 // Writes the tracked processes; the status line names a production one too, as a backup for the band.
 async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void> {
@@ -195,6 +208,9 @@ export const register: Register = on => {
     // A reload keeps the processes already tracked.
     await saveEnvTasks($, await read($, envTasksAtom))
     cwd = await $.session.cwd()
+    // The footer's first reading; session.measure keeps it current from here.
+    const usage = await $.session.usage().catch(() => null)
+    if (usage) await update($, usageAtom, () => readUsage(usage.context, usage.rateLimits))
     const startedAt = await $.clock.now()
     lastActive = startedAt
     const configDir =
@@ -457,6 +473,7 @@ export const register: Register = on => {
       refresh,
       // An area, and one of its views when one is named; the area is kept for the next session.
       showArea: async ({ area, view }) => {
+        await setPaneTop($, 0)
         await update($, areaAtom, () => area)
         if (view === 'runs' || view === 'stats' || view === 'plans') await update($, workViewAtom, () => view)
         if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
@@ -558,6 +575,12 @@ export const register: Register = on => {
     return next(e)
   })
 
+  // The context window's fill or a rate-limit window moved: the footer follows, with no polling.
+  on('session.measure', async ($, e, next) => {
+    await update($, usageAtom, () => readUsage(e.context, e.rateLimits))
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('session.end', async ($, e, next) => {
     // A /clear or /resume keeps the session's process; only a real end takes it off the Sessions tab.
     if (selfId && e.reason !== 'clear' && e.reason !== 'resume') await $.store.delete(STORE_SESSION + selfId)
@@ -611,9 +634,16 @@ export const register: Register = on => {
     void live?.wake()
     return next(e)
   }).catch(($, e, next) => next(e))
+  // The pane scrolls its own content and keeps Claude Code's window where it is, so the footer drawn over the window's
+  // bottom rows never moves. Other sites scroll as usual.
   on('ui.scroll', async ($, e, next) => {
     void live?.wake()
-    return next(e)
+    if (e.component !== 'Pane' || e.requestId !== PANE) return next(e)
+    const top = scrolledTop(paneTop, e.by, e.contentRows, e.bodyRows)
+    // A move without whole row counts is left to Claude Code, rather than guessed at.
+    if (!Number.isFinite(top)) return next(e)
+    await setPaneTop($, top)
+    return { deny: 'the pane scrolls its own content' }
   }).catch(($, e, next) => next(e))
 
   // The recorders below watch an event and pass it on unchanged; if one fails, the event goes on without it.
@@ -799,19 +829,20 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
-      read($, budgetsAtom), read($, plansAtom),
+      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, tasks, processes, memory, selfId, cwd,
-      width: e.props.bodyColumns,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd,
+      width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
     }
     return PaneView(k, paneTitle(TITLE, $.plugin.root), data, {
       showArea: a => void live?.showArea({ area: a }),
       pickView: view => {
+        void setPaneTop($, 0)
         if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
         if (area === 'code') void update($, codeViewAtom, () => view as CodeView).then(() => (view === 'budgets' ? live?.refresh('code') : undefined))
         if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))

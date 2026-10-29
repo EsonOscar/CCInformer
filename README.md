@@ -13,6 +13,10 @@ A Claude Code mod: a pane docked on the right of the terminal (a quarter of its 
 - **Debug** (`5`) › **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its run time (a wait for your approval included); every model request with its tokens; how the main conversation's context grew, against its window, with compactions marked.
 - **Debug** (`5`) › **Pack** (`p`): the pack this repo resolved to (see [Packs](#packs)): each layer and how it went, whether the repo's own tools may run (`a` allows or stops them), and every value with the layer that set it.
 
+**The header and footer stay put.** The pane scrolls its own content between them, so the title, the areas and the view bar stay at the top (their hotkeys always in reach), and the footer at the bottom, however long a view is.
+
+**The footer**, under a line at the bottom of every area: `Context: 34% | 5 hour limit: 12% | 7 day limit: 40.5%`, how full the conversation's context window is and how much of the subscription's 5-hour and 7-day windows is used (a dash where there's no reading yet, or no subscription). It follows Claude Code's own measurements as they change, without polling.
+
 **The band** above the prompt warns while a process Claude started points at a shared or production environment: `⚠ STAGING  npm run dev:staging  targets a shared environment`. The pack decides what counts: a script expanded through `package.json` and matched by an environment's `argRegex`, or the hosts in the env file the process reads (Vite's `.env.<mode>` for `--mode <mode>`), held against each environment's `hostPatterns`. A production one goes first and onto the status line too. The band clears when the process ends (its task's notification, a TaskStop, or a foreground command returning), gives way to a survey, and `×` clears a row whose end never arrived. Only the script's name is kept, never the command line or an env file's values.
 
 Each area keeps its selected row (a pressed file or finding in Code, a picked run in Work) while another area shows; the keys that act on a row act on that one.
@@ -169,6 +173,7 @@ A session counts as active while a turn runs, for 3 minutes after one, and while
 | Inline checks (`size-lines`) | no polling | always | on each Edit or Write, inside the mod: no command runs |
 | Turn checks (ESLint) | no polling | always | once a main turn ends that wrote files a check covers, in a trusted repo; at most 40 files a run, the rest in the next |
 | Budgets | no polling | | on opening Code › Budgets, on `r`; on `m` after a build (up to 10 minutes) |
+| Footer (context and limits) | no polling | always | read once at start, then each time Claude Code measures a change |
 | Plans | no polling | | on opening Work › Plans, on `r`; a file is parsed again only when its modified time changed |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s, ESLint and a budget's report 120 s, a build 10 minutes), so a fetch or a lint never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
