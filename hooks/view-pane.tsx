@@ -177,7 +177,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
           {'─'.repeat(Math.max(1, width))}
         </Text>
         <Text dimColor wrap="truncate-end">
-          {usageLine(d.usage ?? { contextPercent: null, fiveHour: null, sevenDay: null }).padEnd(width)}
+          {usageLine(d.usage ?? { contextPercent: null, fiveHour: null, sevenDay: null, fiveHourResetsAt: null, sevenDayResetsAt: null }, d.now).padEnd(width)}
         </Text>
       </Box>
     </Box>

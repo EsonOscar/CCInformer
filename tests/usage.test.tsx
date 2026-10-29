@@ -11,25 +11,53 @@ const PANE = {
   props: { title: 'CCInformer', isFocused: true, bodyColumns: 100, placement: 'dock', scroll: { offset: 0, bodyRows: 40 }, view: {} },
 } as const
 const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
+// The engine's clock, and two resets: 4 h 12 min and 6 d 3 h 20 min from it (plus 30 s, which rounds down).
+const NOW = 1_000_000
+const MINUTE = 60_000
+const FIVE_HOUR_RESET = new Date(NOW + (4 * 60 + 12) * MINUTE + 30_000).toISOString()
+const SEVEN_DAY_RESET = new Date(NOW + ((6 * 24 + 3) * 60 + 20) * MINUTE + 30_000).toISOString()
 
 test("the footer's line: whole percent for the context, the limits' one decimal kept, a dash for no reading", async () => {
-  expect(usageLine(readUsage({ tokens: 20, window: 100, percent: 34.4 }, [{ kind: 'five_hour', percentUsed: 23.5 }, { kind: 'seven_day', percentUsed: 7 }]))).toBe(
-    'Context: 34% | 5 hour limit: 23.5% | 7 day limit: 7%',
+  expect(usageLine(readUsage({ tokens: 20, window: 100, percent: 34.4 }, [{ kind: 'five_hour', percentUsed: 23.5 }, { kind: 'seven_day', percentUsed: 7 }]), NOW)).toBe(
+    'Context: 34% | 5hr: 23.5% | 7d: 7%',
   )
   // Without a subscription there are no windows; without a percent the context comes from its tokens.
-  expect(usageLine(readUsage({ tokens: 50, window: 200 }, []))).toBe('Context: 25% | 5 hour limit: – | 7 day limit: –')
-  expect(usageLine(readUsage(undefined, undefined))).toBe('Context: – | 5 hour limit: – | 7 day limit: –')
+  expect(usageLine(readUsage({ tokens: 50, window: 200 }, []), NOW)).toBe('Context: 25% | 5hr: – | 7d: –')
+  expect(usageLine(readUsage(undefined, undefined), NOW)).toBe('Context: – | 5hr: – | 7d: –')
+})
+
+test("the footer's line: the time left until each window resets, in whole minutes, none once it has passed", async () => {
+  const limits = [
+    { kind: 'five_hour', percentUsed: 12, resetsAt: FIVE_HOUR_RESET },
+    { kind: 'seven_day', percentUsed: 40.5, resetsAt: SEVEN_DAY_RESET },
+  ]
+  expect(usageLine(readUsage(undefined, limits), NOW)).toBe('Context: – | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%')
+  // Under an hour, and under a day: the leading units read 0. Past the reset, before a new reading: 0 left.
+  expect(usageLine(readUsage(undefined, limits), Date.parse(SEVEN_DAY_RESET) - 5 * MINUTE)).toBe(
+    'Context: – | 5hr (0h0m): 12% | 7d (0d0h5m): 40.5%',
+  )
+  // An unreadable time, or no clock reading yet, gives no countdown.
+  expect(usageLine(readUsage(undefined, [{ kind: 'five_hour', percentUsed: 12, resetsAt: 'soon' }]), NOW)).toBe('Context: – | 5hr: 12% | 7d: –')
+  expect(usageLine(readUsage(undefined, limits), 0)).toBe('Context: – | 5hr: 12% | 7d: 40.5%')
 })
 
 // A session whose usage starts at `usage`; nothing else about the repo matters here.
 const engine = (on: Parameters<TestBody>[1]) => {
-  const clock = mock.clock(on, { now: 1_000_000 })
+  const clock = mock.clock(on, { now: NOW })
   mock.store(on)
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('session.usage', () => ({
-    value: { startedAt: 0, context: { tokens: 30, window: 100, percent: 30 }, rateLimits: [{ kind: 'five_hour', percentUsed: 12 }, { kind: 'seven_day', percentUsed: 40.5 }], cost: { usd: 0 } },
+    value: {
+      startedAt: 0,
+      context: { tokens: 30, window: 100, percent: 30 },
+      rateLimits: [
+        { kind: 'five_hour', percentUsed: 12, resetsAt: FIVE_HOUR_RESET },
+        { kind: 'seven_day', percentUsed: 40.5, resetsAt: SEVEN_DAY_RESET },
+      ],
+      cost: { usd: 0 },
+    },
   }))
   on('agent.list', () => ({ value: [] }))
   on('fs.exists', () => ({ value: false }))
@@ -53,15 +81,16 @@ test('every area shows the footer, and it follows each new measurement', async (
 
   for (const area of ['area-now', 'area-code', 'area-work', 'area-debug']) {
     await ui.press({ key: area })
-    expect({ area, footer: !!(await ui.find({ type: 'Text', text: /^Context: 30% \| 5 hour limit: 12% \| 7 day limit: 40\.5%/ })) }).toEqual({ area, footer: true })
+    expect({ area, footer: !!(await ui.find({ type: 'Text', text: /^Context: 30% \| 5hr \(4h12m\): 12% \| 7d \(6d3h20m\): 40\.5%/ })) }).toEqual({ area, footer: true })
   }
 
+  // A measurement without reset times drops the countdowns.
   await $.session.measure({
     context: { tokens: 62, window: 100, percent: 62 },
     rateLimits: [{ kind: 'five_hour', percentUsed: 13 }, { kind: 'seven_day', percentUsed: 41 }],
     changed: ['context', 'rateLimits'],
   } as never)
-  expect(await ui.find({ type: 'Text', text: /^Context: 62% \| 5 hour limit: 13% \| 7 day limit: 41%/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^Context: 62% \| 5hr: 13% \| 7d: 41%/ })).toBeDefined()
   await ui.unmount()
 })
 
