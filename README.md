@@ -7,7 +7,7 @@ A Claude Code mod: a pane docked on the right of the terminal, in five areas you
   - **Sessions** (`s`): the other Claude sessions on this machine and what each is working on, with a warning when another one works in this folder.
 - **Code** (`2`)
   - **Git** (`g`): branch, upstream, ahead/behind, and a warning during a rebase or merge. CI for the branch's PR, a failed check linking to its run, and a toast plus a desktop notification when a commit's checks finish. Changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits to push and pull, recent commits, branches, stashes and worktrees. `u` fetches.
-  - **Rules** (`k`): what the pack's [checks](#checks) found in the files Claude wrote, marked `CI` where pushing would fail CI. Press a finding, then `x` to dismiss it. Claude is told about them too.
+  - **Rules** (`k`): what the pack's [checks](#checks) found in the files Claude wrote, marked `CI` where pushing would fail CI and `rule` where it's the project's own rule. Press a finding, then `x` to dismiss it. Claude is told about them too.
   - **Budgets** (`b`): the pack's [budgets](#budgets), such as a bundle's size, against their limits. `m` builds, then measures.
 - **Work** (`3`)
   - **Runs** (`w`): the running workflow's phases (`p`/`n`, `l` follows the live one) and its agents with their model, tools and tokens; recent runs in this project (press one to open it, `x` closes it); subagents.
@@ -114,10 +114,11 @@ The band and Now › Env place a process Claude starts by its environment: the c
 
 ### Checks
 
-A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Two analyzers so far:
+A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Three analyzers so far:
 
 - **`size-lines`** (`cost: "edit"`): a file over `options.max` lines, checked as Claude writes it. The repo's ESLint suppressions apply, and one that's no longer needed is reported.
-- **`eslint-json`** (`cost: "turn"`): the repo's own ESLint, once a turn ends, over the files written in it, in a trusted repo, with the repo's suppressions applied. The built-in `node-vite` has it.
+- **`regex-lines`** (`cost: "edit"`): each line matching `options.pattern`, checked as Claude writes the file, in any language, with `options.message` as what to do instead. In JS and TS files, comments and regex literals are skipped, and a match in a template string is reported on the line ESLint reports it on. Made for design rules (no raw `<button>`, no stock palette classes): an `advise` check reaches Claude as a project rule. A `ci` check that names the ESLint rule enforcing the same ban in `rules` says "CI will fail" at once, follows that rule's suppressions, and stands in for ESLint's finding on the same line at the end of the turn.
+- **`eslint-json`** (`cost: "turn"`): the repo's own ESLint, once a turn ends, over the files written in it, in a trusted repo, with the repo's suppressions applied. The built-in `node-vite` has it; in a repo without ESLint installed, it's skipped.
 
 A user pack adds checks with the repo's own values:
 
@@ -125,7 +126,10 @@ A user pack adds checks with the repo's own values:
 "checks": [
   { "id": "max-lines", "label": "File length", "on": ["src/**/*.{ts,tsx}"], "ignore": ["**/*.test.{ts,tsx}"],
     "analyzer": "size-lines", "cost": "edit", "class": "ci",
-    "rules": ["max-lines"], "options": { "max": 500 }, "suppressions": "eslint-suppressions.json" }
+    "rules": ["max-lines"], "options": { "max": 500 }, "suppressions": "eslint-suppressions.json" },
+  { "id": "raw-button", "label": "Raw <button>", "on": ["src/**/*.tsx"], "ignore": ["src/components/ui/**"],
+    "analyzer": "regex-lines", "cost": "edit", "class": "advise",
+    "options": { "pattern": "<button\\b", "message": "use <Button> from the design system" } }
 ]
 ```
 

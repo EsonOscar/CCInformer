@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { countLines, covers, eslintFindings, noteFor, ownedRules, sizeFindings } from '../hooks/checks/findings'
+import { countLines, covers, eslintFindings, noteFor, ownedRules, regexFindings, sizeFindings, withoutInline } from '../hooks/checks/findings'
 import { matchesGlob, repoPath } from '../hooks/checks/glob'
 import { parseSuppressions, suppress } from '../hooks/checks/suppressions'
 import type { CheckSpec } from '../hooks/packs/types'
@@ -159,4 +159,111 @@ test('the note for the model lists what fails CI and the project rules, never in
   expect(note).toContain('- src/c.ts design: use <Button> [project rule]')
   expect(note).not.toContain('src/b.ts')
   expect(noteFor([near!], 'turn')).toBe('')
+})
+
+describe('regex-lines', () => {
+  const RAW_BUTTON: CheckSpec = {
+    id: 'raw-button',
+    label: 'Raw <button>',
+    on: ['src/**/*.tsx'],
+    ignore: ['src/ui/**'],
+    analyzer: 'regex-lines',
+    cost: 'edit',
+    class: 'advise',
+    options: { pattern: '<button\\b', message: 'use <Button> from the design system' },
+  }
+  const RAW_INPUT: CheckSpec = {
+    ...RAW_BUTTON,
+    id: 'raw-input',
+    label: 'Raw <input>',
+    class: 'ci',
+    rules: ['no-restricted-syntax'],
+    options: { pattern: '<input\\b' },
+    suppressions: 'eslint-suppressions.json',
+  }
+  const PAGE = ['<div>', '  <button onClick={go}>Go</button>', '  <input value={v} />', '  <Button>ok</Button>', '  <button type="submit" />'].join('\n')
+
+  test('each matching line is a finding: a project rule for advise, an error CI fails on for ci', async () => {
+    expect(regexFindings(RAW_BUTTON, 'src/page.tsx', PAGE, {}).map(f => [f.line, f.rule, f.severity, f.ciWouldFail, f.message])).toEqual([
+      [2, 'raw-button', 'warn', false, 'use <Button> from the design system'],
+      [5, 'raw-button', 'warn', false, 'use <Button> from the design system'],
+    ])
+    // A ci check files its findings under the ESLint rule it stands for; with no message, it names its pattern.
+    expect(regexFindings(RAW_INPUT, 'src/page.tsx', PAGE, {}).map(f => [f.line, f.rule, f.severity, f.ciWouldFail, f.message])).toEqual([
+      [3, 'no-restricted-syntax', 'error', true, 'matches /<input\\b/'],
+    ])
+    // An ignored file isn't covered; no pattern finds nothing.
+    expect(covers(RAW_BUTTON, 'src/ui/button.tsx')).toBe(false)
+    expect(regexFindings({ ...RAW_BUTTON, options: {} }, 'src/page.tsx', PAGE, {})).toEqual([])
+    const note = noteFor([...regexFindings(RAW_BUTTON, 'src/page.tsx', PAGE, {}), ...regexFindings(RAW_INPUT, 'src/page.tsx', PAGE, {})], 'edit')
+    expect(note).toContain('- src/page.tsx:2 raw-button: use <Button> from the design system [project rule]')
+    expect(note).toContain('- src/page.tsx:3 no-restricted-syntax: matches /<input\\b/ [CI will fail]')
+  })
+
+  test("the repo's suppressions for the rule it stands for: matches it covers read as information", async () => {
+    const covered = regexFindings(RAW_INPUT, 'src/page.tsx', PAGE, { 'src/page.tsx': { 'no-restricted-syntax': { count: 2 } } })
+    expect(covered.map(f => [f.severity, f.ciWouldFail, f.message])).toEqual([['info', false, "matches /<input\\b/ (suppressed: don't add more)"]])
+    // Two matches against a count of one: both are reported, as ESLint would.
+    const over = regexFindings(RAW_INPUT, 'src/b.tsx', PAGE + '\n<input />', { 'src/b.tsx': { 'no-restricted-syntax': { count: 1 } } })
+    expect(over.map(f => [f.line, f.severity])).toEqual([
+      [3, 'error'],
+      [6, 'error'],
+    ])
+    // A check with no rule of its own ignores suppressions.
+    expect(regexFindings(RAW_BUTTON, 'src/page.tsx', PAGE, { 'src/page.tsx': { 'raw-button': { count: 5 } } })[0]?.severity).toBe('warn')
+  })
+
+  test("JS and TS are read as ESLint's selectors see them: comments and regexes left out, template strings placed where ESLint reports them", async () => {
+    const probe = [
+      '// A comment naming bg-gray-100 and <button> is not code.',
+      '/* A block comment: text-gray-500,',
+      '   rounded-[4px] */',
+      "export const link = 'https://example.com/path' + ' bg-red-500'",
+      "const re = /'bg-blue-500'/",
+      'export function Probe({ on }: { on: boolean }) {',
+      '  const cls = `p-2',
+      '    bg-slate-200',
+      "    ${on ? 'x' : 'y'} mt-1",
+      '    rounded-[2px]`',
+      '  return (',
+      '    <div className={cls}>',
+      '      {/* <button> in a JSX comment: text-gray-400 */}',
+      '      <span className="text-zinc-700" />',
+      '    </div>',
+      '  )',
+      '}',
+    ].join('\n')
+    const lines = (pattern: string, file: string) => regexFindings({ ...RAW_BUTTON, options: { pattern } }, file, probe, {}).map(f => f.line)
+    // What ESLint itself reports for this file (no-restricted-syntax on string literals and template elements): the
+    // string after a URL (4), the template string from its backtick (7) and from the `}` closing its `${...}` (9), and
+    // the JSX attribute (14). Nothing in a comment or a regex literal.
+    expect(lines('(bg|text)-(gray|red|blue|slate|zinc)-[0-9]', 'src/probe.tsx')).toEqual([4, 7, 14])
+    expect(lines('rounded-\\[', 'src/probe.tsx')).toEqual([9])
+    expect(lines('<button\\b', 'src/probe.tsx')).toEqual([])
+    // Any other file is matched line by line as it is.
+    expect(lines('(bg|text)-(gray|red|blue|slate|zinc)-[0-9]', 'notes.md')).toEqual([1, 2, 4, 5, 8, 13, 14])
+  })
+
+  test("a turn finding an inline one already reports is dropped, but never a CI failure the inline one doesn't report", async () => {
+    const inline = regexFindings(RAW_INPUT, 'src/page.tsx', PAGE, {})
+    const turn = eslintFindings(
+      ESLINT,
+      JSON.stringify([{ filePath: '/repo/src/page.tsx', messages: [message('no-restricted-syntax', 3), message('no-restricted-syntax', 9), message('no-console', 3)] }]),
+      '/repo',
+      {},
+      () => [],
+    ).findings
+    // Line 3's no-restricted-syntax is the inline one's; line 9 (another selector) and no-console stay.
+    expect(withoutInline(turn, inline).map(f => [f.line, f.rule])).toEqual([
+      [9, 'no-restricted-syntax'],
+      [3, 'no-console'],
+    ])
+    // Inline reads suppressed (a partial count) while ESLint's full count fails CI: ESLint's error stays.
+    const suppressed = regexFindings(RAW_INPUT, 'src/page.tsx', PAGE, { 'src/page.tsx': { 'no-restricted-syntax': { count: 1 } } })
+    expect(withoutInline(turn, suppressed).map(f => [f.line, f.rule])).toEqual([
+      [3, 'no-restricted-syntax'],
+      [9, 'no-restricted-syntax'],
+      [3, 'no-console'],
+    ])
+  })
 })
