@@ -47,7 +47,7 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 // stamps dist/index.html with the clock's time. `calls` counts each command by its first words.
 const engine = (
   on: Parameters<TestBody>[1],
-  opts: { report?: { text: string; exit: number }; dist?: number; ci?: { commit: Record<string, { id: number; sha: string }[]>; branch: { id: number; sha: string }[]; logs: Record<number, string> } } = {},
+  opts: { report?: { text: string; exit: number; ms?: number }; dist?: number; ci?: { commit: Record<string, { id: number; sha: string }[]>; branch: { id: number; sha: string }[]; logs: Record<number, string> } } = {},
 ) => {
   const files: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK, '/repo/tools/bundle/baseline.json': BASELINE }
   const mtimes: Record<string, number> = {}
@@ -78,13 +78,14 @@ const engine = (
     const names = Object.keys(files).filter(p => p.startsWith(dir) && !p.slice(dir.length).includes('/'))
     return { value: names.map(p => ({ name: p.slice(dir.length), kind: 'file', mtimeMs: mtimes[p] ?? 1 })) } as never
   })
-  on('process.run', (_, e) => {
+  on('process.run', async (_, e) => {
     const argv = (e as { argv: string[] }).argv
     const line = argv.join(' ')
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     const count = (name: string) => (calls[name] = (calls[name] ?? 0) + 1)
     if (line.includes('report.mjs')) {
       count('report')
+      await clock.sleep(opts.report?.ms ?? 0)
       return out(opts.report?.text ?? '', opts.report?.exit ?? 0)
     }
     if (line === 'npm run build') {
@@ -201,5 +202,28 @@ test("CI's reading of an older commit is shown as stale, and each finished job's
   await ui.press({ key: 'refresh' })
   await clock.settle()
   expect(calls.log).toBe(1)
+  await ui.unmount()
+})
+
+test('reading again over readings already shown moves nothing: the readings stay, and only the heading says reading', async ($, on) => {
+  const { clock, calls } = engine(on, { report: { text: REPORT_OVER, exit: 1, ms: 2000 }, dist: 950_000 })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'budgets' })
+  await clock.advance(3000)
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(calls.report).toBe(1)
+
+  await ui.press({ key: 'refresh' })
+  await clock.advance(500)
+  expect(calls.report).toBe(2)
+  expect(await ui.find({ type: 'Text', text: 'reading…' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Reading the budgets/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: '412.1 KB' })).toBeDefined()
+
+  await clock.advance(2000)
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: 'read just now' })).toBeDefined()
   await ui.unmount()
 })

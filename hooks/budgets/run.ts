@@ -133,7 +133,8 @@ export function createBudgets($: EngineInterface, deps: BudgetDeps): Budgets {
     const pack = await deps.pack()
     const root = deps.report()?.root ?? ''
     if (!pack || !root) return
-    await set({ doing: 'reading', error: '' })
+    // The last error stays until this read replaces it, so the view doesn't drop a line and draw it again.
+    await set({ doing: 'reading' })
     const head = await headOf(root)
     const outputs = new Map<string, Ran>()
     const readings: BudgetReading[] = []
@@ -151,7 +152,7 @@ export function createBudgets($: EngineInterface, deps: BudgetDeps): Budgets {
       }
       readings.push(pickReading(spec, results, limitOf(spec, await baselineOf(spec, root))))
     }
-    await set({ readings, doing: '', at: await $.clock.now() })
+    await set({ readings, doing: '', at: await $.clock.now(), error: '' })
   }
 
   const alone = async (job: () => Promise<void>) => {
@@ -176,7 +177,7 @@ export function createBudgets($: EngineInterface, deps: BudgetDeps): Budgets {
         const builds = new Map<string, string[]>()
         for (const s of pack.budgets.flatMap(b => b.sources)) if (s.kind === 'command' && s.build) builds.set(s.build.join('\u0000'), s.build)
         for (const argv of builds.values()) {
-          await set({ doing: 'building', error: '' })
+          await set({ doing: 'building' })
           const ran = await run(deps.heavy, argv, root, BUILD_TIMEOUT_MS)
           if (ran.exitCode !== 0) return void (await set({ error: `The build failed: ${firstLine(ran.stderr) || 'exit ' + ran.exitCode}` }))
         }
