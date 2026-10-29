@@ -43,6 +43,9 @@ export const GitView = (
   if (git.error) return Empty(k, git.error)
   return (
     <Box flexDirection="column">
+      <Text weight="bold" wrap="truncate-end">
+        {repoName(git)}
+      </Text>
       {Branch(k, git, now, isPaused, nav)}
       {git.operation && (
         <Text color="warning" wrap="truncate-end">
@@ -75,6 +78,10 @@ export const GitView = (
     </Box>
   )
 }
+
+// The repository's name: its own folder, which `git worktree list` gives first, so a linked worktree shows the
+// repository it belongs to; the top folder without the list.
+const repoName = (git: GitSnapshot): string => lastSegment(git.worktrees[0]?.path || git.root)
 
 const Branch = (k: Kit, git: GitSnapshot, now: number, isPaused: boolean, nav: GitNav): JSX.Element => {
   const { Box, Button, Text } = k

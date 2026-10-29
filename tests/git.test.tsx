@@ -66,7 +66,8 @@ const ANSWERS: [RegExp, string][] = [
   [/^git rev-parse/, '/repo/.git\n/repo\n'],
 ]
 
-const engine = (on: Parameters<TestBody>[1]) => {
+// `answers` come first, ahead of ANSWERS.
+const engine = (on: Parameters<TestBody>[1], answers: [RegExp, string][] = []) => {
   mock.clock(on, { now: 1_000_000 })
   mock.store(on)
   mock.env(on, { HOME: '/home/test' })
@@ -77,7 +78,7 @@ const engine = (on: Parameters<TestBody>[1]) => {
   on('fs.exists', () => ({ value: false }))
   on('process.run', (_, e) => {
     const line = (e as { argv: string[] }).argv.join(' ')
-    const answer = ANSWERS.find(([pattern]) => pattern.test(line))
+    const answer = [...answers, ...ANSWERS].find(([pattern]) => pattern.test(line))
     const ok = !!answer || line.startsWith('git ')
     return { value: { exitCode: ok ? 0 : 1, stdout: answer?.[1] ?? '', stderr: ok ? '' : 'gh is not set up', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -99,5 +100,30 @@ test('Code groups the changes, lists unpushed commits, and shows a file’s diff
   expect(await ui.find({ type: 'Code' })).toBeDefined()
   await ui.press({ key: 'file-Unstaged-src/app.ts' })
   expect(await ui.find({ type: 'Code' })).toBeUndefined()
+  await ui.unmount()
+})
+
+// The row drawn right above the branch's, and the branch's own.
+const shownAboveBranch = async (ui: { findAll: (q: { type: string }) => Promise<{ text: string }[]> }) => {
+  const texts = (await ui.findAll({ type: 'Text' })).map(t => t.text)
+  const at = texts.findIndex(t => t.startsWith('⎇ '))
+  return texts.slice(at - 1, at + 1)
+}
+
+test("Git names the repository above the branch, a linked worktree's by the repository it belongs to", async ($, on) => {
+  engine(on, [[/^git worktree list/, 'worktree /home/me/shop\nHEAD abc123\nbranch refs/heads/main\n\nworktree /tmp/shop-cart\nHEAD def456\nbranch refs/heads/develop\n']])
+  await $.session.start({ cwd: '/tmp/shop-cart', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'area-code' })
+  expect(await shownAboveBranch(ui)).toEqual(['shop', '⎇ develop'])
+  await ui.unmount()
+})
+
+test('without a worktree list, the repository is named by its top folder', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'area-code' })
+  expect(await shownAboveBranch(ui)).toEqual(['repo', '⎇ develop'])
   await ui.unmount()
 })
