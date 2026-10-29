@@ -19,7 +19,9 @@ export const BudgetsView = (k: Kit, budgets: BudgetState | null, hasBudgets: boo
       {Section(k, 'Budgets', note)}
       {!hasBudgets && Empty(k, "This repo's pack has no budgets.")}
       {hasBudgets && !budgets?.readings.length && !doing && Empty(k, 'Not read yet: r reads them, m builds first.')}
-      {doing && Line(k, { char: spinner(now), color: ACCENT }, doing === 'building' ? 'Building, then reading the budgets (a build can take minutes)' : 'Reading the budgets')}
+      {/* A read over readings already shown says so only in the heading, so nothing below it moves. */}
+      {(doing === 'building' || (doing === 'reading' && !budgets?.readings.length)) &&
+        Line(k, { char: spinner(now), color: ACCENT }, doing === 'building' ? 'Building, then reading the budgets (a build can take minutes)' : 'Reading the budgets')}
       {budgets?.error ? Line(k, { char: '✗', color: 'error' }, budgets.error) : null}
       {budgets?.readings.map(r => Reading(k, r))}
       {hasBudgets && (
