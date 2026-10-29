@@ -1,6 +1,7 @@
 import type { Finding } from '../../types'
 import type { CheckSpec } from '../packs/types'
 import { matchesGlob, repoPath } from './glob'
+import { isScript, scriptSource } from './source'
 import { suppress } from './suppressions'
 import type { Suppressions } from './suppressions'
 
@@ -59,6 +60,52 @@ export const sizeFindings = (check: CheckSpec, file: string, text: string, suppr
     out.push(finding(check, { file, line: 0, rule, severity: 'info', message: `${lines} lines, near the limit of ${max}`, ciWouldFail: false }))
   return out
 }
+
+// A regex-lines check on a file's text: each line matching `options.pattern` is a finding, an error CI fails on for a
+// `ci` check and a warning (a project rule) for an `advise` one. Its rule is the ESLint rule it stands for (`rules[0]`),
+// else its own id. When the repo's suppressions for that rule let the file's matches through, they are information
+// only ("don't add more"). Its count is only part of the rule's, so it never calls a suppression unused. JS and TS
+// files are read without their comments, and a match in a template string goes on the line ESLint reports it on.
+export const regexFindings = (check: CheckSpec, file: string, text: string, suppressions: Suppressions): Finding[] => {
+  const pattern = typeof check.options?.pattern === 'string' ? check.options.pattern : ''
+  if (!pattern) return []
+  const rule = check.rules?.[0] ?? check.id
+  const message = typeof check.options?.message === 'string' && check.options.message ? check.options.message : `matches /${pattern}/`
+  const lines = isScript(file) ? scriptLines(new RegExp(pattern, 'g'), text) : plainLines(new RegExp(pattern), text)
+  const isSuppressed = !!check.rules?.[0] && lines.length > 0 && suppress(suppressions[file], { [rule]: lines.length }, [rule]).suppressed.includes(rule)
+  return lines.map(line =>
+    isSuppressed
+      ? finding(check, { file, line, rule, severity: 'info', message: `${message} (suppressed: don't add more)`, ciWouldFail: false })
+      : finding(check, { file, line, rule, severity: check.class === 'ci' ? 'error' : 'warn', message, ciWouldFail: check.class === 'ci' }),
+  )
+}
+
+// The lines with a match, in order.
+const plainLines = (re: RegExp, text: string): number[] =>
+  text.split(/\r\n|\r|\n/).flatMap((line, i) => (re.test(line) ? [i + 1] : []))
+
+// The lines a script's matches are reported on, each once, in order: every match in the comment-free text, on the line
+// `scriptSource` places it.
+const scriptLines = (re: RegExp, text: string): number[] => {
+  const { code, lineOf } = scriptSource(text)
+  const lines = new Set<number>()
+  let offset = 0
+  for (const line of code.split('\n')) {
+    re.lastIndex = 0
+    for (let m = re.exec(line); m; m = re.exec(line)) {
+      lines.add(lineOf[offset + m.index] ?? 1)
+      if (m[0] === '') re.lastIndex += 1
+    }
+    offset += line.length + 1
+  }
+  return [...lines].sort((a, b) => a - b)
+}
+
+// A turn check's findings without the ones an inline check already reports: same file, line and rule, where the inline
+// one says no less (it would fail CI, or the turn's wouldn't). A turn finding that would fail CI is never dropped for
+// an inline one that doesn't.
+export const withoutInline = (turn: Finding[], inline: Finding[]): Finding[] =>
+  turn.filter(t => !inline.some(i => i.file === t.file && i.line === t.line && i.rule === t.rule && (i.ciWouldFail || !t.ciWouldFail)))
 
 type EslintMessage = { ruleId: string | null; severity: number; message: string; line?: number }
 type EslintResult = { filePath: string; messages: EslintMessage[] }

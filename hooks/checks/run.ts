@@ -5,7 +5,7 @@ import type { Lane } from '../core/lanes'
 import { askTrust } from '../packs/load'
 import type { CheckSpec, ResolvedPack } from '../packs/types'
 import { readText } from '../read-records'
-import { ESLINT_BIN, covers, eslintFindings, isTold, noteFor, ownedRules, sizeFindings } from './findings'
+import { ESLINT_BIN, covers, eslintFindings, isTold, noteFor, ownedRules, regexFindings, sizeFindings, withoutInline } from './findings'
 import { repoPath } from './glob'
 import { parseSuppressions } from './suppressions'
 import type { Suppressions } from './suppressions'
@@ -56,6 +56,11 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
   }
   const suppressionsOf = async (check: CheckSpec, root: string): Promise<Suppressions> =>
     check.suppressions ? parseSuppressions(await readText($, `${root}/${check.suppressions}`)) : {}
+  // The inline checks a file is under, and what they find in its text.
+  const inlineChecks = (pack: ResolvedPack, file: string) =>
+    pack.checks.filter(c => c.cost === 'edit' && (c.analyzer === 'size-lines' || c.analyzer === 'regex-lines') && covers(c, file))
+  const inlineFindings = async (check: CheckSpec, root: string, file: string, text: string) =>
+    check.analyzer === 'size-lines' ? sizeFindings(check, file, text, await suppressionsOf(check, root)) : regexFindings(check, file, text, await suppressionsOf(check, root))
   // Whether the repo's own tools may run; the first check that needs them asks once a session.
   const mayRunRepoTools = async () => {
     const report = deps.report()
@@ -76,6 +81,9 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       const covered: string[] = []
       for (const f of written) if (covers(check, f) && (await stampOf(`${report.root}/${f}`))) covered.push(f)
       if (!covered.length) continue
+      // A repo without ESLint installed has nothing to run: skipped quietly, without asking for trust.
+      const bin = check.bin ?? ESLINT_BIN
+      if (bin[0] === 'node' && bin[1] && !(await $.fs.exists(`${report.root}/${bin[1]}`))) continue
       const files = covered.slice(0, MAX_CHECKED_FILES)
       const run: CheckRun = { check: check.id, label: check.label, at: await $.clock.now(), ms: 0, files: files.length, isRunning: false, waitsForTrust: false, error: '' }
       if (!(await mayRunRepoTools())) {
@@ -100,9 +108,17 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
           ? eslintFindings(check, ran.stdout, report.root, await suppressionsOf(check, report.root), owned)
           : { findings: [], files: [], error: ran.stderr.trim().split('\n').find(l => l.trim()) || `it exited with ${ran.exitCode}` }
       if (!parsed.error) {
-        await deps.saveFindings(check.id, files, parsed.findings)
+        // What a regex check already reports on a line, as the ESLint rule it stands for, shows and is told once.
+        const inline: Finding[] = []
+        for (const f of files) {
+          const regexChecks = inlineChecks(pack, f).filter(c => c.analyzer === 'regex-lines')
+          const text = regexChecks.length ? await readText($, `${report.root}/${f}`) : ''
+          for (const c of regexChecks) inline.push(...(await inlineFindings(c, report.root, f, text)))
+        }
+        const findings = withoutInline(parsed.findings, inline)
+        await deps.saveFindings(check.id, files, findings)
         const kept = toTell?.findings.filter(f => f.check !== check.id || !files.includes(f.file)) ?? []
-        toTell = { findings: [...kept, ...parsed.findings.filter(isTold)], stamps: { ...toTell?.stamps, ...stamps } }
+        toTell = { findings: [...kept, ...findings.filter(isTold)], stamps: { ...toTell?.stamps, ...stamps } }
       }
       const ms = (await $.clock.now()) - run.at
       await deps.saveRun({ ...run, ms, error: parsed.error })
@@ -116,12 +132,12 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       const file = root ? repoPath(root, /^([a-z]:)?[\\/]/i.test(path) ? path : `${deps.cwd}/${path}`) : ''
       if (!pack || !file) return ''
       touched.add(file)
-      const checks = pack.checks.filter(c => c.cost === 'edit' && c.analyzer === 'size-lines' && covers(c, file))
+      const checks = inlineChecks(pack, file)
       if (!checks.length) return ''
       const text = await readText($, `${root}/${file}`)
       const found: Finding[] = []
       for (const check of checks) {
-        const findings = sizeFindings(check, file, text, await suppressionsOf(check, root))
+        const findings = await inlineFindings(check, root, file, text)
         await deps.saveFindings(check.id, [file], findings)
         found.push(...findings)
       }

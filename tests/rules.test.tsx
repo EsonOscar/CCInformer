@@ -115,7 +115,9 @@ const engine = (
   return { clock, runs, asked, submitted, change, mostAtOnce: () => mostAtOnce }
 }
 
-const REPO = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK }
+// ESLint is installed in the repo: the turn check runs node_modules/eslint/bin/eslint.js, which the engine answers.
+const ESLINT_INSTALLED = { '/repo/node_modules/eslint/bin/eslint.js': '' }
+const REPO = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK, ...ESLINT_INSTALLED }
 
 test('a file written over its limit tells the model with the result; Code › Rules lists it until dismissed', async ($, on) => {
   const { clock } = engine(on, { ...REPO })
@@ -227,7 +229,7 @@ test('one ESLint run at a time: a turn that ends during a run is checked after i
 })
 
 test("without a user pack, the first turn check asks once whether the repo's tools may run, and waits on a no", async ($, on) => {
-  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG }, { answer: 'Not now' })
+  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG, ...ESLINT_INSTALLED }, { answer: 'Not now' })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
@@ -250,7 +252,7 @@ test("without a user pack, the first turn check asks once whether the repo's too
 })
 
 test('a yes to trust lets the waiting files run', async ($, on) => {
-  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG })
+  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG, ...ESLINT_INSTALLED })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
@@ -259,4 +261,76 @@ test('a yes to trust lets the waiting files run', async ($, on) => {
   await clock.settle()
   expect(asked.length).toBe(1)
   expect(runs).toEqual([['src/a.ts']])
+})
+
+// Design rules for .tsx files outside src/ui/: raw <button> is a project rule; raw <input> is a CI rule ESLint enforces
+// as no-restricted-syntax, so the regex check stands for it. ESLint runs over the same files after each turn.
+const DESIGN_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { "remote": ["github.com/acme/*"] }, "extends": ["node-vite"],
+  "checks": [
+    { "id": "raw-button", "label": "Raw <button>", "on": ["src/**/*.tsx"], "ignore": ["src/ui/**"], "analyzer": "regex-lines", "cost": "edit",
+      "class": "advise", "options": { "pattern": "<button\\\\b", "message": "use <Button> from the design system" } },
+    { "id": "raw-input", "label": "Raw <input>", "on": ["src/**/*.tsx"], "ignore": ["src/ui/**"], "analyzer": "regex-lines", "cost": "edit",
+      "class": "ci", "rules": ["no-restricted-syntax"], "options": { "pattern": "<input\\\\b", "message": "use <Input> from the design system" } },
+    { "id": "eslint", "label": "ESLint", "on": ["src/**/*.tsx"], "analyzer": "eslint-json", "cost": "turn", "class": "ci" }
+  ] }`
+const DESIGN_REPO = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: DESIGN_PACK, ...ESLINT_INSTALLED }
+const PAGE = ['export const Page = () => (', '  <div>', '    <input value={v} />', '    <button onClick={go}>Go</button>', '  </div>', ')'].join('\n')
+const restricted = (line: number) => ({ ruleId: 'no-restricted-syntax', severity: 2, message: 'Raw form elements are not allowed.', line })
+
+test('a design rule is told with the write: a project rule, or CI for one ESLint enforces; files it exempts give nothing', async ($, on) => {
+  const { clock } = engine(on, { ...DESIGN_REPO })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+
+  const note = (await $.tool.call({ tool: 'Write', file_path: '/repo/src/page.tsx', content: PAGE })).context?.join('\n') ?? ''
+  expect(note).toContain('- src/page.tsx:3 no-restricted-syntax: use <Input> from the design system [CI will fail]')
+  expect(note).toContain('- src/page.tsx:4 raw-button: use <Button> from the design system [project rule]')
+  expect((await $.tool.call({ tool: 'Write', file_path: '/repo/src/ui/button.tsx', content: PAGE })).context).toBeUndefined()
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'rules' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'L4 raw-button: use <Button> from the design system' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'rule' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'L3 no-restricted-syntax: use <Input> from the design system' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '1 would fail CI' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /src\/ui\/button\.tsx/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test("the turn's ESLint finding on a line a design rule already reports shows and is told once; its others stay", async ($, on) => {
+  const { clock, submitted } = engine(on, { ...DESIGN_REPO }, { lint: f => (f === 'src/page.tsx' ? [restricted(3), restricted(5)] : []) })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/page.tsx', content: PAGE })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+
+  await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
+  const told = submitted[0]!.context.join('\n')
+  expect(told).toContain('- src/page.tsx:5 no-restricted-syntax: Raw form elements are not allowed. [CI will fail]')
+  expect(told).not.toContain('src/page.tsx:3')
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'rules' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.findAll({ type: 'Text', text: /^L3 no-restricted-syntax/ })).length).toBe(1)
+  expect(await ui.find({ type: 'Text', text: 'L5 no-restricted-syntax: Raw form elements are not allowed.' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '2 would fail CI' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a repo without ESLint installed skips the turn check quietly: no run, no error, no trust question', async ($, on) => {
+  // No user pack (so trust would be asked) and no node_modules/eslint: node-vite's ESLint check has nothing to run.
+  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/app.ts', content: lines(4) })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+  expect([runs, asked]).toEqual([[], []])
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'rules' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /could not be read|ESLint on/ })).toBeUndefined()
+  expect(await ui.find({ type: 'Text', text: /Nothing found in the files changed so far/ })).toBeDefined()
+  await ui.unmount()
 })

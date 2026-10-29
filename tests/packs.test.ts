@@ -67,6 +67,18 @@ describe('reading pack files', () => {
   test('every built-in pack is valid', async () => {
     for (const pack of BUILTINS) expect({ id: pack.id, reasons: checkPack(pack, 'built-in').reasons }).toEqual({ id: pack.id, reasons: [] })
   })
+
+  test('a regex-lines check needs a pattern that compiles, and runs on each write', async () => {
+    const check = (fields: object) => ({ id: 'raw-button', label: 'Raw <button>', on: ['src/**/*.tsx'], analyzer: 'regex-lines', cost: 'edit', class: 'advise', ...fields })
+    const pack = (c: object) => ({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] }, checks: [c] })
+    expect(checkPack(pack(check({ options: { pattern: '<button\\b', message: 'use <Button>' } })), 'user').reasons).toEqual([])
+    expect(checkPack(pack(check({})), 'user').reasons).toEqual(['check raw-button: needs "options.pattern", the regex each line is tested against'])
+    expect(checkPack(pack(check({ options: { pattern: '<button(' } })), 'user').reasons).toEqual(['check raw-button: "options.pattern" doesn\'t compile'])
+    expect(checkPack(pack(check({ cost: 'turn', options: { pattern: 'x', message: 3 } })), 'user').reasons).toEqual([
+      'check raw-button: a regex-lines check runs on each write, so its cost must be "edit"',
+      'check raw-button: "options.message" must be a string',
+    ])
+  })
 })
 
 describe('the four layers', () => {
