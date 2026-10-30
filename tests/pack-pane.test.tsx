@@ -113,6 +113,11 @@ test('a broken file adds nothing, the Pack view says why, and the rest of the pa
   await ui.unmount()
 })
 
+// The repo trust question, word for word: it says Claude is told what the tools find, and that it is asked once.
+const QUESTION =
+  "Let CCInformer run this repo's own tools (linters, builds) for git@github.com:acme/shop.git? What they find is also passed to " +
+  "Claude with your next message. CCInformer won't ask about this repo again: change it any time with a in Debug › Pack."
+
 test('repo tools wait until the person allows them, once, and can be stopped again', async ($, on) => {
   const { asked, state } = engine(on, { '/repo/package.json': VITE_PKG })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -120,7 +125,7 @@ test('repo tools wait until the person allows them, once, and can be stopped aga
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /repo tools wait until you allow them/ })).toBeDefined()
 
-  state.answer = 'Not now'
+  state.answer = "Don't allow"
   const no = await $.command.run({ ...TYPED, command: 'side', args: 'pack trust' })
   expect(no.text).toMatch(/Not allowed/)
   expect(await ui.find({ type: 'Text', text: /repo tools wait until you allow them/ })).toBeDefined()
@@ -129,8 +134,8 @@ test('repo tools wait until the person allows them, once, and can be stopped aga
   const yes = await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack trust' })
   expect(yes.text).toMatch(/may run here/)
   expect(asked).toEqual([
-    "Let CCInformer run this repo's own tools (linters, builds) for git@github.com:acme/shop.git?",
-    "Let CCInformer run this repo's own tools (linters, builds) for git@github.com:acme/shop.git?",
+    QUESTION,
+    QUESTION,
   ])
   expect(await ui.find({ type: 'Text', text: /repo tools may run: allowed by you/ })).toBeDefined()
 

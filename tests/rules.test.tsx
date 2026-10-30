@@ -13,6 +13,8 @@ const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: fals
 const CLOCK_HEAVY = { timeoutMs: 20_000 }
 
 const PACKS = '/home/test/.claude/ccinformer/packs'
+// Where a yes to repo trust is kept for /repo (its git folder made a key).
+const TRUST_KEY = 'trust:-repo-git'
 const VITE_PKG = JSON.stringify({ name: 'shop', devDependencies: { vite: '^5.0.0' } })
 // A user pack, so the repo's own tools may run: files under src/ get a 10-line limit and ESLint after each turn.
 const USER_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { "remote": ["github.com/acme/*"] }, "extends": ["node-vite"],
@@ -35,7 +37,7 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 const engine = (
   on: Parameters<TestBody>[1],
   files: Record<string, string>,
-  opts: { lint?: (file: string) => object[]; lintMs?: number; answer?: string } = {},
+  opts: { lint?: (file: string) => object[]; lintMs?: number; answer?: string; store?: Record<string, unknown> } = {},
 ) => {
   const mtimes: Record<string, number> = Object.fromEntries(Object.keys(files).map(p => [p, 1]))
   const runs: string[][] = []
@@ -48,7 +50,7 @@ const engine = (
     files[path] = text
     mtimes[path] = (mtimes[path] ?? 1) + 1
   }
-  mock.store(on)
+  mock.store(on, opts.store ?? {})
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -229,7 +231,7 @@ test('one ESLint run at a time: a turn that ends during a run is checked after i
 })
 
 test("without a user pack, the first turn check asks once whether the repo's tools may run, and waits on a no", async ($, on) => {
-  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG, ...ESLINT_INSTALLED }, { answer: 'Not now' })
+  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG, ...ESLINT_INSTALLED }, { answer: "Don't allow" })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.settle()
 
@@ -249,6 +251,33 @@ test("without a user pack, the first turn check asks once whether the repo's too
   await clock.settle()
   expect(asked.length).toBe(1)
   expect(runs).toEqual([])
+
+  // Nor in a later session: the no is kept for the repo.
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/a.ts', content: lines(3) })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+  expect(asked.length).toBe(1)
+  expect(runs).toEqual([])
+})
+
+test('a yes that lapsed when the config changed is not asked about again: the files wait for the person', async ($, on) => {
+  const store = { [TRUST_KEY]: { hash: 'config-before-the-change', at: 1 } }
+  const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG, ...ESLINT_INSTALLED }, { store })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/a.ts', content: lines(2) })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+  expect(asked).toEqual([])
+  expect(runs).toEqual([])
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'debug' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'view-pack' })
+  expect(await ui.find({ type: 'Text', text: /the config changed since you allowed them. Press a to allow them again/ })).toBeDefined()
+  await ui.unmount()
 })
 
 test('a yes to trust lets the waiting files run', async ($, on) => {

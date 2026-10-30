@@ -9,6 +9,8 @@ import { configHash, isStoredTrust } from './trust'
 import type { ResolvedPack } from './types'
 
 const STORE_TRUST = 'trust:'
+// When the repo trust question was put for a repo, kept for good: the checks ask on their own only once per repo.
+const STORE_ASKED = 'trustAsked:'
 const PACK_SUFFIX = '.pack.jsonc'
 
 // Where user packs live, under Claude Code's config folder.
@@ -85,17 +87,26 @@ export async function packSignature($: EngineInterface, root: string, configDir:
 }
 
 const ALLOW = 'Allow'
+const DENY = "Don't allow"
 
-// Asks once whether the repo's own tools (linters, builds, the checks that load its config) may run, and keeps a
-// yes for these exact config files. Resolves whether it was given; a dismissal is a no.
+// Asks whether the repo's own tools (linters, builds, the checks that load its config) may run, and keeps a yes for
+// these exact config files. Resolves whether it was given; a dismissal is a no. Either way the repo is marked as
+// asked, so the checks never ask about it on their own again.
 export async function askTrust($: EngineInterface, report: PackReport): Promise<boolean> {
   const name = report.remote || report.root
-  const answer = await $.ui
-    .ask(`Let CCInformer run this repo's own tools (linters, builds) for ${name}?`, { options: [ALLOW, 'Not now'], header: 'Repo trust' })
-    .catch(() => '')
+  await $.store.set(STORE_ASKED + report.repoKey, await $.clock.now())
+  const question =
+    `Let CCInformer run this repo's own tools (linters, builds) for ${name}? What they find is also passed to Claude with your next ` +
+    "message. CCInformer won't ask about this repo again: change it any time with a in Debug › Pack."
+  const answer = await $.ui.ask(question, { options: [ALLOW, DENY], header: 'Repo trust' }).catch(() => '')
   if (answer !== ALLOW) return false
   await $.store.set(STORE_TRUST + report.repoKey, { hash: report.hash, at: await $.clock.now() })
   return true
+}
+
+// Whether CCInformer has asked about this repo before, whatever the answer.
+export async function wasTrustAsked($: EngineInterface, report: PackReport): Promise<boolean> {
+  return (await $.store.get(STORE_ASKED + report.repoKey)) != null
 }
 
 export async function forgetTrust($: EngineInterface, report: PackReport): Promise<void> {
