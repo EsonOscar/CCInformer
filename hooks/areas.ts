@@ -46,6 +46,7 @@ export const AREAS: AreaDef[] = [
       { id: 'requests', label: 'Requests', key: 'q' },
       { id: 'context', label: 'Context', key: 'c' },
       { id: 'pack', label: 'Pack', key: 'p' },
+      { id: 'settings', label: 'Settings', key: 's' },
     ],
   },
 ]
@@ -58,7 +59,7 @@ export const ACTIONS = {
   code: { fetch: 'u', allFiles: 'f', diffPane: 'd', dismiss: 'x', measure: 'm', ciMode: 'i' },
   work: { phasePrev: 'p', phaseNext: 'n', followLive: 'l', closeRun: 'x', nextWorkflow: 'o', archive: 'a' },
   timeline: {},
-  debug: { trust: 'a' },
+  debug: { trust: 'a', approveAll: 'y', denyAll: 'n', explain: 'e' },
 } as const satisfies Record<Area, Record<string, string>>
 
 // An area is drawn once it has a view to show.

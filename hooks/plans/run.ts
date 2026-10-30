@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { PackReport, PlanFile, PlansState } from '../../types'
 import type { Lane } from '../core/lanes'
+import type { May } from '../core/permissions'
 import type { Platform } from '../env/procs'
 import type { PlanSpec, ResolvedPack } from '../packs/types'
 import { filesOf as globFiles } from '../read-files'
@@ -35,6 +36,7 @@ export type PlanDeps = {
   memoryDir: string
   save: (state: PlansState) => Promise<unknown>
   notify: (text: string) => void
+  may: May
 }
 
 export type Plans = {
@@ -95,7 +97,7 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     // The board first, with what is known; GitHub's answers follow, so the board never waits on gh.
     await deps.save({ plans, merged: merged(), archiveDir: spec?.archiveDir ?? '', at, error: '' })
     const finished = plans.filter(isFinished).length
-    if (isReminder && finished && report) {
+    if (isReminder && finished && report && deps.may('notify.plans')) {
       const last = await $.store.get(STORE_REMINDED + report.repoKey).catch(() => undefined)
       if (isReminderDue(typeof last === 'number' ? last : null, at)) {
         deps.notify(reminderText(finished))
@@ -108,7 +110,7 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     await Promise.all(ask.map(n => askPr(root, n)))
     await deps.save({ plans, merged: merged(), archiveDir: spec?.archiveDir ?? '', at, error: '' })
     const toast = mergedToast(plans, before, prs)
-    if (toast) deps.notify(toast)
+    if (toast && deps.may('notify.plans')) deps.notify(toast)
   }
 
   // The files whose references to `from` would change, with their new text: every Markdown file under `.local/` and
@@ -140,31 +142,31 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     const dir = archiveDirFor(path, pack?.plans)
     if (!root || !dir) return
     const to = archivePath(path, dir)
-    if (await $.fs.exists(`${root}/${to}`)) return deps.notify(`Already in the archive: ${to}`)
+    if (await $.fs.exists(`${root}/${to}`)) return deps.notify(`Already in the archive: ${to}`) // asked
     const text = await readText($, `${root}/${path}`)
     const fromDir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
     const moved = rewriteRefs(moveOwnLinks(text, fromDir, dir), dir, path, to)
     const changes = await referencesTo(root, path, to)
     const open = parsed.get(path)?.plan.checkpoints.filter(c => c.status === 'open' || c.status === 'partly').length ?? 0
     const question = archiveQuestion(path, to, changes.map(c => c.label), open)
-    const answer = await $.ui.ask(question, { options: [ARCHIVE, 'Cancel'], header: 'Archive plan' }).catch(() => '')
+    const answer = await $.ui.ask(question, { options: [ARCHIVE, 'Cancel'], header: 'Archive plan' }).catch(() => '') // asked
     if (answer !== ARCHIVE) return
 
-    await $.fs.write(`${root}/${to}`, moved)
-    if ((await readText($, `${root}/${to}`)) !== moved) return deps.notify(`Archive copy didn't match, nothing removed: ${baseOf(path)}`)
+    await $.fs.write(`${root}/${to}`, moved) // asked
+    if ((await readText($, `${root}/${to}`)) !== moved) return deps.notify(`Archive copy didn't match, nothing removed: ${baseOf(path)}`) // asked
     // A reference that can't be written stops it before the original goes: both copies stay, and the references
     // already moved lead to the archive copy, which exists.
     for (const c of changes) {
-      const isWritten = await $.fs.write(c.abs, c.text).then(
+      const isWritten = await $.fs.write(c.abs, c.text).then( // asked
         () => true,
         () => false,
       )
-      if (!isWritten) return deps.notify(`Couldn't update ${c.label}, so ${path} was kept: the archive copy is in place`)
+      if (!isWritten) return deps.notify(`Couldn't update ${c.label}, so ${path} was kept: the archive copy is in place`) // asked
     }
     await deps.light(removeCommand(deps.platform, `${root}/${path}`), undefined, root).catch(() => null)
     parsed.delete(path)
-    if (await $.fs.exists(`${root}/${path}`)) deps.notify(`Archived, but couldn't remove ${path}: remove it by hand`)
-    else deps.notify(`Archived ${baseOf(path)}, ${changes.length} ${changes.length === 1 ? 'file' : 'files'} updated`)
+    if (await $.fs.exists(`${root}/${path}`)) deps.notify(`Archived, but couldn't remove ${path}: remove it by hand`) // asked
+    else deps.notify(`Archived ${baseOf(path)}, ${changes.length} ${changes.length === 1 ? 'file' : 'files'} updated`) // asked
   }
 
   const once = async (job: () => Promise<void>) => {

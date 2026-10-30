@@ -1,6 +1,6 @@
 # CCInformer
 
-A Claude Code mod: a pane docked on the right of the terminal, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn.
+A Claude Code mod: a pane docked on the right of the terminal, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings.
 
 - **Now** (`1`)
   - **Env** (`e`): the processes this session started, which environment each points at and how long it has run; the processes your pack knows on this machine, with their memory; and free memory, with a toast when it runs low. Command lines and env values are never kept.
@@ -16,6 +16,7 @@ A Claude Code mod: a pane docked on the right of the terminal, in five areas you
 - **Debug** (`5`)
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its time, every model request with its tokens, and how the context grew, with compactions marked.
   - **Pack** (`p`): the [pack](#packs) this repo resolved to and where each value came from. `a` lets the repo's own tools run, or stops them.
+  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band and the production status line) stay as they are under both; you switch them off by hand.
 
 An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The top right shows the version running, such as `v0.19.0`. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
 
@@ -63,7 +64,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 ## Use
 
-- `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/side` is a short alias.
+- `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/ccinformer settings` opens the switches. `/side` is a short alias.
 - Ctrl+X Tab gives the pane the keyboard: `1`-`5` switch areas, the letters shown switch views and run actions, `r` refreshes, Esc gives the keyboard back. Clicking works without it.
 
 ## Skills
@@ -106,7 +107,7 @@ A repo's own files may only add or tighten, with globs and literals:
 
 A repo file that names a command, switches anything off, holds a regex or points outside the repo is refused whole, and Debug › Pack says why.
 
-**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). Trusting a repo also means Claude is told what those tools find. The first such check asks once per repo, and never again, whatever you answer. A yes lapses when the repo's config files change, and you allow it again in Debug › Pack. `a` there (or `/ccinformer pack untrust`) also takes it back.
+**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). Trusting a repo also means Claude is told what those tools find, unless Turn check notes is off in Debug › Settings. The first such check asks once per repo, and never again, whatever you answer, unless Ask about repo trust is off in Debug › Settings. A yes lapses when the repo's config files change, and you allow it again in Debug › Pack. `a` there (or `/ccinformer pack untrust`) also takes it back.
 
 ### Environments
 

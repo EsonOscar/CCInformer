@@ -91,14 +91,17 @@ const DENY = "Don't allow"
 
 // Asks whether the repo's own tools (linters, builds, the checks that load its config) may run, and keeps a yes for
 // these exact config files. Resolves whether it was given; a dismissal is a no. Either way the repo is marked as
-// asked, so the checks never ask about it on their own again.
-export async function askTrust($: EngineInterface, report: PackReport): Promise<boolean> {
+// asked, so the checks never ask about it on their own again. `isToldClaude`: Debug › Settings lets what the tools find
+// reach Claude, which the question then says.
+export async function askTrust($: EngineInterface, report: PackReport, isToldClaude: boolean): Promise<boolean> {
   const name = report.remote || report.root
   await $.store.set(STORE_ASKED + report.repoKey, await $.clock.now())
   const question =
-    `Let CCInformer run this repo's own tools (linters, builds) for ${name}? What they find is also passed to Claude with your next ` +
-    "message. CCInformer won't ask about this repo again: change it any time with a in Debug › Pack."
-  const answer = await $.ui.ask(question, { options: [ALLOW, DENY], header: 'Repo trust' }).catch(() => '')
+    `Let CCInformer run this repo's own tools (linters, builds) for ${name}?` +
+    (isToldClaude ? ' What they find is also passed to Claude with your next message.' : '') +
+    " CCInformer won't ask about this repo again: change it any time with a in Debug › Pack."
+  // Its callers decide whether it may be asked: the person asked, or Ask about repo trust allows it.
+  const answer = await $.ui.ask(question, { options: [ALLOW, DENY], header: 'Repo trust' }).catch(() => '') // relay
   if (answer !== ALLOW) return false
   await $.store.set(STORE_TRUST + report.repoKey, { hash: report.hash, at: await $.clock.now() })
   return true

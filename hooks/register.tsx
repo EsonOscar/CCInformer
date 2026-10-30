@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, BudgetState, CheckRun, CiActiveState, CiSnapshot, PlansState, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaFor, areaNames } from './areas'
@@ -14,6 +14,8 @@ import { createCiActive } from './ci/run'
 import type { CiActive } from './ci/run'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
+import { EXPLAIN_TEXTS, NO_CHOICES, allSet, choicesFrom, explainPrompt, isAllowed, toggled } from './core/permissions'
+import type { May, PermissionId } from './core/permissions'
 import { endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
@@ -49,6 +51,8 @@ const STORE_OLD_TAB = 'tab'
 const STORE_OPEN = 'isOpen'
 const STORE_COLUMNS = 'columns'
 const STORE_SESSION = 'session:'
+// The Debug › Settings choices, one value for every session.
+const STORE_PERMISSIONS = 'permissions'
 
 // Everything below counts in ticks of a second.
 const TICK_MS = 1000
@@ -80,6 +84,8 @@ const PLANS_RECHECK_TICKS = 600
 // The pack's processes on this machine while Now › Env shows; free memory while a heavy task of this session runs.
 const PROCESSES_EVERY_TICKS = 30
 const MEMORY_EVERY_TICKS = 30
+// The Settings choices are read again this often, so a change made in another session lands here too.
+const PERMISSIONS_EVERY_TICKS = 5
 // The tools that write a file the inline checks read.
 const WRITING_TOOLS = ['Edit', 'Write']
 
@@ -106,6 +112,8 @@ const statsAtom = atom({ plugin: 'ccinformer', key: 'stats' } as const, [] as Ru
 const showAllFilesAtom = atom({ plugin: 'ccinformer', key: 'showAllFiles' } as const, false)
 const diffAtom = atom({ plugin: 'ccinformer', key: 'diff' } as const, null as DiffPreview | null)
 const isOpenAtom = atom({ plugin: 'ccinformer', key: 'isOpen' } as const, false)
+// The Debug › Settings choices (the store holds them for every session; see applyChoices).
+const permissionsAtom = atom({ plugin: 'ccinformer', key: 'permissions' } as const, NO_CHOICES as PermissionChoices)
 // The version the pane shows in its top right, read from plugin.json at session start.
 const versionAtom = atom({ plugin: 'ccinformer', key: 'version' } as const, '')
 const isActiveAtom = atom({ plugin: 'ccinformer', key: 'isActive' } as const, true)
@@ -159,9 +167,40 @@ async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void>
   envTasks = tasks
   await update($, envTasksAtom, () => tasks)
   const prod = tasks.find(t => t.tone === 'prod')
-  const status = prod ? `⚠ PROD · ${prod.label || prod.envLabel}` : undefined
+  const status = prod && may('safety.prodStatus') ? `⚠ PROD · ${prod.label || prod.envLabel}` : undefined
   if (status !== shownStatus) $.ui.status(status)
   shownStatus = status
+}
+
+// The Debug › Settings choices, kept here as well as in state so every gate decides at once with no `$` call. Only
+// applyChoices changes them.
+let choices: PermissionChoices = NO_CHOICES
+const may: May = id => isAllowed(choices, id)
+
+// Takes up new choices: the gates, the state the pane draws from and the status line follow. Switched off, this
+// session's entry for the other sessions goes too (whichever session made the change).
+async function applyChoices($: EngineInterface, next: PermissionChoices): Promise<void> {
+  choices = next
+  await update($, permissionsAtom, () => next)
+  await saveEnvTasks($, envTasks)
+  if (selfId && !may('bg.sessionBeat')) await $.store.delete(STORE_SESSION + selfId)
+}
+
+// Reads the stored choices and takes them up, after applying `change` (and storing the result) when one is given. One
+// at a time, so two quick presses never undo each other and a read never undoes a press.
+let choicesQueue: Promise<unknown> = Promise.resolve()
+// The explain prompt was handed over and the session hasn't ended a turn since: another press would only repeat it.
+let isExplainSent = false
+function queueChoices($: EngineInterface, change?: (c: PermissionChoices) => PermissionChoices): Promise<unknown> {
+  choicesQueue = choicesQueue
+    .then(async () => {
+      const stored = choicesFrom(await $.store.get(STORE_PERMISSIONS))
+      const next = change ? change(stored) : stored
+      if (change) await $.store.set(STORE_PERMISSIONS, next)
+      if (JSON.stringify(next) !== JSON.stringify(choices)) await applyChoices($, next)
+    })
+    .catch(() => undefined)
+  return choicesQueue
 }
 
 // Active CI mode's state, kept here as well as in state: the guard decides from this at once, with no `$` call that
@@ -202,6 +241,8 @@ type Live = {
   measure: () => Promise<void>
   archive: (path: string) => Promise<void>
   ci: CiActive
+  setPermissions: (change: (c: PermissionChoices) => PermissionChoices) => Promise<unknown>
+  explain: () => Promise<void>
 }
 let live: Live | null = null
 
@@ -228,8 +269,10 @@ export const register: Register = on => {
     const recorded = await read($, agentsAtom)
     await update($, runsAtom, list => list.map(r => upgradeRun(r, recorded)))
     selfId = await $.session.id()
-    // A reload keeps the processes already tracked, and active CI mode's state (a read-only turn included).
-    await saveEnvTasks($, await read($, envTasksAtom))
+    // A reload keeps the processes already tracked, and active CI mode's state (a read-only turn included). The Settings
+    // choices are taken up before anything below can act; taking them up also writes the processes back.
+    envTasks = await read($, envTasksAtom)
+    await applyChoices($, choicesFrom(await $.store.get(STORE_PERMISSIONS)))
     ciState = { ...CI_IDLE, ...(await read($, ciActiveAtom)) }
     cwd = await $.session.cwd()
     // The engine gives a plugin its name and folder but not its version, so the pane reads its own manifest.
@@ -274,7 +317,7 @@ export const register: Register = on => {
     const noteMemory = async (memory: MemoryReading | null) => {
       if (!memory) return
       await update($, memoryAtom, () => memory)
-      if (memory.isLow && !isMemoryLow) $.ui.toast(`Memory is low: ${(memory.freeMb / 1024).toFixed(1)} GB free`)
+      if (memory.isLow && !isMemoryLow && may('notify.memory')) $.ui.toast(`Memory is low: ${(memory.freeMb / 1024).toFixed(1)} GB free`)
       isMemoryLow = memory.isLow
     }
     const refreshProcesses = () =>
@@ -308,6 +351,7 @@ export const register: Register = on => {
       saveFindings: (check, files, found) => update($, findingsAtom, list => [...list.filter(f => f.check !== check || !files.includes(f.file)), ...found]),
       saveRun: run => update($, checkRunAtom, () => run),
       dismissed: () => read($, dismissedAtom),
+      may,
     })
     // The pack's budgets (budgets/run.ts), read on opening Code › Budgets, on r, and after a build on m.
     const budgets = createBudgets($, {
@@ -326,7 +370,8 @@ export const register: Register = on => {
       report: () => packReport,
       memoryDir: projectsDir + '/memory',
       save: state => update($, plansAtom, () => state),
-      notify: text => void $.ui.toast(text),
+      notify: text => void $.ui.toast(text), // relay
+      may,
     })
 
     let ticks = 0
@@ -347,6 +392,7 @@ export const register: Register = on => {
       saveDiff: diff => update($, diffAtom, () => diff),
       clearSelection: () => update($, selectedAtom, s => ({ ...s, code: '' })),
       onCiFailed: ci => ciActive.onFailed(ci),
+      may,
     })
     // Active CI mode (ci/run.ts): a failed check looked into read-only, its report handed to this session as a turn.
     const ciActive = createCiActive($, {
@@ -358,7 +404,8 @@ export const register: Register = on => {
       refresh: () => refreshGit().then(refreshCi),
       state: () => ciState,
       save: change => saveCi($, change),
-      notify: text => void $.ui.toast(text),
+      notify: text => void $.ui.toast(text), // relay
+      may,
     })
     // Work › Runs and Stats (runs/run.ts): subagents, this session's runs as their records arrive, the history, stats.
     const { pollAgents, checkRecords, loadHistory, loadStats } = createRuns($, {
@@ -384,7 +431,8 @@ export const register: Register = on => {
         startedAt,
         updatedAt: now,
       }
-      await $.store.set(STORE_SESSION + selfId, row)
+      // Read up to here even when this session isn't shared: Debug › Context takes the window from it.
+      if (may('bg.sessionBeat')) await $.store.set(STORE_SESSION + selfId, row)
     }
     const readSessions = async () => {
       const beats = await readBeats($, STORE_SESSION, await $.clock.now(), BEAT_FORGOTTEN_MS)
@@ -399,11 +447,13 @@ export const register: Register = on => {
       if ((await read($, isActiveAtom)) !== active) await update($, isActiveAtom, () => active)
       if (ticks % BEAT_EVERY_TICKS === 0) await beat(now)
       if (ticks % RECORDS_EVERY_TICKS === 0) await checkRecords()
+      if (ticks % PERMISSIONS_EVERY_TICKS === 0) void queueChoices($)
       const ci = await read($, ciAtom)
-      const isCiLive = now < ciHotUntil || (ci?.checks.some(c => c.bucket === 'pending') ?? false)
       const isOpen = await read($, isOpenAtom)
       const area = await read($, areaAtom)
       const isOnCode = isOpen && active && area === 'code'
+      // Watched fast after a push and while checks run, with Code shown or Watch CI on.
+      const isCiLive = (isOnCode || may('bg.ciWatch')) && (now < ciHotUntil || (ci?.checks.some(c => c.bucket === 'pending') ?? false))
       const isGitDue = isOnCode && ticks % GIT_EVERY_TICKS === 0
       const isCiDue = isCiLive ? ticks % CI_LIVE_EVERY_TICKS === 0 : isOnCode && ticks % CI_IDLE_EVERY_TICKS === 0
       // When both are due, git goes first, so CI reads the branch git just found.
@@ -412,11 +462,11 @@ export const register: Register = on => {
       else if (isCiDue) void refreshCi().then(ciActive.readMode)
       const isEnvShown = isOpen && active && area === 'now' && (await read($, nowViewAtom)) === 'env'
       if (isEnvShown && ticks % PROCESSES_EVERY_TICKS === 0) void refreshProcesses()
-      else if (envTasks.some(t => t.isHeavy) && ticks % MEMORY_EVERY_TICKS === 0) void probeMemory()
+      else if (envTasks.some(t => t.isHeavy) && ticks % MEMORY_EVERY_TICKS === 0 && may('bg.memoryProbe')) void probeMemory()
       const isPlansShown = isOpen && area === 'work' && (await read($, workViewAtom)) === 'plans'
       if (isPlansShown && ticks % PLANS_RECHECK_SHOWN_TICKS === 0) void plans.refresh()
       else if (isPlansShown && ticks % PLANS_EVERY_TICKS === 0) void plans.refresh({ isRecheck: false })
-      else if (!isPlansShown && active && ticks % PLANS_RECHECK_TICKS === 0) void plans.refresh({ isReminder: true })
+      else if (!isPlansShown && active && ticks % PLANS_RECHECK_TICKS === 0 && may('bg.plansPoll')) void plans.refresh({ isReminder: true })
       if (!isOpen) return
       await update($, nowAtom, () => now)
       if (ticks % AGENTS_EVERY_TICKS === 0) await pollAgents()
@@ -432,6 +482,7 @@ export const register: Register = on => {
       if (area === 'work' && (await read($, workViewAtom)) === 'plans') await plans.refresh()
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
       if (area === 'now' && (await read($, nowViewAtom)) === 'env') await refreshProcesses()
+      if (area === 'debug') await queueChoices($)
     }
 
     live = {
@@ -443,13 +494,13 @@ export const register: Register = on => {
         if (view === 'runs' || view === 'stats' || view === 'plans') await update($, workViewAtom, () => view)
         if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
         if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
-        if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack') await update($, debugViewAtom, () => view)
+        if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack' || view === 'settings') await update($, debugViewAtom, () => view)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
       },
       // The main loop changed files: refresh git once the burst of edits settles.
       touched: () => {
-        if (isGitQueued) return
+        if (isGitQueued || !may('bg.gitOnEdit')) return
         isGitQueued = true
         $.clock.after(TOUCH_SETTLE_MS, () => {
           isGitQueued = false
@@ -458,6 +509,7 @@ export const register: Register = on => {
       },
       // A push or a PR: CI is about to start, so poll it fast for a while.
       pushed: () => {
+        if (!may('bg.ciWatch')) return
         void $.clock.now().then(now => {
           ciHotUntil = now + CI_HOT_MS
         })
@@ -486,9 +538,9 @@ export const register: Register = on => {
       },
       // The person asked for a fetch: refresh what the upstream has, then the tab.
       fetch: async () => {
-        $.ui.toast('Fetching…')
+        $.ui.toast('Fetching…') // asked
         const fetched = await lanes.heavy(['git', 'fetch', '--quiet'], FETCH_TIMEOUT_MS).catch(() => null)
-        $.ui.toast(fetched?.exitCode === 0 ? 'Fetched' : 'Fetch failed: ' + (fetched?.stderr.trim().split('\n')[0] || 'git did not answer'))
+        $.ui.toast(fetched?.exitCode === 0 ? 'Fetched' : 'Fetch failed: ' + (fetched?.stderr.trim().split('\n')[0] || 'git did not answer')) // asked
         await refreshGit()
       },
       // A main turn starts: read the pack again if a file it comes from changed.
@@ -501,7 +553,7 @@ export const register: Register = on => {
       setTrust: async isAllowed => {
         const report = packReport ?? (await reloadPack())
         if (report.trust.by === 'user pack') return 'A user pack matches this repo, so its tools may run; change that in the pack.'
-        if (isAllowed && !(await askTrust($, report))) return "Not allowed: the repo's own tools still wait."
+        if (isAllowed && !(await askTrust($, report, may('bg.turnChecks') && may('claude.turnNotes')))) return "Not allowed: the repo's own tools still wait." // asked
         if (!isAllowed) await forgetTrust($, report)
         await reloadPack()
         return isAllowed ? "The repo's own tools may run here." : "The repo's own tools wait again until you allow them."
@@ -531,13 +583,28 @@ export const register: Register = on => {
         await plans.archive(path)
         await update($, selectedAtom, s => ({ ...s, work: s.work === PLAN_SELECTED + path ? '' : s.work }))
       },
+      // The person changed the Settings choices.
+      setPermissions: change => queueChoices($, change),
+      // The person asked Claude to explain the Settings: one prompt, framed as from CCInformer, run once the session is free.
+      explain: async () => {
+        if (isExplainSent) return
+        isExplainSent = true
+        const refused = (why: string) => {
+          isExplainSent = false
+          $.ui.toast(EXPLAIN_TEXTS.refused(why)) // asked
+        }
+        $.ui.toast(EXPLAIN_TEXTS.sent) // asked
+        void $.prompt.submit({ text: explainPrompt(choices) }) // asked
+          .then(result => (result.drop !== undefined ? refused(result.drop) : undefined))
+          .catch((err: unknown) => refused(String(err)))
+      },
     }
     $.clock.every(TICK_MS, () => void tick())
     void beat(startedAt)
     void reloadPack()
 
     // Reopen where it was left; the engine seats a pane opened unasked only in a wide terminal.
-    if ((await $.store.get(STORE_OPEN)) === true) {
+    if ((await $.store.get(STORE_OPEN)) === true && may('show.paneReopen')) {
       const columns = Number(await $.store.get(STORE_COLUMNS)) || MIN_COLUMNS
       await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns })
       await update($, isOpenAtom, () => true)
@@ -582,7 +649,7 @@ export const register: Register = on => {
     // The area is set before the pane opens, so its first drawing is the right one.
     if (target) await update($, areaAtom, () => target.area)
     const columns = Math.max(MIN_COLUMNS, Math.round(e.presentation.columns * SHARE))
-    await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns })
+    await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns }) // asked
     const now = await $.clock.now()
     await update($, nowAtom, () => now)
     await update($, isOpenAtom, () => true)
@@ -636,14 +703,15 @@ export const register: Register = on => {
     // A prompt the person types into the read-only turn takes that turn over: it is theirs again.
     if ((e.origin.kind === 'composer' || e.origin.kind === 'bridge') && e.turnId && ciState.guardedTurn) await saveCi($, s => ({ ...s, guardedTurn: '' }))
     const isTyped = ['composer', 'bridge', 'sdk'].includes(e.origin.kind) && !e.command && !e.isMeta
+    // Read even with Turn check notes off, so findings never wait to be told later.
     const note = isTyped ? await live?.turnNote() : ''
-    return next(note ? { ...e, context: [...(e.context ?? []), note] } : e)
+    return next(note && may('claude.turnNotes') ? { ...e, context: [...(e.context ?? []), note] } : e)
   }).catch(($, e, next) => next(e))
 
   // The band above the prompt: a process of this session aimed at a shared or prod environment. It gives way to a
   // survey, which shares the site.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (e.props.hasSurvey) return next(e)
+    if (e.props.hasSurvey || !isAllowed(await read($, permissionsAtom), 'safety.envBand')) return next(e)
     const shown = bandTasks(await read($, envTasksAtom))
     if (!shown.length) return next(e)
     const k = $.ui.resolve(e) as unknown as Kit
@@ -721,7 +789,7 @@ export const register: Register = on => {
     const isWritten = WRITING_TOOLS.includes(tool) && typeof input.file_path === 'string' && !('deny' in result && result.deny) && !result.isError
     if (isWritten) lastWriteAt = await $.clock.now()
     const note = isWritten ? await live?.checkFile(input.file_path as string) : ''
-    return note ? ({ ...result, context: [...(result.context ?? []), note] } as typeof result) : result
+    return note && may('claude.inlineNotes') ? ({ ...result, context: [...(result.context ?? []), note] } as typeof result) : result
     // A failing recorder lets the call run, except in CI's read-only turn, where it is still refused.
   }).catch(($, e, next) =>
     next.called ? next(e) : !e.agentId && ciState.guardedTurn && !isReadOnlyTool(String(e.tool)) ? { deny: CI_TEXTS.guardDeny } : next(e),
@@ -762,9 +830,10 @@ export const register: Register = on => {
       live?.recordsSoon()
     } else {
       isTurnRunning = false
+      isExplainSent = false
       void live?.wake()
       // Once per main turn, over what every agent wrote in it.
-      void live?.runChecks()
+      if (may('bg.turnChecks')) void live?.runChecks()
     }
     return next(e)
   }).catch(($, e, next) => {
@@ -824,14 +893,14 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive, version] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive, version, permissions] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
-      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom),
+      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
     }
@@ -842,15 +911,15 @@ export const register: Register = on => {
         if (area === 'now') void update($, nowViewAtom, () => view as NowView).then(() => live?.refresh('now'))
         if (area === 'code') void update($, codeViewAtom, () => view as CodeView).then(() => (view === 'budgets' ? live?.refresh('code') : undefined))
         if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
-        if (area === 'debug') void update($, debugViewAtom, () => view as DebugView)
+        if (area === 'debug') void update($, debugViewAtom, () => view as DebugView).then(() => live?.refresh('debug'))
       },
       refresh: () => void live?.refresh(area),
       toggleAllFiles: () => void update($, showAllFilesAtom, v => !v),
       // Active CI mode on or off for this repo; a toast says which.
-      toggleCiMode: () => void live?.ci.setMode(ciState.mode === 'active' ? 'passive' : 'active').then(text => $.ui.toast(text)),
+      toggleCiMode: () => void live?.ci.setMode(ciState.mode === 'active' ? 'passive' : 'active').then(text => $.ui.toast(text)), // asked
       openDiff: f => void live?.openDiff(f),
       fetch: () => void live?.fetch(),
-      openDiffPane: () => void $.command.run({ command: 'diff' }),
+      openDiffPane: () => void $.command.run({ command: 'diff' }), // asked
       pickPhase: t => void update($, phaseAtom, () => t),
       pickRun: key => {
         void update($, selectedAtom, s => ({ ...s, work: key }))
@@ -864,6 +933,9 @@ export const register: Register = on => {
       pickFinding: id => void update($, selectedAtom, s => ({ ...s, code: id })),
       dismissFinding: id => void live?.dismiss(id),
       measure: () => void live?.measure(),
+      togglePermission: (id: PermissionId) => void live?.setPermissions(c => toggled(c, id)),
+      setAllPermissions: isOn => void live?.setPermissions(c => allSet(c, isOn)),
+      explainPermissions: () => void live?.explain(),
     })
   })
 }

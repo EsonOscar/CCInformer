@@ -28,7 +28,8 @@ const SECTION_TITLES: Record<string, string> = {
   preflight: 'Preflight',
 }
 
-export type PackNav = { toggleTrust: () => void }
+// `isToldClaude`: Debug › Settings lets the turn checks run and tell Claude what they find.
+export type PackNav = { toggleTrust: () => void; isToldClaude: boolean }
 
 // What this repo's pack came to: each layer and how it went, whether the repo's own tools may run, and every value
 // with the layer that set it.
@@ -86,10 +87,11 @@ const Layer = (k: Kit, l: PackLayerRow): JSX.Element => {
 const Trust = (k: Kit, report: PackReport, now: number, nav: PackNav): JSX.Element => {
   const { Box, Button, Text } = k
   const { trust } = report
+  const told = nav.isToldClaude ? ' Claude is told what they find.' : ' Claude is told nothing: Turn checks or Turn check notes is off in Debug › Settings.'
   const text = trust.by === 'user pack'
-    ? 'repo tools may run: a user pack matches this repo. Claude is told what they find.'
+    ? 'repo tools may run: a user pack matches this repo.' + told
     : trust.isTrusted
-      ? 'repo tools may run: allowed by you ' + ago(now - trust.at) + '. Claude is told what they find.'
+      ? 'repo tools may run: allowed by you ' + ago(now - trust.at) + '.' + told
       : trust.isStale
         ? 'repo tools wait: the config changed since you allowed them. Press a to allow them again.'
         : "repo tools wait until you allow them with a; until then only the mod's own checks run, and Claude is told nothing from these tools."

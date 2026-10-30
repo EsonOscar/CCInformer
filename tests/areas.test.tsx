@@ -20,6 +20,7 @@ describe('the areas and their keys', () => {
     expect(areaFor('code')).toEqual({ area: 'code' })
     expect(areaFor(' Debug ')).toEqual({ area: 'debug' })
     expect(areaFor('git')).toEqual({ area: 'code', view: 'git' })
+    expect(areaFor('settings')).toEqual({ area: 'debug', view: 'settings' })
     expect(areaFor('agents')).toEqual({ area: 'work', view: 'runs' })
     expect(areaFor('sessions')).toEqual({ area: 'now', view: 'sessions' })
     expect(areaFor('stats')).toEqual({ area: 'work', view: 'stats' })

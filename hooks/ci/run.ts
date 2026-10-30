@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { CiActiveState, CiSnapshot, PackReport } from '../../types'
 import type { Lane } from '../core/lanes'
+import type { May } from '../core/permissions'
 import {
   CI_TEXTS,
   DIFF_CHARS,
@@ -37,6 +38,7 @@ export type CiActiveDeps = {
   state: () => CiActiveState
   save: (change: (s: CiActiveState) => CiActiveState) => Promise<unknown>
   notify: (text: string) => void
+  may: May
 }
 
 export type CiActive = {
@@ -63,7 +65,7 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
   }
   const fail = async (why: string, text: string) => {
     await deps.save(s => ({ ...s, run: s.run ? { ...s.run, state: 'failed', why, marker: '' } : null }))
-    deps.notify(text)
+    deps.notify(text) // relay
   }
 
   // This session takes the commit unless another already has; two that claim at once both write, and the first
@@ -81,18 +83,18 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
   }
 
   const look = async (ci: CiSnapshot, asked: boolean) => {
-    if (!deps.isInteractive) return
+    if (!deps.isInteractive || (!asked && !deps.may('claude.ciHandoff'))) return
     if (isRunning(await $.clock.now())) return void (asked && deps.notify(CI_TEXTS.replyBusy))
     const report = await deps.report()
     if (!report?.repoKey) return void (asked && deps.notify(CI_TEXTS.replyNoRepo))
     if (!asked && (await $.store.get(STORE_MODE + report.repoKey)) !== 'active') return
     const failed = failedChecks(ci)
-    if (!failed.length) return void (asked && deps.notify(CI_TEXTS.replyNoFailure))
+    if (!failed.length) return void (asked && deps.notify(CI_TEXTS.replyNoFailure)) // asked
     if (!asked && !(await claim(report.repoKey, ci.head))) return
 
     const at = await $.clock.now()
     await deps.save(s => ({ ...s, run: { head: ci.head, state: 'investigating', why: '', marker: '', at } }))
-    deps.notify(CI_TEXTS.started)
+    deps.notify(CI_TEXTS.started) // may: claude.ciHandoff
     // One at a time, so the reads never crowd the light lane.
     const logs: { check: string; tail: string; isCut: boolean }[] = []
     let budget = LOGS_CHARS
@@ -113,6 +115,9 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
     const { text, marker } = handoffPrompt(ci, logs, diff, handoffs)
     // The marker first, so the turn that brings it is known as soon as it starts; the submit isn't awaited, as it
     // resolves only once that turn has started.
+    // Switched off while the logs were read: nothing is handed over.
+    if (!asked && !deps.may('claude.ciHandoff'))
+      return void (await deps.save(s => ({ ...s, run: s.run && { ...s.run, state: 'failed', why: CI_TEXTS.switchedOff, marker: '' } })))
     await deps.save(s => ({ ...s, run: s.run && { ...s.run, state: 'waiting', marker } }))
     void $.prompt
       .submit({ text })
@@ -133,13 +138,14 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
       if (mode === 'active') await $.store.set(STORE_MODE + report.repoKey, 'active')
       else await $.store.delete(STORE_MODE + report.repoKey)
       await deps.save(s => ({ ...s, mode }))
-      return mode === 'active' ? CI_TEXTS.modeOn : CI_TEXTS.modeOff
+      if (mode === 'active') return CI_TEXTS.modeOn + (deps.may('claude.ciHandoff') ? '' : CI_TEXTS.heldOff)
+      return CI_TEXTS.modeOff + (deps.may('notify.ciToast') ? '' : CI_TEXTS.quietOff)
     },
     onFailed: ci => look(ci, false),
     investigateNow: async () => {
       await deps.refresh()
       const ci = await deps.ci()
-      if (!ci) return void deps.notify(CI_TEXTS.replyNoFailure)
+      if (!ci) return void deps.notify(CI_TEXTS.replyNoFailure) // asked
       await look(ci, true)
     },
   }

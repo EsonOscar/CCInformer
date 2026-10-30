@@ -2,6 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { CheckRun, Finding, PackReport } from '../../types'
 import type { Lane } from '../core/lanes'
+import type { May } from '../core/permissions'
 import { askTrust, wasTrustAsked } from '../packs/load'
 import type { CheckSpec, ResolvedPack } from '../packs/types'
 import { filesOf } from '../read-files'
@@ -31,6 +32,7 @@ export type CheckDeps = {
   saveFindings: (check: string, files: string[], found: Finding[]) => Promise<unknown>
   saveRun: (run: CheckRun) => Promise<unknown>
   dismissed: () => Promise<string[]>
+  may: May
 }
 
 export type Checks = {
@@ -71,10 +73,11 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
   const mayRunRepoTools = async () => {
     const report = deps.report()
     if (report?.trust.isTrusted) return true
+    if (!deps.may('ask.repoTrust')) return false
     if (isTrustAsked || !report || report.trust.isStale) return false
     isTrustAsked = true
     if (await wasTrustAsked($, report)) return false
-    if (!(await askTrust($, report))) return false
+    if (!(await askTrust($, report, deps.may('claude.turnNotes')))) return false // may: ask.repoTrust
     return !!(await deps.reload()).trust.isTrusted
   }
   // The turn's translation-table checks, once its writes are all in: compared inside the mod, so they need no trust.
@@ -132,7 +135,7 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       const stamps: Record<string, string> = {}
       for (const f of files) stamps[f] = await stampOf(`${report.root}/${f}`)
       await deps.saveRun({ ...run, isRunning: true })
-      if (!(await $.fs.exists(deps.emptySuppressions))) await $.fs.write(deps.emptySuppressions, '{}\n')
+      if (!(await $.fs.exists(deps.emptySuppressions))) await $.fs.write(deps.emptySuppressions, '{}\n') // may: bg.turnChecks
       // Raw output (an empty suppressions file), so the repo's suppressions are applied here, exactly as ESLint would.
       const argv = [...(check.bin ?? ESLINT_BIN), '--format', 'json', '--no-warn-ignored', '--suppressions-location', deps.emptySuppressions, ...files]
       const ran = await deps.heavy(argv, check.timeoutMs, report.root).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
@@ -166,7 +169,8 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       const root = deps.report()?.root ?? ''
       const file = root ? repoPath(root, /^([a-z]:)?[\\/]/i.test(path) ? path : `${deps.cwd}/${path}`) : ''
       if (!pack || !file) return ''
-      touched.add(file)
+      // Noted for the turn's run only while turn checks are on, so turning them on later doesn't check every file since.
+      if (deps.may('bg.turnChecks')) touched.add(file)
       const checks = inlineChecks(pack, file)
       if (!checks.length) return ''
       const text = await readText($, `${root}/${file}`)
