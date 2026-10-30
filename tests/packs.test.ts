@@ -79,6 +79,19 @@ describe('reading pack files', () => {
       'check raw-button: "options.message" must be a string',
     ])
   })
+
+  test('an i18n-keysets check runs once a turn ends and names its languages', async () => {
+    const check = (fields: object) => ({ id: 'i18n', label: 'Translation keys', on: ['src/i18n/**/*.json'], analyzer: 'i18n-keysets', cost: 'turn', class: 'ci', ...fields })
+    const pack = (c: object) => ({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] }, checks: [c] })
+    const noLanguages = 'check i18n: needs "options.languages", the languages every table must have (e.g. ["da", "en", "sv"])'
+    expect(checkPack(pack(check({ options: { languages: ['da', 'en', 'sv'] } })), 'user').reasons).toEqual([])
+    expect(checkPack(pack(check({})), 'user').reasons).toEqual([noLanguages])
+    expect(checkPack(pack(check({ options: { languages: [] } })), 'user').reasons).toEqual([noLanguages])
+    expect(checkPack(pack(check({ options: { languages: 'da' } })), 'user').reasons).toEqual([noLanguages])
+    expect(checkPack(pack(check({ cost: 'edit', options: { languages: ['da'] } })), 'user').reasons).toEqual([
+      'check i18n: an i18n-keysets check runs once a turn ends, so its cost must be "turn"',
+    ])
+  })
 })
 
 describe('the four layers', () => {
@@ -192,6 +205,15 @@ describe('the four layers', () => {
     expect(detected.report.trust.isTrusted).toBe(false)
     expect(entry(detected, 'checks', 'eslint')?.needsTrust).toBe(true)
     expect(runnableChecks(detected.pack, detected.report.trust.isTrusted)).toEqual([])
+  })
+
+  test('translation tables are compared inside the mod, so that check needs no trust', async () => {
+    const own = `{ "schema": 1, "id": "own", "version": "1", "match": { "remote": ["github.com/acme/*"] },
+      "checks": [{ "id": "i18n", "label": "Translation keys", "on": ["src/i18n/**/*.json"], "analyzer": "i18n-keysets", "cost": "turn",
+        "class": "ci", "options": { "languages": ["da", "en"] } }] }`
+    const resolved = resolvePack(input({ userPacks: [{ path: 'own.pack.jsonc', text: own }] }))
+    expect(runnableChecks(resolved.pack, false).map(c => c.id)).toEqual(['i18n'])
+    expect(entry(resolved, 'checks', 'i18n')?.needsTrust).toBe(false)
   })
 
   test('a yes holds for the config files it was given for, and goes stale when they change', async () => {

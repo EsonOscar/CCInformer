@@ -2,8 +2,9 @@ import type { PackTrust } from '../../types'
 import type { CheckSpec, ResolvedPack } from './types'
 
 // Turn and demand checks run the repo's own tools (ESLint loads its config and node_modules, a build runs its
-// targets), so they wait for repo trust. Edit and batch checks run inside the mod on text it already has.
-export const needsTrust = (check: CheckSpec): boolean => check.cost === 'turn' || check.cost === 'demand'
+// targets), so they wait for repo trust. Edit checks, and the translation tables compared once a turn ends, run
+// inside the mod on files it reads itself.
+export const needsTrust = (check: CheckSpec): boolean => (check.cost === 'turn' || check.cost === 'demand') && check.analyzer !== 'i18n-keysets'
 
 export const runnableChecks = (pack: ResolvedPack, isTrusted: boolean): CheckSpec[] =>
   pack.checks.filter(c => isTrusted || !needsTrust(c))

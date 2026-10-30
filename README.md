@@ -114,11 +114,12 @@ The band and Now › Env place a process Claude starts by its environment: the c
 
 ### Checks
 
-A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Three analyzers so far:
+A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Four analyzers so far:
 
 - **`size-lines`** (`cost: "edit"`): a file over `options.max` lines, checked as Claude writes it. The repo's ESLint suppressions apply, and one that's no longer needed is reported.
 - **`regex-lines`** (`cost: "edit"`): each line matching `options.pattern`, checked as Claude writes the file, in any language, with `options.message` as what to do instead. In JS and TS files, comments and regex literals are skipped, and a match in a template string is reported on the line ESLint reports it on. Made for design rules (no raw `<button>`, no stock palette classes): an `advise` check reaches Claude as a project rule. A `ci` check that names the ESLint rule enforcing the same ban in `rules` says "CI will fail" at once, follows that rule's suppressions, and stands in for ESLint's finding on the same line at the end of the turn.
 - **`eslint-json`** (`cost: "turn"`): the repo's own ESLint, once a turn ends, over the files written in it, in a trusted repo, with the repo's suppressions applied. The built-in `node-vite` has it; in a repo without ESLint installed, it's skipped.
+- **`i18n-keysets`** (`cost: "turn"`): translation tables, flat JSON with one file per language in a folder (`da.json`, `en.json`, ...). Once a turn that wrote one ends, each table it touched must have the same keys in every language of `options.languages`, and no key another table already has, as in `"cart_empty" is missing; da.json and en.json have it`. A key added to every language over several steps of one turn gives nothing. It compares the files itself, so it needs no repo trust.
 
 A user pack adds checks with the repo's own values:
 
@@ -129,7 +130,9 @@ A user pack adds checks with the repo's own values:
     "rules": ["max-lines"], "options": { "max": 500 }, "suppressions": "eslint-suppressions.json" },
   { "id": "raw-button", "label": "Raw <button>", "on": ["src/**/*.tsx"], "ignore": ["src/components/ui/**"],
     "analyzer": "regex-lines", "cost": "edit", "class": "advise",
-    "options": { "pattern": "<button\\b", "message": "use <Button> from the design system" } }
+    "options": { "pattern": "<button\\b", "message": "use <Button> from the design system" } },
+  { "id": "i18n", "label": "Translation keys", "on": ["src/i18n/*.json", "src/modules/*/i18n/*.json"],
+    "analyzer": "i18n-keysets", "cost": "turn", "class": "ci", "options": { "languages": ["da", "en", "sv"] } }
 ]
 ```
 

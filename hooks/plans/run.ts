@@ -1,10 +1,10 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { PackReport, PlanFile, PlansState } from '../../types'
-import { matchesGlob } from '../checks/glob'
 import type { Lane } from '../core/lanes'
 import type { Platform } from '../env/procs'
 import type { PlanSpec, ResolvedPack } from '../packs/types'
+import { filesOf as globFiles } from '../read-files'
 import { readText } from '../read-records'
 import { archiveDirFor, archivePath, archiveQuestion, baseOf, isReminderDue, moveOwnLinks, reminderText, removeCommand, rewriteRefs } from './archive'
 import { isFinished, mergedToast, prState, prsToAsk } from './drift'
@@ -63,26 +63,7 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     prs.set(n, (ran?.exitCode === 0 ? prState(ran.stdout) : null) ?? UNKNOWN)
   }
 
-  // The files under `dir` (repo-relative), `depth` folders down.
-  const listFiles = async (root: string, dir: string, depth: number): Promise<string[]> => {
-    const entries = await $.fs.list(dir ? `${root}/${dir}` : root).catch(() => [])
-    const out: string[] = []
-    for (const e of entries) {
-      const path = dir ? `${dir}/${e.name}` : e.name
-      if (e.kind === 'file') out.push(path)
-      else if (e.kind === 'dir' && depth > 0) out.push(...(await listFiles(root, path, depth - 1)))
-    }
-    return out
-  }
-  // The files a glob matches: listed from its last folder without a wildcard, one level down unless it holds `**`.
-  const filesOf = async (root: string, glob: string): Promise<string[]> => {
-    const parts = glob.split('/')
-    const wild = parts.findIndex(p => /[*?{]/.test(p))
-    if (wild < 0) return (await $.fs.exists(`${root}/${glob}`)) ? [glob] : []
-    const dir = parts.slice(0, wild).join('/')
-    const depth = glob.includes('**') ? MAX_DEPTH : parts.length - wild - 1
-    return (await listFiles(root, dir, depth)).filter(f => matchesGlob([glob], f))
-  }
+  const filesOf = (root: string, glob: string) => globFiles($, root, glob, MAX_DEPTH)
 
   const readPlan = async (root: string, path: string, spec: Pick<PlanSpec, 'checkpoint' | 'done' | 'prRef'>): Promise<PlanFile | null> => {
     const stat = await $.fs.stat(`${root}/${path}`).catch(() => null)
