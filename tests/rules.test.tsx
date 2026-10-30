@@ -363,3 +363,24 @@ test('a repo without ESLint installed skips the turn check quietly: no run, no e
   expect(await ui.find({ type: 'Text', text: /Nothing found in the files changed so far/ })).toBeDefined()
   await ui.unmount()
 })
+
+test("the explain prompt never carries the turn's findings; the next typed message still does", async ($, on) => {
+  const { clock, submitted } = engine(on, { ...REPO }, { lint: () => [anyError(1)] })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/app.ts', content: lines(4) })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'debug' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'view-settings' })
+  await ui.press({ key: 'settings-explain' })
+  await clock.settle()
+  await ui.unmount()
+  const explain = submitted.find(s => s.text.startsWith('CCInformer, a Claude Code mod'))
+  expect(explain?.context).toEqual([])
+
+  await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
+  expect(submitted.at(-1)!.context.join('\n')).toContain('src/app.ts:1 @typescript-eslint/no-explicit-any')
+})

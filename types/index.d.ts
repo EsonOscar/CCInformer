@@ -1,6 +1,9 @@
 // The pane's five areas, switched with 1-5; an area with nothing built yet isn't drawn.
 export type Area = 'now' | 'code' | 'work' | 'timeline' | 'debug'
-export type DebugView = 'tools' | 'requests' | 'context' | 'pack'
+export type DebugView = 'tools' | 'requests' | 'context' | 'pack' | 'settings'
+// The Debug › Settings choices: Deny all as a base (so a permission added later starts off too), and each switch set by
+// hand. Kept in the store all sessions share.
+export type PermissionChoices = { base: 'defaults' | 'off'; set: Record<string, boolean> }
 
 export type FileChange = { path: string; code: string; added: number; removed: number }
 export type Commit = { sha: string; subject: string; age: string }
@@ -323,6 +326,8 @@ declare module 'claude-code' {
       statsName: string
       stats: RunSummary[]
       isOpen: boolean
+      // The Debug › Settings choices, as the store holds them.
+      permissions: PermissionChoices
       // The mod's own version, from its plugin.json; '' until read, or when it names none.
       version: string
       // False while the session has been idle a while: git polling pauses.

@@ -21,14 +21,15 @@ const PR = JSON.stringify({ number: 7, title: 'Cart', url: 'https://github.com/a
 
 // A repo on feat/cart (commit abc1234...) with PR #7, whose lint check is pending until `ci.bucket` says it failed. gh
 // answers the failed job's log and the PR's diff. Submits, toasts and every command are recorded; a submit is refused
-// when `submitDrop` is set. `mode` seeds the repo's CI mode in the shared store.
-const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop?: string } = {}) => {
+// when `submitDrop` is set. `mode` seeds the repo's CI mode in the shared store, `permissions` the Settings choices;
+// with `slowLog`, the failed job's log takes 10 s of the mocked clock to read.
+const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop?: string; permissions?: object; slowLog?: boolean } = {}) => {
   const ci = { bucket: 'pending' as 'pending' | 'fail' }
   const submits: { text: string; origin: { kind: string } }[] = []
   const toasts: string[] = []
   const commands: string[] = []
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on, opts.mode ? { ['ciMode:' + REPO_KEY]: opts.mode } : {})
+  mock.store(on, { ...(opts.mode ? { ['ciMode:' + REPO_KEY]: opts.mode } : {}), ...(opts.permissions ? { permissions: opts.permissions } : {}) })
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -38,9 +39,10 @@ const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop
   on('fs.read', () => ({ value: null }) as never)
   on('fs.stat', () => ({ value: null }) as never)
   on('fs.list', () => ({ value: [] }) as never)
-  on('process.run', (_, e) => {
+  on('process.run', async (_, e) => {
     const line = (e as { argv: string[] }).argv.join(' ')
     commands.push(line)
+    if (opts.slowLog && line.startsWith('gh run view')) await clock.sleep(10_000)
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (line === 'git rev-parse --show-toplevel --git-common-dir') return out('/repo\n.git\n')
     if (line === 'git config --get remote.origin.url') return out('git@github.com:acme/shop.git\n')
@@ -216,4 +218,43 @@ test('/ccinformer ci switches the mode and looks into a failure on request, with
   await ci('investigate')
   await env.clock.settle()
   expect(handoffs(env).length).toBe(1)
+})
+
+test('Look into failed CI off: a repo set to active hands nothing over, and switching it on says it is held off', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', permissions: { base: 'defaults', set: { 'claude.ciHandoff': false } } })
+  await failCi($, env)
+  expect(handoffs(env)).toEqual([])
+  expect(env.commands.some(c => c.startsWith('gh run view'))).toBe(false)
+  const reply = await $.command.run({ ...TYPED, command: 'ccinformer', args: 'ci active' })
+  expect(reply.text).toContain('It stays held off while Look into failed CI is off in Debug › Settings.')
+})
+
+test('a hand-off on its way when Look into failed CI is switched off is stopped before it reaches the session', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', slowLog: true })
+  await failCi($, env)
+  // The failed job's log is being read; meanwhile the person switches the hand-off off.
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'debug' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'view-settings' })
+  await ui.press({ key: 'perm-claude.ciHandoff' })
+  await env.clock.advance(10_000)
+  await env.clock.settle()
+  expect(env.commands).toContain('gh run view --job 11 --log-failed')
+  expect(handoffs(env)).toEqual([])
+  await ui.unmount()
+})
+
+test('Code > Git says when a Settings switch holds the mode off', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', permissions: { base: 'defaults', set: { 'claude.ciHandoff': false, 'notify.ciToast': false } } })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await env.clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  await env.clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /on a failed check: nothing \(Look into failed CI is off in Debug › Settings\)/ })).toBeDefined()
+  await ui.press({ key: 'ci-mode' })
+  await env.clock.settle()
+  expect(env.toasts).toContain('CI passive here: a failed check gives a toast Nothing shows while CI finished toast is off in Debug › Settings.')
+  expect(await ui.find({ type: 'Text', text: /on a failed check: nothing \(CI finished toast is off in Debug › Settings\)/ })).toBeDefined()
+  await ui.unmount()
 })

@@ -26,6 +26,9 @@ export type GitNav = {
   // Active CI mode: this repo's mode and latest investigation, and the switch.
   ciActive: CiActiveState
   toggleCiMode: () => void
+  // Whether Debug › Settings lets a failure be handed over, and the CI finished toast show.
+  isHandoffOn: boolean
+  isCiToastOn: boolean
 }
 
 // `isPaused`: the session has been idle a while, so git is not polled until something happens or `r` is pressed.
@@ -198,7 +201,7 @@ const CiMode = (k: Kit, nav: GitNav): JSX.Element => {
       <Box flexDirection="row" columnGap={1}>
         <Box flexGrow={1} flexShrink={1}>
           <Text dimColor wrap="truncate-end">
-            {'  ' + (isActive ? CI_TEXTS.viewActive : CI_TEXTS.viewPassive)}
+            {'  ' + (isActive ? (nav.isHandoffOn ? CI_TEXTS.viewActive : CI_TEXTS.viewActiveOff) : nav.isCiToastOn ? CI_TEXTS.viewPassive : CI_TEXTS.viewPassiveQuiet)}
           </Text>
         </Box>
         <Button key="ci-mode" plain hotkey={ACTIONS.code.ciMode} onPress={nav.toggleCiMode}>

@@ -1,5 +1,5 @@
 import type {
-  AgentRow, Area, BudgetState, CheckRun, CiActiveState, PlansState, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, PermissionChoices, CheckRun, CiActiveState, PlansState, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef } from './areas'
@@ -14,10 +14,13 @@ import { GitView } from './view-git'
 import { PackView } from './view-pack'
 import { PLAN_SELECTED, PlansView } from './view-plans'
 import { isOver } from './budgets/gauge'
+import { isAllowed } from './core/permissions'
+import type { PermissionId } from './core/permissions'
 import { mergedWarnings } from './plans/drift'
 import { BudgetsView } from './view-budgets'
 import { RulesView, shownFindings } from './view-rules'
 import { SessionsView } from './view-sessions'
+import { SettingsView } from './view-settings'
 import { StatsView } from './view-stats'
 import { usageLine } from './usage'
 
@@ -59,6 +62,8 @@ export type PaneData = {
   cwd: string
   // The mod's version, shown muted in the top right; '' draws nothing.
   version: string
+  // The Debug › Settings choices.
+  permissions: PermissionChoices
   width: number
   // The rows the pane shows at once, and the first row its window shows: the footer is drawn at the window's bottom.
   rows: number
@@ -98,6 +103,9 @@ export type PaneNav = {
   pickFinding: (id: string) => void
   dismissFinding: (id: string) => void
   measure: () => void
+  togglePermission: (id: PermissionId) => void
+  setAllPermissions: (isOn: boolean) => void
+  explainPermissions: () => void
 }
 
 // Each area's badge: its worst item.
@@ -139,11 +147,12 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
   const width = d.width - 2
-  const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane, ciActive: d.ciActive, toggleCiMode: nav.toggleCiMode }
+  const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane, ciActive: d.ciActive, toggleCiMode: nav.toggleCiMode, isHandoffOn: isAllowed(d.permissions, 'claude.ciHandoff'), isCiToastOn: isAllowed(d.permissions, 'notify.ciToast') }
   // Work keeps one selected row: a run, or a plan (marked by its prefix), which Runs leaves alone.
   const isPlanSelected = d.selected.work.startsWith(PLAN_SELECTED)
   const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: isPlanSelected ? '' : d.selected.work, pickRun: nav.pickRun }
   const planNav = { selected: isPlanSelected ? d.selected.work.slice(PLAN_SELECTED.length) : '', pick: nav.pickPlan, archive: nav.archivePlan }
+  const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions }
   const hasViewBar = def.views.length > 1
   const headerRows = hasViewBar ? HEADER_ROWS + VIEW_BAR_ROWS : HEADER_ROWS
   return (
@@ -160,8 +169,9 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
         {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
         {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
         {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now, planNav)}
-        {d.area === 'debug' && d.debugView !== 'pack' && DebugPanel(k, d.debugView, debugData, d.now, width)}
-        {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust })}
+        {d.area === 'debug' && d.debugView !== 'pack' && d.debugView !== 'settings' && DebugPanel(k, d.debugView, debugData, d.now, width)}
+        {d.area === 'debug' && d.debugView === 'settings' && SettingsView(k, d.permissions, settingsNav)}
+        {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes') })}
       </Box>
       {/* The header, laid over the tree at the window's top rows, as the footer is at its bottom: the pane scrolls its
           own content, so neither moves, and the area and view hotkeys stay in view. A layer of blank rows is drawn first

@@ -80,7 +80,8 @@ To try a change before it's released, start one session with the working copy lo
 
 ### Code layout
 
-- `hooks/register.tsx`: every hook and every state atom (the validator requires them in one module), and the writes to state. Files are read by `$` helpers in `hooks/read-*.ts` (run records, sessions, the git folder), which only fetch and return. Views in `hooks/view-*.tsx`, the pane's layout and badges in `view-pane.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs).
+- `hooks/register.tsx`: every hook and every state atom (the validator requires them in one module), and the writes to state. Files are read by `$` helpers in `hooks/read-*.ts` (run records, sessions, the git folder), which only fetch and return. Views in `hooks/view-*.tsx`, the pane's layout and badges in `view-pane.tsx`; plain logic in `parse.ts`, `phases.ts`, `records.ts`, `insight.ts`, `rows.ts`, `collect.ts`, `format.ts`, and `core/` (the exec lanes in `core/lanes.ts`, through which every command runs; the Settings registry in `core/permissions.ts`: every permission, its group and default, and how Approve all and Deny all apply). Debug › Settings is `hooks/view-settings.tsx`.
+- Anything the mod does by itself checks its permission first: `may('<id>')` in the hooks module, or the `may` dep the feature folders get. A toast, notification, question, prompt or note for Claude, a command in the background, a write: a key, button or `/ccinformer` command the person used needs none. `.githooks/check-permissions.sh` holds the calls to the host (tag a person-started one `// asked`), and `tests/passive.test.tsx` the background polls. A new behaviour gets its permission in `core/permissions.ts`, with a label and a one-line description, as both the view and the explain prompt read them.
 - `hooks/git/run.ts` (Code › Git: git and CI through the light lane, the CI ping, a file's diff) and `hooks/runs/run.ts` (Work › Runs and Stats: subagents, run records, the history and stats): `$` helpers built at session start, like the folders below; the state they show is written through callbacks, as its atoms live in `register.tsx`.
 - `hooks/ci/`: active CI mode. `run.ts` (a `$` helper) reads the repo's mode, claims a failed commit, fetches each failed job's log and the diff through the light lane and hands them to the session as one turn that looks into the failure; `investigate.ts` is plain logic (that turn's prompt, which turn is read-only, the texts). It is a turn and not a subagent because a plugin's own agent start has no model request behind it, so auto mode's classifier gives it no verdict and it never runs. The read-only guard itself lives in `register.tsx`'s `tool.call` hook, decided from a synchronous mirror of the state (`ciState`), so it needs no `$` call that could fail.
 - `hooks/env/`: what a command runs and where it points (`classify.ts`, plain logic; `read.ts` reads `package.json` and env files), and the process and memory queries with their parsers (`procs.ts`). The band is `hooks/view-band.tsx`, Now › Env `hooks/view-env.tsx`.
@@ -90,32 +91,33 @@ To try a change before it's released, start one session with the working copy lo
 - `hooks/plans/`: the checkpoint board, built the same way: `run.ts` finds the plan files, reads the changed ones, asks gh about their PRs and archives a plan; `parse.ts` (what a checkpoint is, its status), `drift.ts` (which PRs to ask about, what to warn about, when a plan is finished) and `archive.ts` (where a plan goes, how references to it change, the dialog and reminder words) are plain logic. Work › Plans is `hooks/view-plans.tsx`.
 - `skills/`: the planning skills. `plan-feature` holds the shared parts: the workflow scripts (`plan-fanout.js`, which `plan-handoff` uses too, and `build-fanout.js`), the wave snapshot script and `planning-template.md`; `plan-feature-small` and `plan-handoff` refer to them there.
 - `hooks/areas.ts`: the areas, their views and every key; views take their hotkeys from it, and a test holds each key to one use per area.
-- The mod's own state is kept per session; the area, the open pane, CI pings, each repo's CI mode and the commits looked into, the session list and the repos you trusted are in the store all sessions share (`~/.claude/plugins/store/`).
+- The mod's own state is kept per session; the area, the open pane, CI pings, each repo's CI mode and the commits looked into, the session list, the repos you trusted and your Debug › Settings choices are in the store all sessions share (`~/.claude/plugins/store/`).
 
 ### Polling
 
 A session counts as active while a turn runs, for 3 minutes after one, and while the pane is being used (mods can't see whether the terminal is in front).
 
-| Collector | Every | While | Also |
-|---|---|---|---|
-| Git | 5 s | the pane is open on Code, in an active session | after Claude changes files, on activity, on opening Code, on `r` |
-| CI | 60 s | the pane is open on Code, in an active session | every 8 s while checks run and for 3 minutes after a push, pane open or closed (for the ping). Each poll also reads the repo's CI mode. A failure in active mode: each failed job's log and the diff, read one at a time, then one turn handed to the session |
-| Subagents | 2 s | the pane is open | |
-| Run records | 10 s | always | 3 s after a subagent ends |
-| Run history | 60 s | the pane is open on Work | on opening Work, on `r` |
-| Stats | 120 s | the pane is open on Work › Stats | on opening Work › Stats, on `r` |
-| Session beat | 15 s | always | |
-| Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` |
-| Pack files | each main turn | always | read again only when a file changed (a `stat` of each) |
-| Processes on this machine, with free memory | 30 s | the pane is open on Now › Env, in an active session | on opening Env, on `r` |
-| Free memory alone | 30 s | a heavy process this session started runs, pane open or closed | |
-| Processes Claude starts | no polling | always | placed when the Bash call starts; cleared by its task's notification, a TaskStop, or the call returning |
-| Inline checks (`size-lines`) | no polling | always | on each Edit or Write, inside the mod: no command runs |
-| Turn checks (ESLint) | no polling | always | once a main turn ends that wrote files a check covers, in a trusted repo; at most 40 files a run, the rest in the next |
-| Turn checks (translation keys) | no polling | always | once a main turn ends that wrote a file a check covers, inside the mod (no trust needed): every table the check covers is listed and its languages' files read |
-| Budgets | no polling | | on opening Code › Budgets, on `r`; on `m` after a build (up to 10 minutes) |
-| Footer (context and limits) | no polling | always | read once at start, then each time Claude Code measures a change |
-| Plans | 5 s | the pane is open on Work › Plans | on opening Work › Plans, on `r`; a file is parsed again only when its modified time changed. Then `gh pr view` for each PR an open checkpoint names: on opening, on `r` and every minute, every one whose state isn't final (a merged or closed PR is not asked about again in the session); every 5 s, only those not asked about yet. Away from Work › Plans, every 10 minutes in an active session, pane open or closed, the open ones again (for Work's badge and the toast) |
+| Collector | Every | While | Also | Switch (Debug › Settings) |
+|---|---|---|---|---|
+| Git | 5 s | the pane is open on Code, in an active session | after Claude changes files, on activity, on opening Code, on `r` | Git after edits (after Claude's edits) |
+| CI | 60 s | the pane is open on Code, in an active session | every 8 s while checks run and for 3 minutes after a push, pane open or closed (for the ping). Each poll also reads the repo's CI mode. A failure in active mode: each failed job's log and the diff, read one at a time, then one turn handed to the session | Watch CI (the fast polling with Code not shown); CI finished toast and notification (the ping); Look into failed CI (the hand-off) |
+| Subagents | 2 s | the pane is open | | none: showing |
+| Run records | 10 s | always | 3 s after a subagent ends | none: reads files only |
+| Run history | 60 s | the pane is open on Work | on opening Work, on `r` | none: showing |
+| Stats | 120 s | the pane is open on Work › Stats | on opening Work › Stats, on `r` | none: showing |
+| Session beat | 15 s | always | | Tell other sessions |
+| Other sessions | 5 s | the pane is open on Now | on opening Now, on `r` | none: showing |
+| Pack files | each main turn | always | read again only when a file changed (a `stat` of each) | none: the pack read |
+| Processes on this machine, with free memory | 30 s | the pane is open on Now › Env, in an active session | on opening Env, on `r` | none: showing |
+| Free memory alone | 30 s | a heavy process this session started runs, pane open or closed | | Memory probe; Low memory toast |
+| Processes Claude starts | no polling | always | placed when the Bash call starts; cleared by its task's notification, a TaskStop, or the call returning | Environment band, Production status line (Safety) |
+| Inline checks (`size-lines`) | no polling | always | on each Edit or Write, inside the mod: no command runs | Inline check notes (what Claude is told) |
+| Turn checks (ESLint) | no polling | always | once a main turn ends that wrote files a check covers, in a trusted repo; at most 40 files a run, the rest in the next | Turn checks; Turn check notes; Ask about repo trust |
+| Turn checks (translation keys) | no polling | always | once a main turn ends that wrote a file a check covers, inside the mod (no trust needed): every table the check covers is listed and its languages' files read | Turn checks; Turn check notes |
+| Budgets | no polling | | on opening Code › Budgets, on `r`; on `m` after a build (up to 10 minutes) | none: showing |
+| Footer (context and limits) | no polling | always | read once at start, then each time Claude Code measures a change | none: showing |
+| Plans | 5 s | the pane is open on Work › Plans | on opening Work › Plans, on `r`; a file is parsed again only when its modified time changed. Then `gh pr view` for each PR an open checkpoint names: on opening, on `r` and every minute, every one whose state isn't final (a merged or closed PR is not asked about again in the session); every 5 s, only those not asked about yet. Away from Work › Plans, every 10 minutes in an active session, pane open or closed, the open ones again (for Work's badge and the toast) | Plans in the background (away from Work › Plans); Plans toasts |
+| Settings | 5 s | always | on opening Debug › Settings, on `r` | none: it reads the switches |
 
 Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 at once, each given 20 s; long jobs take the heavy lane one at a time (a fetch gets 60 s, ESLint and a budget's report 120 s, a build 10 minutes), so a fetch or a lint never holds up the reads. A poll that comes due while its last run is still busy is skipped, so a slow `gh` never piles up calls.
 
@@ -123,7 +125,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 
 | Check | Workflow | What fails it |
 |---|---|---|
-| `plugin` | `ci.yml` | A command run outside the exec lanes ([`.githooks/check-exec.sh`](.githooks/check-exec.sh)), or `claude plugin validate --strict .` or `claude plugin test .`, on the latest Claude Code |
+| `plugin` | `ci.yml` | A command run outside the exec lanes ([`.githooks/check-exec.sh`](.githooks/check-exec.sh)), something the mod does by itself without its Settings gate ([`.githooks/check-permissions.sh`](.githooks/check-permissions.sh)), or `claude plugin validate --strict .` or `claude plugin test .`, on the latest Claude Code |
 | `secret-scan` | `ci.yml` | gitleaks finds a secret in any commit of the PR or in the tree ([`.gitleaks.toml`](.gitleaks.toml)). The repo is public, so this one matters even solo |
 | `pr-title` | `pr-gates.yml` | The PR title isn't `type(scope): subject` |
 | `version-bump` | `pr-gates.yml` | Shipped files changed and `plugin.json`'s version didn't go up |

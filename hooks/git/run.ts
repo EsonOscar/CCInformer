@@ -4,6 +4,7 @@ import type { CiSnapshot, DiffPreview, FileChange, GitSnapshot } from '../../typ
 import { collectCi, collectDiff, collectGit } from '../collect'
 import type { Exec } from '../collect'
 import { createSolo } from '../core/lanes'
+import type { May } from '../core/permissions'
 import { ciOutcome } from '../insight'
 import { previewDiff, previewNewFile } from '../parse'
 import { gitFolderFacts } from '../read-git'
@@ -26,6 +27,7 @@ export type GitDeps = {
   clearSelection: () => Promise<unknown>
   // A commit's checks finished with a failure, in the session that pinged for it (active CI mode decides what follows).
   onCiFailed?: (ci: CiSnapshot) => Promise<void>
+  may: May
 }
 
 export type Git = {
@@ -50,8 +52,8 @@ export function createGit($: EngineInterface, deps: GitDeps): Git {
     const list = Array.isArray(pinged) ? (pinged as string[]) : []
     if (list.includes(ci.head)) return
     await $.store.set(STORE_CI_PINGED, [...list, ci.head].slice(-CI_PINGS_KEPT))
-    $.ui.toast((outcome.isOk ? '✓ ' : '✗ ') + outcome.text)
-    await $.ui.notify(outcome.text, { title: outcome.isOk ? 'CI passed' : 'CI failed' })
+    if (deps.may('notify.ciToast')) $.ui.toast((outcome.isOk ? '✓ ' : '✗ ') + outcome.text)
+    if (deps.may('notify.ciOs')) await $.ui.notify(outcome.text, { title: outcome.isOk ? 'CI passed' : 'CI failed' })
     // Not awaited: what follows a failure (fetching logs, an agent) must never hold up the CI poll.
     if (!outcome.isOk) void deps.onCiFailed?.(ci).catch(() => undefined)
   }

@@ -161,3 +161,17 @@ test('a yes goes stale when the repo config changes, and the pack is read again 
   expect(await ui.find({ type: 'Text', text: /the config changed since you allowed them/ })).toBeDefined()
   await ui.unmount()
 })
+
+test("the trust line says Claude is told nothing while the turn checks or their notes are switched off", async ($, on) => {
+  engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'debug' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await ui.press({ key: 'view-pack' })
+  expect(await ui.find({ type: 'Text', text: /a user pack matches this repo\. Claude is told what they find\./ })).toBeDefined()
+  await ui.press({ key: 'view-settings' })
+  await ui.press({ key: 'perm-claude.turnNotes' })
+  await ui.press({ key: 'view-pack' })
+  expect(await ui.find({ type: 'Text', text: /Claude is told nothing: Turn checks or Turn check notes is off in Debug › Settings\./ })).toBeDefined()
+  await ui.unmount()
+})

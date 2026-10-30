@@ -36,6 +36,12 @@ export const CI_TEXTS = {
   viewWaiting: 'waits for an idle moment in the session',
   viewSent: 'handed to the session',
   viewFailed: (why: string) => `couldn't look into it: ${why}`,
+  // While a Debug › Settings switch holds the mode's effect off.
+  viewActiveOff: 'on a failed check: nothing (Look into failed CI is off in Debug › Settings)',
+  viewPassiveQuiet: 'on a failed check: nothing (CI finished toast is off in Debug › Settings)',
+  heldOff: ' It stays held off while Look into failed CI is off in Debug › Settings.',
+  quietOff: ' Nothing shows while CI finished toast is off in Debug › Settings.',
+  switchedOff: 'switched off in Debug › Settings',
 }
 
 export const isReadOnlyTool = (tool: string): boolean => READ_ONLY_TOOLS.includes(tool)
