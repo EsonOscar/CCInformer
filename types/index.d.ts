@@ -323,6 +323,8 @@ declare module 'claude-code' {
       statsName: string
       stats: RunSummary[]
       isOpen: boolean
+      // The mod's own version, from its plugin.json; '' until read, or when it names none.
+      version: string
       // False while the session has been idle a while: git polling pauses.
       isActive: boolean
       now: number

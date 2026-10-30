@@ -18,12 +18,13 @@ import { endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
 import { classifyCommand } from './env/read'
-import { paneTitle } from './format'
+import { manifestVersion, paneTitle } from './format'
 import { readUsage } from './usage'
 import { createGit } from './git/run'
 import { parseWorkflowMeta } from './parse'
 import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
 import type { ResolvedPack } from './packs/types'
+import { readText } from './read-records'
 import { readBeats, readBranch } from './read-sessions'
 import { projectDirName, upgradeRun } from './records'
 import { TOUCHING_TOOLS, capped, contextTokens, endedState, isPush, summarize, taskOf, toolLabel } from './rows'
@@ -105,6 +106,8 @@ const statsAtom = atom({ plugin: 'ccinformer', key: 'stats' } as const, [] as Ru
 const showAllFilesAtom = atom({ plugin: 'ccinformer', key: 'showAllFiles' } as const, false)
 const diffAtom = atom({ plugin: 'ccinformer', key: 'diff' } as const, null as DiffPreview | null)
 const isOpenAtom = atom({ plugin: 'ccinformer', key: 'isOpen' } as const, false)
+// The version the pane shows in its top right, read from plugin.json at session start.
+const versionAtom = atom({ plugin: 'ccinformer', key: 'version' } as const, '')
 const isActiveAtom = atom({ plugin: 'ccinformer', key: 'isActive' } as const, true)
 // The clock elapsed times and spinners draw from, ticked once a second while the pane is open.
 const nowAtom = atom({ plugin: 'ccinformer', key: 'now' } as const, 0)
@@ -229,6 +232,9 @@ export const register: Register = on => {
     await saveEnvTasks($, await read($, envTasksAtom))
     ciState = { ...CI_IDLE, ...(await read($, ciActiveAtom)) }
     cwd = await $.session.cwd()
+    // The engine gives a plugin its name and folder but not its version, so the pane reads its own manifest.
+    const version = manifestVersion(await readText($, $.plugin.root + '/.claude-plugin/plugin.json'))
+    await update($, versionAtom, () => version)
     // The footer's first reading; session.measure keeps it current from here.
     const usage = await $.session.usage().catch(() => null)
     if (usage) await update($, usageAtom, () => readUsage(usage.context, usage.rateLimits))
@@ -818,14 +824,14 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive, version] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
-      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom),
+      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
     }

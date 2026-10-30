@@ -31,6 +31,8 @@ const engine = (on: Parameters<TestBody>[1], opened: string[] = []) => {
     opened.push(e.id)
     return { value: { isPlaced: true } }
   })
+  // The mod's own manifest; no other file exists.
+  on('fs.read', (_, e) => ({ value: /plugin\.json$/.test(e.path) ? '{ "name": "ccinformer", "version": "9.8.7" }' : null }) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {}, text: 'ok' }))
 }
@@ -49,6 +51,8 @@ test('/ccinformer and its alias /side both open the pane, which names itself as 
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   // A test loads the mod from its folder, not from the plugin cache, so the pane says it's a working copy.
   expect(await ui.find({ type: 'Text', text: 'CCInformer · dev' })).toBeDefined()
+  // Its version, from its plugin.json, beside the name.
+  expect(await ui.find({ type: 'Text', text: 'v9.8.7' })).toBeDefined()
   expect(await ui.find({ key: 'area-debug' })).toBeDefined()
   await ui.unmount()
 })

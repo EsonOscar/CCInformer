@@ -51,3 +51,13 @@ const INSTALLED = /[\\/]plugins[\\/]cache[\\/]/
 
 // "CCInformer", or "CCInformer · dev" for a working copy, so a dev session can't pass for the release.
 export const paneTitle = (name: string, root: string): string => (INSTALLED.test(root) ? name : `${name} · dev`)
+
+// The version a plugin.json names, or '' when it names none or doesn't parse.
+export const manifestVersion = (text: string): string => {
+  try {
+    const version = (JSON.parse(text) as { version?: unknown }).version
+    return typeof version === 'string' ? version : ''
+  } catch {
+    return ''
+  }
+}
