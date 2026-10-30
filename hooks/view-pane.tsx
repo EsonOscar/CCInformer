@@ -57,6 +57,8 @@ export type PaneData = {
   memory: MemoryReading | null
   selfId: string
   cwd: string
+  // The mod's version, shown muted in the top right; '' draws nothing.
+  version: string
   width: number
   // The rows the pane shows at once, and the first row its window shows: the footer is drawn at the window's bottom.
   rows: number
@@ -176,6 +178,8 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
             ✻{' '}
           </Text>
           <Text dimColor>{title}</Text>
+          <Box flexGrow={1} />
+          {d.version ? <Text dimColor>{`v${d.version}`}</Text> : null}
         </Box>
         {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh)}
         <Text color={ACCENT} dimColor>

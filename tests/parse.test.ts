@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { duration, paneTitle, shortModel, tokens } from '../hooks/format'
+import { duration, manifestVersion, paneTitle, shortModel, tokens } from '../hooks/format'
 import { parseChecks, parseLog, parseNumstat, parseRuns, parseStatus, parseWorkflowMeta, parseWorktrees, phaseOf, withNumstat } from '../hooks/parse'
 import { contextTokens, isPush, summarize } from '../hooks/rows'
 
@@ -111,6 +111,14 @@ describe('formatting and summaries', () => {
     expect(paneTitle('CCInformer', 'C:\\Users\\me\\.claude\\plugins\\cache\\ccinformer\\ccinformer\\0.3.0')).toBe('CCInformer')
     expect(paneTitle('CCInformer', '/home/me/.claude/plugins/cache/ccinformer/ccinformer/0.3.0')).toBe('CCInformer')
     expect(paneTitle('CCInformer', '/home/me/code/CCInformer/.claude/worktrees/some-task')).toBe('CCInformer · dev')
+  })
+
+  test("the version is plugin.json's, or nothing when it names none or doesn't parse", async () => {
+    expect(manifestVersion('{ "name": "ccinformer", "version": "1.2.3" }')).toBe('1.2.3')
+    expect(manifestVersion('{ "name": "ccinformer" }')).toBe('')
+    expect(manifestVersion('{ "version": 3 }')).toBe('')
+    expect(manifestVersion('')).toBe('')
+    expect(manifestVersion('{ not json')).toBe('')
   })
 
   test('a tool call is summed up by its file, command or MCP server', async () => {

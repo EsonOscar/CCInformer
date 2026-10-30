@@ -17,7 +17,7 @@ A Claude Code mod: a pane docked on the right of the terminal, in five areas you
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its time, every model request with its tokens, and how the context grew, with compactions marked.
   - **Pack** (`p`): the [pack](#packs) this repo resolved to and where each value came from. `a` lets the repo's own tools run, or stops them.
 
-An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
+An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The top right shows the version running, such as `v0.19.0`. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
 
 **The band** above the prompt warns while a process Claude started targets a shared or production environment, as your pack defines them: `⚠ STAGING  npm run dev:staging  targets a shared environment`.
 
