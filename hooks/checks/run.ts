@@ -4,15 +4,20 @@ import type { CheckRun, Finding, PackReport } from '../../types'
 import type { Lane } from '../core/lanes'
 import { askTrust } from '../packs/load'
 import type { CheckSpec, ResolvedPack } from '../packs/types'
+import { filesOf } from '../read-files'
 import { readText } from '../read-records'
 import { ESLINT_BIN, covers, eslintFindings, isTold, noteFor, ownedRules, regexFindings, sizeFindings, withoutInline } from './findings'
 import { repoPath } from './glob'
+import { keysetFindings, languagesOf, tableOf } from './i18n'
+import type { TableFile } from './i18n'
 import { parseSuppressions } from './suppressions'
 import type { Suppressions } from './suppressions'
 
 // The most files one ESLint run takes (its JSON carries each file's source, and a run's output is cut at 4 MiB); the
 // rest wait for the next run.
 const MAX_CHECKED_FILES = 40
+// How deep a `**` glob looks for translation tables.
+const MAX_TABLE_DEPTH = 6
 
 // What the checks take from the session: its pack and the report it came with (read again on `reload`), the heavy
 // lane, where the empty suppressions file goes, and the state they write and read (the atoms live in the hooks module).
@@ -70,6 +75,33 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
     if (!(await askTrust($, report))) return false
     return !!(await deps.reload()).trust.isTrusted
   }
+  // The turn's translation-table checks, once its writes are all in: compared inside the mod, so they need no trust.
+  // Every table a check covers is read, but only when the turn wrote to one of them.
+  const checkTables = async (pack: ResolvedPack, root: string, written: string[]) => {
+    for (const check of pack.checks.filter(c => c.cost === 'turn' && c.analyzer === 'i18n-keysets')) {
+      const touchedTables = [...new Set(written.filter(f => covers(check, f)).map(tableOf))]
+      if (!touchedTables.length) continue
+      const all = new Set(touchedTables)
+      for (const glob of check.on) for (const f of await filesOf($, root, glob, MAX_TABLE_DEPTH)) if (covers(check, f)) all.add(tableOf(f))
+      const tables: Record<string, TableFile[]> = {}
+      const stamps: Record<string, string> = {}
+      for (const table of all) {
+        const files: TableFile[] = []
+        for (const lang of languagesOf(check)) {
+          const path = table ? `${table}/${lang}.json` : `${lang}.json`
+          stamps[path] = await stampOf(`${root}/${path}`)
+          files.push({ lang, path, text: stamps[path] ? await readText($, `${root}/${path}`) : null })
+        }
+        tables[table] = files
+      }
+      const files = touchedTables.flatMap(t => tables[t]!.map(f => f.path))
+      const findings = keysetFindings(check, tables, touchedTables)
+      await deps.saveFindings(check.id, files, findings)
+      const kept = toTell?.findings.filter(f => f.check !== check.id || !files.includes(f.file)) ?? []
+      const told = Object.fromEntries(files.map(f => [f, stamps[f] ?? '']))
+      toTell = { findings: [...kept, ...findings.filter(isTold)], stamps: { ...toTell?.stamps, ...told } }
+    }
+  }
   // The turn's ESLint run: the files written since the last run that a check covers and that still exist.
   const checkTurn = async () => {
     const written = [...touched]
@@ -77,6 +109,7 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
     const pack = written.length ? await deps.pack() : null
     const report = deps.report()
     if (!pack || !report) return
+    await checkTables(pack, report.root, written)
     for (const check of pack.checks.filter(c => c.cost === 'turn' && c.analyzer === 'eslint-json')) {
       const covered: string[] = []
       for (const f of written) if (covers(check, f) && (await stampOf(`${report.root}/${f}`))) covered.push(f)

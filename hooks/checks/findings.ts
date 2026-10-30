@@ -24,7 +24,7 @@ export const countLines = (text: string): number => {
   return lines.length > 1 && lines[lines.length - 1] === '' ? lines.length - 1 : lines.length
 }
 
-const finding = (check: CheckSpec, f: Omit<Finding, 'id' | 'check' | 'class'>): Finding => ({
+export const finding = (check: CheckSpec, f: Omit<Finding, 'id' | 'check' | 'class'>): Finding => ({
   ...f,
   id: [check.id, f.file, f.rule, f.line, f.message].join('|'),
   check: check.id,

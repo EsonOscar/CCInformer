@@ -56,6 +56,7 @@ export const checkPack = (value: unknown, layer: 'built-in' | 'user'): Checked<P
     if (!COSTS.includes(c.cost as string)) reasons.push(`check ${String(c.id)}: cost must be one of ${COSTS.join(', ')}`)
     if (!isStrings(c.on)) reasons.push(`check ${String(c.id)}: "on" must be a list of globs`)
     if (c.analyzer === 'regex-lines') reasons.push(...checkRegexLines(c))
+    if (c.analyzer === 'i18n-keysets') reasons.push(...checkKeysets(c))
   }
   return reasons.length ? { reasons } : { value: value as PackManifest, reasons: [] }
 }
@@ -68,6 +69,17 @@ const checkRegexLines = (c: Record<string, unknown>): string[] => {
   if (typeof options.pattern !== 'string' || !options.pattern) reasons.push(`check ${String(c.id)}: needs "options.pattern", the regex each line is tested against`)
   else if (!compiles(options.pattern)) reasons.push(`check ${String(c.id)}: "options.pattern" doesn't compile`)
   if (options.message !== undefined && typeof options.message !== 'string') reasons.push(`check ${String(c.id)}: "options.message" must be a string`)
+  return reasons
+}
+
+// An i18n-keysets check compares whole tables once a turn's writes are done: its cost is "turn", and it names the
+// languages every table must carry.
+const checkKeysets = (c: Record<string, unknown>): string[] => {
+  const options = isObject(c.options) ? c.options : {}
+  const reasons: string[] = []
+  if (c.cost !== 'turn') reasons.push(`check ${String(c.id)}: an i18n-keysets check runs once a turn ends, so its cost must be "turn"`)
+  if (!isStrings(options.languages) || !options.languages.length || options.languages.some(l => !l))
+    reasons.push(`check ${String(c.id)}: needs "options.languages", the languages every table must have (e.g. ["da", "en", "sv"])`)
   return reasons
 }
 
