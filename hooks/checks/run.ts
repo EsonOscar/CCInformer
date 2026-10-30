@@ -2,7 +2,7 @@ import type { EngineInterface } from 'claude-code'
 
 import type { CheckRun, Finding, PackReport } from '../../types'
 import type { Lane } from '../core/lanes'
-import { askTrust } from '../packs/load'
+import { askTrust, wasTrustAsked } from '../packs/load'
 import type { CheckSpec, ResolvedPack } from '../packs/types'
 import { filesOf } from '../read-files'
 import { readText } from '../read-records'
@@ -66,12 +66,14 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
     pack.checks.filter(c => c.cost === 'edit' && (c.analyzer === 'size-lines' || c.analyzer === 'regex-lines') && covers(c, file))
   const inlineFindings = async (check: CheckSpec, root: string, file: string, text: string) =>
     check.analyzer === 'size-lines' ? sizeFindings(check, file, text, await suppressionsOf(check, root)) : regexFindings(check, file, text, await suppressionsOf(check, root))
-  // Whether the repo's own tools may run; the first check that needs them asks once a session.
+  // Whether the repo's own tools may run. The first check that needs them asks once per repo, ever: after any answer,
+  // or a yes that lapsed when the config changed, only the person allows them (a in Debug › Pack).
   const mayRunRepoTools = async () => {
     const report = deps.report()
     if (report?.trust.isTrusted) return true
-    if (isTrustAsked || !report) return false
+    if (isTrustAsked || !report || report.trust.isStale) return false
     isTrustAsked = true
+    if (await wasTrustAsked($, report)) return false
     if (!(await askTrust($, report))) return false
     return !!(await deps.reload()).trust.isTrusted
   }

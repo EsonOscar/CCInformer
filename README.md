@@ -106,7 +106,7 @@ A repo's own files may only add or tighten, with globs and literals:
 
 A repo file that names a command, switches anything off, holds a regex or points outside the repo is refused whole, and Debug › Pack says why.
 
-**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you run `/ccinformer pack trust` (or `a` in Debug › Pack). It asks again when the repo's config files change; `/ccinformer pack untrust` takes it back.
+**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). Trusting a repo also means Claude is told what those tools find. The first such check asks once per repo, and never again, whatever you answer. A yes lapses when the repo's config files change, and you allow it again in Debug › Pack. `a` there (or `/ccinformer pack untrust`) also takes it back.
 
 ### Environments
 

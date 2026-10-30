@@ -87,12 +87,12 @@ const Trust = (k: Kit, report: PackReport, now: number, nav: PackNav): JSX.Eleme
   const { Box, Button, Text } = k
   const { trust } = report
   const text = trust.by === 'user pack'
-    ? 'repo tools may run: a user pack matches this repo'
+    ? 'repo tools may run: a user pack matches this repo. Claude is told what they find.'
     : trust.isTrusted
-      ? 'repo tools may run: allowed by you ' + ago(now - trust.at)
+      ? 'repo tools may run: allowed by you ' + ago(now - trust.at) + '. Claude is told what they find.'
       : trust.isStale
-        ? "repo tools wait: the config changed since you allowed them"
-        : "repo tools wait until you allow them; until then only the mod's own checks run"
+        ? 'repo tools wait: the config changed since you allowed them. Press a to allow them again.'
+        : "repo tools wait until you allow them with a; until then only the mod's own checks run, and Claude is told nothing from these tools."
   return (
     <Box flexDirection="row" columnGap={1} marginTop={1}>
       <Text color={trust.isTrusted ? 'success' : 'warning'}>{trust.isTrusted ? '✓' : '◌'}</Text>
