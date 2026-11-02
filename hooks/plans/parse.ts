@@ -3,8 +3,9 @@ import type { PlanSpec } from '../packs/types'
 
 // What a checkpoint id looks like when the pack doesn't say: CP3, C7, R3a, PR 4, PR 4b.
 export const DEFAULT_CHECKPOINT = '(?:CP|C|R|PR ?)\\d+[a-z]?'
-// What marks a checkpoint done when the pack doesn't say; a struck-through id counts too.
-export const DEFAULT_DONE = ['merged as #\\d+', '✅', '\\b(?:DONE|[Dd]one|[Pp]assed)\\b']
+// What marks a checkpoint done when the pack doesn't say; a struck-through id counts too. "Done when" (or "done-when")
+// is a checkpoint's exit criterion, which the planning skills write on the same line as its status, so it never counts.
+export const DEFAULT_DONE = ['merged as #\\d+', '✅', '\\b(?:DONE|[Dd]one|[Pp]assed)\\b(?![\\s-]+when\\b)']
 export const DEFAULT_PR_REF = '#(\\d+)'
 const PARTLY = /🟡|\bPARTLY\b/
 const DROPPED = /\b(?:[Dd]ropped|[Ss]uperseded|[Oo]bsolete|DROPPED)\b/
