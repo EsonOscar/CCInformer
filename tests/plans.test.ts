@@ -116,6 +116,27 @@ describe('plan shapes', () => {
     ])
   })
 
+  test('"done when" on a checkpoint\'s line is its exit criterion, not its status', async () => {
+    // The planning skills put each checkpoint's "done when" on the line that defines it, and its status there too.
+    const plan = [
+      '# Planned feature',
+      '### CP1: storage. Done when the tests pass',
+      '- **CP2, the parser:** done when `parse` holds the fixtures',
+      '- **CP3, the view:** done. Done when it renders',
+      '| CP4 | Docs, done-when the README says so |',
+      '- **CP5.** Done when:',
+      '- **CP6, gates:** passed; done when CI is green',
+    ].join('\n')
+    expect(board(plan)).toEqual([
+      ['CP1', 'open', 'storage. Done when the tests pass', []],
+      ['CP2', 'open', 'the parser', []],
+      ['CP3', 'done', 'the view', []],
+      ['CP4', 'open', 'Docs, done-when the README says so', []],
+      ['CP5', 'open', 'Done when', []],
+      ['CP6', 'done', 'gates', []],
+    ])
+  })
+
   test("titles leave out a plan's emoji, keeping the warning sign", async () => {
     const plan = ['# T', '| C18 | `feat(packs): godot` ⏸️ the game\'s path |', '### R6: ⚠ risky 🚀 launch'].join('\n')
     expect(board(plan)).toEqual([
