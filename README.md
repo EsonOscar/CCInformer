@@ -84,6 +84,8 @@ Three planning skills come with the mod. Each plans in plan mode, asks you only 
 
 **Planning settings.** A repo's checks, the risks to review for, the actions that need your OK and its commit rules can be written down once: in a committed `## Planning` section of its CLAUDE.md, or privately in `.local/ccinformer-planning.md`. After a first run in a repo with neither, the skill offers to write the private one for you.
 
+**Docs audit.** `/ccinformer:audit-docs <focus>` checks a repo's docs against its code, in plan mode: any kind of doc (READMEs, contributor docs, design docs, ADRs, plans, changelogs, CLAUDE.md files), git-tracked or git-ignored. A workflow of read-only agents finds drift, stale status, history in current docs, broken references, contradictions and duplicates; you decide what is really yours to decide; the plan you approve holds every change. Once approved, a script checks each change against the docs as they were, applies them to a work folder, and installs them after a moved-text check and a review, keeping copies of the old docs in `~/.claude/audit-backups/`. Moved history goes to a history file. Its scripts need Python 3 (standard library only).
+
 ## Packs
 
 A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets and plan files. Four layers, lowest first; lists merge by `id`, and a later layer's fields win:

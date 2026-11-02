@@ -51,6 +51,13 @@ jobs:
       - name: Run the mod's tests
         run: claude plugin test .
 
+      # The audit-docs skill's scripts are plain Python and a workflow script; their tests run here only, as the
+      # pre-push hook can't know which Python a machine uses.
+      - name: Run the audit-docs skill's tests
+        run: |
+          python3 -B -m unittest discover -s skills/audit-docs/tests
+          node skills/audit-docs/tests/test_fanout.mjs
+
   secret-scan:
     # Fails on a secret (API keys, tokens, private keys...). Scans every commit of the PR, so a secret
     # added and removed again inside the PR is still caught, then the checked-out tree.
