@@ -287,8 +287,8 @@ test("without a user pack, the first turn check asks once whether the repo's too
   expect(runs).toEqual([])
 })
 
-test('a yes that lapsed when the config changed is not asked about again: the files wait for the person', async ($, on) => {
-  const store = { [TRUST_KEY]: { hash: 'config-before-the-change', at: 1 } }
+test('a yes stored by an older version, with the hash of config files no longer read, still counts: nothing is asked', async ($, on) => {
+  const store = { [TRUST_KEY]: { hash: 'of-files-no-longer-read', at: 1 } }
   const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG, ...ESLINT_INSTALLED }, { store })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await clock.settle()
@@ -297,11 +297,11 @@ test('a yes that lapsed when the config changed is not asked about again: the fi
   await $.turn.complete(turnEnd())
   await clock.settle()
   expect(asked).toEqual([])
-  expect(runs).toEqual([])
+  expect(runs).toEqual([['src/a.ts']])
   await $.command.run({ ...TYPED, command: 'ccinformer', args: 'debug' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   await ui.press({ key: 'view-pack' })
-  expect(await ui.find({ type: 'Text', text: /the config changed since you allowed them. Press a to allow them again/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /repo tools may run: allowed by you/ })).toBeDefined()
   await ui.unmount()
 })
 

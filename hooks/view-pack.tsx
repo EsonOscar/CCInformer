@@ -17,15 +17,10 @@ const SECTION_TITLES: Record<string, string> = {
   processes: 'Processes',
   environments: 'Environments',
   approvals: 'Approvals',
-  hosts: 'Hosts',
   checks: 'Checks',
   budgets: 'Budgets',
-  locks: 'Locks',
   noise: 'Noise',
-  signals: 'Signals',
-  claudeMd: 'From CLAUDE.md',
   plans: 'Plans',
-  preflight: 'Preflight',
 }
 
 // `isToldClaude`: Debug › Settings lets the turn checks run and tell Claude what they find.
@@ -53,7 +48,7 @@ export const PackView = (k: Kit, report: PackReport | null, now: number, nav: Pa
   )
 }
 
-const LAYER_NAMES: Record<PackLayerRow['layer'], string> = { 'built-in': 'built-in', user: 'user pack', repo: 'repo', local: 'local' }
+const LAYER_NAMES: Record<PackLayerRow['layer'], string> = { 'built-in': 'built-in', user: 'user pack' }
 
 const Layer = (k: Kit, l: PackLayerRow): JSX.Element => {
   const { Box, Text } = k
@@ -92,9 +87,7 @@ const Trust = (k: Kit, report: PackReport, now: number, nav: PackNav): JSX.Eleme
     ? 'repo tools may run: a user pack matches this repo.' + told
     : trust.isTrusted
       ? 'repo tools may run: allowed by you ' + ago(now - trust.at) + '.' + told
-      : trust.isStale
-        ? 'repo tools wait: the config changed since you allowed them. Press a to allow them again.'
-        : "repo tools wait until you allow them with a; until then only the mod's own checks run, and Claude is told nothing from these tools."
+      : "repo tools wait until you allow them with a; until then only the mod's own checks run, and Claude is told nothing from these tools."
   return (
     <Box flexDirection="row" columnGap={1} marginTop={1}>
       <Text color={trust.isTrusted ? 'success' : 'warning'}>{trust.isTrusted ? '✓' : '◌'}</Text>

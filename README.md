@@ -94,28 +94,14 @@ Three planning skills come with the mod. Each plans in plan mode, asks you only 
 
 ## Packs
 
-A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets and plan files. Four layers, lowest first; lists merge by `id`, and a later layer's fields win:
+A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets and plan files. Packs are personal: nothing is read from inside the repo. Two layers, lowest first; lists merge by `id`, and the user pack's fields win:
 
-1. **A built-in pack**, picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
+1. **A built-in pack**: the one your user pack `extends`, else one picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
 2. **Your user pack**, `~/.claude/ccinformer/packs/<name>.pack.jsonc`, for repos whose remote matches its `match.remote` (globs over `host/owner/repo`, e.g. `github.com/<owner>/*`). It can `extends` a built-in and `disable` ids from it. Your own values for a repo live here, outside the repo.
-3. **`.ccinformer.jsonc`** in the repo, committed.
-4. **`.ccinformer.local.jsonc`** in the repo, kept out of git.
 
-A repo's own files may only add or tighten, with globs and literals:
+A pack holds only these keys: `schema`, `id`, `version`, `match`, `detect` (built-ins only), `extends`, `processes`, `environments`, `checks`, `budgets`, `noise`, `plans` and `disable`. A pack with any other key, or a value it can't use, is refused whole, and Debug › Pack says why.
 
-```jsonc
-{
-  "pack": "node-vite",                          // a built-in, when detection misses it
-  "budgets": { "<budget id>": { "limit": 400000 } }, // only stricter than the pack below
-  "locks": { "exclusive": ["db/migrations/**"], "warn": ["package-lock.json"] },
-  "envHosts": { "prod": ["db.example.com"] },     // shared or prod hosts
-  "plans": { "globs": ["docs/plans/*.md"], "archiveDir": "docs/plans/archive" }
-}
-```
-
-A repo file that names a command, switches anything off, holds a regex or points outside the repo is refused whole, and Debug › Pack says why.
-
-**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). With Turn checks on in Debug › Settings they run after each turn that wrote files, and with Turn check notes on Claude is told what they find. With Ask about repo trust on, the first such check asks once per repo, and never again, whatever you answer. All three start off on a new install. A yes lapses when the repo's config files change, and you allow it again in Debug › Pack. `a` there (or `/ccinformer pack untrust`) also takes it back.
+**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). With Turn checks on in Debug › Settings they run after each turn that wrote files, and with Turn check notes on Claude is told what they find. With Ask about repo trust on, the first such check asks once per repo, and never again, whatever you answer. All three start off on a new install. A yes holds until `a` in Debug › Pack (or `/ccinformer pack untrust`) takes it back.
 
 ### Environments
 

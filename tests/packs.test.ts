@@ -6,7 +6,7 @@ import { hostTone } from '../hooks/packs/merge'
 import { BUILTINS } from '../hooks/packs/node-vite'
 import { resolvePack } from '../hooks/packs/resolve'
 import type { PackInput } from '../hooks/packs/resolve'
-import { configHash, runnableChecks, trustOf } from '../hooks/packs/trust'
+import { isStoredTrust, runnableChecks, trustOf } from '../hooks/packs/trust'
 import type { ResolvedPack } from '../hooks/packs/types'
 import { checkPack, groupsOf, scanPattern } from '../hooks/packs/validate'
 
@@ -22,7 +22,6 @@ const USER_PACK = `{
     { "id": "staging", "label": "staging", "tone": "shared", "hostPatterns": ["*.staging.example.test"],
       "approvals": [{ "id": "staging-writes", "tool": "Bash", "commandRegex": "migrate", "label": "staging migration", "scope": "once" }] },
   ],
-  "locks": [{ "id": "migrations", "glob": "db/migrations/**", "mode": "exclusive", "reason": "one migration at a time" }],
   "checks": [{ "id": "eslint", "label": "ESLint (shop rules)", "on": ["src/**/*.ts"], "analyzer": "eslint-json", "cost": "turn", "class": "ci" }],
   "budgets": [{ "id": "bundle", "label": "bundle", "unit": "bytes", "direction": "max", "limit": 500000, "sources": [], "cost": "demand" }],
   "disable": ["playwright"],
@@ -34,12 +33,7 @@ const input = (over: Partial<PackInput> = {}): PackInput => ({
   repoKey: 'work-shop-git',
   markers: { 'package.json': VITE_PKG, 'vite.config.ts': '', 'vite.config.js': null, 'vite.config.mts': null },
   userPacks: [],
-  repo: null,
-  local: null,
-  isLocalIgnored: true,
-  realPaths: {},
   storedTrust: null,
-  hash: 'h1',
   now: 1000,
   ...over,
 })
@@ -67,6 +61,22 @@ describe('reading pack files', () => {
 
   test('every built-in pack is valid', async () => {
     for (const pack of BUILTINS) expect({ id: pack.id, reasons: checkPack(pack, 'built-in').reasons }).toEqual({ id: pack.id, reasons: [] })
+  })
+
+  test('a key outside the schema refuses the pack and names the keys it takes: a removed field or a typo', async () => {
+    const pack = (extra: object) => ({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] }, ...extra })
+    const takes = 'it takes schema, id, version, match, detect, extends, processes, environments, checks, budgets, noise, plans, disable'
+    expect(checkPack(pack({ plans: { globs: ['.local/*.md'] } }), 'user').reasons).toEqual([])
+    for (const key of ['locks', 'signals', 'preflight', 'claudeMd', 'check'])
+      expect(checkPack(pack({ [key]: [] }), 'user').reasons).toEqual([`"${key}" isn't a pack setting (${takes})`])
+  })
+
+  test('the removed analyzers and the batch cost are refused', async () => {
+    const check = (fields: object) => ({ id: 'lint', label: 'lint', on: ['**/*.py'], analyzer: 'size-lines', cost: 'edit', class: 'advise', ...fields })
+    const pack = (c: object) => ({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] }, checks: [c] })
+    for (const analyzer of ['ruff-json', 'mypy-text', 'msbuild', 'alembic-check', 'pybabel-po'])
+      expect(checkPack(pack(check({ analyzer })), 'user').reasons).toEqual([`check lint: no analyzer "${analyzer}"`])
+    expect(checkPack(pack(check({ cost: 'batch' })), 'user').reasons).toEqual(['check lint: cost must be one of edit, turn, demand'])
   })
 
   test('a regex-lines check needs a pattern that compiles, and runs on each write', async () => {
@@ -157,11 +167,8 @@ describe('command checks: sarif and problem-matcher', () => {
     ])
   })
 
-  test('a repo config holding a check is refused whole; without trust a sarif check is left out; a reused id keeps the built-in\'s fields', async () => {
-    const repo = resolvePack(input({ repo: `{ "checks": [{ "id": "x", "analyzer": "sarif", "bin": ["sh"] }] }` }))
-    expect(row(repo, 'repo').state).toBe('refused')
-    expect(row(repo, 'repo').reasons.join('\n')).toMatch(/"checks": a repo config can't name commands/)
-    const own: ResolvedPack = { id: 'own', processes: [], environments: [], checks: [sarif({}) as never], budgets: [], locks: [], noise: [], signals: [], claudeMd: [] }
+  test('without trust a sarif check is left out; a reused id keeps the built-in\'s fields', async () => {
+    const own: ResolvedPack = { id: 'own', processes: [], environments: [], checks: [sarif({}) as never], budgets: [], noise: [] }
     expect(runnableChecks(own, false)).toEqual([])
     expect(runnableChecks(own, true).map(c => c.id)).toEqual(['ruff'])
     // A user pack check with the built-in's id merges field by field, so node-vite's suppressions stay on it: an
@@ -171,7 +178,7 @@ describe('command checks: sarif and problem-matcher', () => {
   })
 })
 
-describe('the four layers', () => {
+describe('the two layers', () => {
   test('(1) a user pack matched by its remote extends node-vite, changes a check and switches one off', async () => {
     const r = withUser()
     const resolved = resolvePack(r)
@@ -180,7 +187,8 @@ describe('the four layers', () => {
     expect(resolved.pack.id).toBe('acme-shop')
     expect(resolved.pack.checks.find(c => c.id === 'eslint')).toMatchObject({ label: 'ESLint (shop rules)', on: ['src/**/*.ts'], bin: ['node', 'node_modules/eslint/bin/eslint.js'] })
     expect(entry(resolved, 'checks', 'eslint')).toMatchObject({ layer: 'built-in', changedBy: ['user'] })
-    expect(entry(resolved, 'locks', 'migrations')).toMatchObject({ layer: 'user', changedBy: [] })
+    expect(entry(resolved, 'budgets', 'bundle')).toMatchObject({ layer: 'user', changedBy: [] })
+    expect(resolved.report.layers.map(l => l.layer)).toEqual(['built-in', 'user'])
     expect(entry(resolved, 'processes', 'playwright')).toMatchObject({ layer: 'built-in', removedBy: 'user' })
     expect(resolved.pack.processes.some(p => p.id === 'playwright')).toBe(false)
     expect(entry(resolved, 'processes', 'vitest')).toMatchObject({ layer: 'built-in' })
@@ -202,71 +210,11 @@ describe('the four layers', () => {
     expect(none.pack.id).toBe('')
   })
 
-  test('(3) a repo config naming a command to run is refused whole', async () => {
-    const repo = `{ "locks": { "warn": ["package-lock.json"] }, "preflight": { "steps": [{ "argv": ["npm", "test"] }] } }`
-    const resolved = resolvePack(input({ repo }))
-    expect(row(resolved, 'repo').state).toBe('refused')
-    expect(row(resolved, 'repo').reasons.join('\n')).toMatch(/"preflight": a repo config can't name commands/)
-    // Nothing from the file applies, not even its valid lock.
-    expect(resolved.pack.locks.some(l => l.glob === 'package-lock.json')).toBe(false)
-    const bin = resolvePack(input({ repo: `{ "budgets": { "bundle": { "limit": 1, "bin": ["sh"] } } }` }))
-    expect(row(bin, 'repo').reasons.join('\n')).toMatch(/"budgets.bundle.bin"/)
-  })
-
-  test('(4) a repo config may not switch off an approval from the user pack', async () => {
-    const resolved = resolvePack(withUser({ repo: `{ "disable": ["staging-writes"] }` }))
-    expect(row(resolved, 'repo').state).toBe('refused')
-    expect(row(resolved, 'repo').reasons[0]).toMatch(/can't switch off/)
-    expect(entry(resolved, 'approvals', 'staging-writes')?.removedBy).toBeUndefined()
-    expect(resolved.pack.environments.find(e => e.id === 'staging')?.approvals?.map(a => a.id)).toEqual(['staging-writes'])
-  })
-
-  test('(5) a repo path outside the root is refused, by its text or by where it really leads', async () => {
-    const up = resolvePack(input({ repo: `{ "locks": { "exclusive": ["../other/**"] } }` }))
-    expect(row(up, 'repo').reasons[0]).toMatch(/leaves the repo/)
-    const absolute = resolvePack(input({ repo: `{ "plans": { "archiveDir": "/tmp/archive" } }` }))
-    expect(row(absolute, 'repo').reasons[0]).toMatch(/must be relative/)
-    const linked = resolvePack(input({ repo: `{ "plans": { "globs": ["notes/*.md"] } }`, realPaths: { notes: '/elsewhere/notes' } }))
-    expect(row(linked, 'repo').reasons[0]).toMatch(/"notes" leads outside the repo/)
-    const inside = resolvePack(input({ repo: `{ "plans": { "globs": ["notes/*.md"] } }`, realPaths: { notes: '/work/shop/notes' } }))
-    expect(row(inside, 'repo').state).toBe('loaded')
-    expect(inside.pack.plans?.globs).toEqual(['notes/*.md'])
-  })
-
-  test('(6) a regex in a repo config is refused: as a key, a host or a glob', async () => {
-    for (const repo of [
-      `{ "envHosts": { "prod": ["^db\\\\..*$"] } }`,
-      `{ "locks": { "warn": ["src/(a|b)/**"] } }`,
-      `{ "plans": { "globs": ["*.md"], "checkpoint": "CP\\\\d+" } }`,
-    ]) {
-      const resolved = resolvePack(input({ repo }))
-      expect({ repo, state: row(resolved, 'repo').state }).toEqual({ repo, state: 'refused' })
-      expect(row(resolved, 'repo').reasons.join('\n')).toMatch(/regex/)
-    }
-  })
-
-  test('(7) a repo config may name a built-in, not a user pack', async () => {
-    const resolved = resolvePack(input({ repo: `{ "pack": "acme-shop" }` }))
-    expect(row(resolved, 'repo').reasons[0]).toMatch(/"pack" may name a built-in only/)
-    const named = resolvePack(input({ markers: { 'package.json': null }, repo: `{ "pack": "node-vite" }` }))
-    expect(row(named, 'built-in')).toMatchObject({ source: 'node-vite', note: 'named by .ccinformer.jsonc' })
-  })
-
-  test('a repo config adds locks and hosts and tightens a budget, never loosens one', async () => {
-    const tight = resolvePack(withUser({ repo: `{ "budgets": { "bundle": { "limit": 400000 } }, "envHosts": { "prod": ["db.example.test"] }, "locks": { "warn": ["package-lock.json"] } }` }))
-    expect(row(tight, 'repo').state).toBe('loaded')
-    expect(tight.pack.budgets.find(b => b.id === 'bundle')?.limit).toBe(400000)
-    expect(entry(tight, 'budgets', 'bundle')).toMatchObject({ layer: 'user', changedBy: ['repo'] })
-    expect(entry(tight, 'locks', 'repo:package-lock.json')).toMatchObject({ layer: 'repo' })
-    expect(hostTone(tight.pack, 'db.example.test')).toBe('prod')
-    const loose = resolvePack(withUser({ repo: `{ "budgets": { "bundle": { "limit": 600000 } } }` }))
-    expect(row(loose, 'repo').reasons[0]).toMatch(/looser/)
-    const local = resolvePack(input({ local: `{ "envHosts": { "local": ["dev.test"] } }` }))
-    expect(row(local, 'local').reasons[0]).toMatch(/shared or prod environments only/)
-  })
-
   test('a host matching two tones takes the stricter', async () => {
-    const resolved = resolvePack(withUser({ repo: `{ "envHosts": { "prod": ["*.example.test"] } }` }))
+    const prod = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { "remote": ["github.com/acme/*"] }, "extends": ["node-vite"],
+      "environments": [{ "id": "staging", "label": "staging", "tone": "shared", "hostPatterns": ["*.staging.example.test"] },
+        { "id": "prod", "label": "prod", "tone": "prod", "hostPatterns": ["*.example.test"] }] }`
+    const resolved = resolvePack(input({ userPacks: [{ path: 'shop.pack.jsonc', text: prod }] }))
     expect(hostTone(resolved.pack, 'api.staging.example.test')).toBe('prod')
     expect(hostTone(resolved.pack, 'localhost')).toBe('local')
     expect(hostTone(resolved.pack, 'elsewhere.test')).toBeNull()
@@ -293,24 +241,20 @@ describe('the four layers', () => {
     expect(entry(resolved, 'checks', 'i18n')?.needsTrust).toBe(false)
   })
 
-  test('a yes holds for the config files it was given for, and goes stale when they change', async () => {
-    const before = await configHash(['{ "locks": {} }', null])
-    expect(before).toMatch(/^[0-9a-f]{64}$/)
-    expect(await configHash(['{ "locks": {} }', null])).toBe(before)
-    expect(trustOf(false, { hash: before, at: 5 }, before)).toEqual({ isTrusted: true, by: 'you', at: 5, isStale: false })
-    const after = await configHash(['{ "locks": { "warn": ["x"] } }', null])
-    expect(trustOf(false, { hash: before, at: 5 }, after)).toEqual({ isTrusted: false, by: '', at: 0, isStale: true })
+  test('a yes holds until it is withdrawn, also one stored by an older version with a config hash', async () => {
+    expect(trustOf(false, { at: 5 })).toEqual({ isTrusted: true, by: 'you', at: 5 })
+    expect(isStoredTrust({ at: 5 })).toBe(true)
+    expect(isStoredTrust({ hash: 'of-files-no-longer-read', at: 5 })).toBe(true)
+    expect(isStoredTrust({ hash: 'x' })).toBe(false)
+    expect(trustOf(false, { hash: 'of-files-no-longer-read', at: 5 } as never)).toEqual({ isTrusted: true, by: 'you', at: 5 })
+    expect(trustOf(false, null)).toEqual({ isTrusted: false, by: '', at: 0 })
+    expect(trustOf(true, null)).toEqual({ isTrusted: true, by: 'user pack', at: 0 })
   })
 
   test('(9) a broken file adds nothing and says why; the rest still resolves', async () => {
-    const resolved = resolvePack(input({ repo: '{ "locks": ', userPacks: [{ path: 'bad.pack.jsonc', text: '{ "schema": 2 }' }] }))
-    expect(row(resolved, 'repo')).toMatchObject({ state: 'broken' })
+    const resolved = resolvePack(input({ userPacks: [{ path: 'broken.pack.jsonc', text: '{ "schema": ' }, { path: 'bad.pack.jsonc', text: '{ "schema": 2 }' }] }))
+    expect(resolved.report.layers.find(l => l.source === 'broken.pack.jsonc')).toMatchObject({ state: 'broken' })
     expect(resolved.report.layers.find(l => l.source === 'bad.pack.jsonc')).toMatchObject({ state: 'refused', reasons: ['needs "schema": 1', 'needs an "id"', 'needs a "version" (a string)'] })
     expect(resolved.pack.id).toBe('node-vite')
-  })
-
-  test('a local config git doesn’t ignore still applies, with a warning', async () => {
-    const resolved = resolvePack(input({ local: `{ "locks": { "warn": ["notes.md"] } }`, isLocalIgnored: false }))
-    expect(row(resolved, 'local')).toMatchObject({ state: 'loaded', note: 'not ignored by git: it may get committed' })
   })
 })

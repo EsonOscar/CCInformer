@@ -2,7 +2,7 @@ import type { PackLayer } from '../../types'
 
 // Schema 1 of a pack: data only. The host loads no code from outside the plugin, so every behaviour is an analyzer
 // of the mod's own that a pack names by id. Built-in packs ship in hooks/packs/; user packs live in
-// ~/.claude/ccinformer/packs/*.pack.jsonc; a repo adds values through .ccinformer.jsonc (RepoConfig below).
+// ~/.claude/ccinformer/packs/*.pack.jsonc. Packs are personal: nothing is read from inside a repo.
 
 export type PackManifest = {
   schema: 1
@@ -18,15 +18,14 @@ export type PackManifest = {
   environments?: EnvRule[]
   checks?: CheckSpec[]
   budgets?: BudgetSpec[]
-  locks?: LockSpec[]
   noise?: NoiseRule[]
-  signals?: SignalSpec[]
   plans?: PlanSpec
-  preflight?: PreflightSpec
-  claudeMd?: ClaudeMdRule[]
-  // Ids from the layers below that this pack switches off.
+  // Ids from the built-in below that this pack switches off.
   disable?: string[]
 }
+
+// Every top-level key a pack may hold: any other key refuses the pack, so a typo or a removed field says so.
+export const PACK_KEYS = ['schema', 'id', 'version', 'match', 'detect', 'extends', 'processes', 'environments', 'checks', 'budgets', 'noise', 'plans', 'disable'] as const
 
 export type DetectRule = { file: string; contains?: string; weight: number; required?: boolean }
 
@@ -63,14 +62,9 @@ export type AnalyzerId =
   | 'eslint-json'
   | 'sarif'
   | 'problem-matcher'
-  | 'ruff-json'
-  | 'mypy-text'
-  | 'msbuild'
-  | 'alembic-check'
-  | 'pybabel-po'
   | 'tscn-connections'
   | 'tscn-nodepaths'
-export type CheckCost = 'edit' | 'batch' | 'turn' | 'demand'
+export type CheckCost = 'edit' | 'turn' | 'demand'
 // A sarif or problem-matcher check runs the command its pack names (`bin`, the whole argv) once a turn ends; these
 // placeholders in it are replaced by the engine. `{files}`, a list item on its own, at most once: the run's files
 // (repo-relative, forward slashes, at most 40 a run); without it the command runs once over the whole project.
@@ -119,49 +113,24 @@ export type BudgetSpec = {
   cost: 'cheap' | 'demand'
 }
 
-export type LockMode = 'exclusive' | 'warn'
-export type LockSpec = { id: string; glob: string; mode: LockMode; reason: string; commandRegex?: string; enforce?: boolean }
 export type NoiseRule = { id: string; glob: string; kind: 'generated' | 'editor-rewrite'; normalize?: string[] }
 
-export type SignalSpec = {
-  id: string
-  kind: 'gh-runs' | 'gh-reviews' | 'sentry-issues' | 'sentry-vitals' | 'telemetry-file'
-  jobs?: Record<string, { kind: 'deploy' | 'migration' | 'ci' | 'smoke'; env?: string }>
-  sentry?: { baseUrl: string; org: string; project: string }
-  path?: string
-}
-
-// The patterns are optional here: a repo names only where its plans are, and the plan reader brings defaults.
+// The patterns are optional here: a pack names only where its plans are, and the plan reader brings defaults.
 export type PlanSpec = { globs: string[]; archiveDir?: string; checkpoint?: string; done?: string[]; prRef?: string; results?: { glob: string; index?: string } }
-export type PreflightSpec = { steps: ({ check: string } | { argv: string[] })[]; cacheBy: 'HEAD'; timeoutMs?: number; onPush?: 'warn' | 'ask' | 'off' }
-export type ClaudeMdRule = { id: string; lineRegex: string; as: 'note' | 'value'; key?: string }
-
-// What a repo may set in .ccinformer.jsonc (and .ccinformer.local.jsonc): values only, which add or tighten.
-export type RepoConfig = {
-  pack?: string
-  budgets?: Record<string, { limit: number }>
-  locks?: { exclusive?: string[]; warn?: string[] }
-  envHosts?: { shared?: string[]; prod?: string[] }
-  plans?: { globs?: string[]; archiveDir?: string }
-}
 
 export type Layer = PackLayer
 
 // The sections whose entries merge by id.
-export const LIST_SECTIONS = ['processes', 'environments', 'checks', 'budgets', 'locks', 'noise', 'signals', 'claudeMd'] as const
+export const LIST_SECTIONS = ['processes', 'environments', 'checks', 'budgets', 'noise'] as const
 export type ListSection = (typeof LIST_SECTIONS)[number]
 
-// The pack a repo ends up with: every layer merged, and which layer set each entry.
+// The pack a repo ends up with: the built-in and the user pack merged.
 export type ResolvedPack = {
   id: string
   processes: ProcessMatcher[]
   environments: EnvRule[]
   checks: CheckSpec[]
   budgets: BudgetSpec[]
-  locks: LockSpec[]
   noise: NoiseRule[]
-  signals: SignalSpec[]
-  claudeMd: ClaudeMdRule[]
   plans?: PlanSpec
-  preflight?: PreflightSpec
 }

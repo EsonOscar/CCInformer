@@ -79,12 +79,12 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
   const inlineFindings = async (check: CheckSpec, root: string, file: string, text: string) =>
     check.analyzer === 'size-lines' ? sizeFindings(check, file, text, await suppressionsOf(check, root)) : regexFindings(check, file, text, await suppressionsOf(check, root))
   // Whether the repo's own tools may run. The first check that needs them asks once per repo, ever: after any answer,
-  // or a yes that lapsed when the config changed, only the person allows them (a in Debug › Pack).
+  // only the person allows them (a in Debug › Pack).
   const mayRunRepoTools = async () => {
     const report = deps.report()
     if (report?.trust.isTrusted) return true
     if (!deps.may('ask.repoTrust')) return false
-    if (isTrustAsked || !report || report.trust.isStale) return false
+    if (isTrustAsked || !report) return false
     isTrustAsked = true
     if (await wasTrustAsked($, report)) return false
     if (!(await askTrust($, report, deps.may('claude.turnNotes')))) return false // may: ask.repoTrust

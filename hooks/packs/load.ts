@@ -4,8 +4,8 @@ import type { PackReport } from '../../types'
 import type { Exec } from '../collect'
 import { cleanRemote, markerFiles } from './detect'
 import { BUILTINS } from './node-vite'
-import { LOCAL_FILE, REPO_FILE, pathsToResolve, resolvePack } from './resolve'
-import { configHash, isStoredTrust } from './trust'
+import { resolvePack } from './resolve'
+import { isStoredTrust } from './trust'
 import type { ResolvedPack } from './types'
 
 const STORE_TRUST = 'trust:'
@@ -34,7 +34,7 @@ async function repoFacts(exec: Exec, cwd: string): Promise<{ root: string; remot
   return { root: top, remote: remote?.exitCode === 0 ? cleanRemote(remote.stdout) : '', repoKey: gitDir.replace(/[^a-z0-9]+/gi, '-') }
 }
 
-// Reads every layer and resolves the pack. Nothing here throws: a missing or broken file is a row in the report.
+// Reads both layers and resolves the pack. Nothing here throws: a missing or broken file is a row in the report.
 export async function loadPack(
   $: EngineInterface,
   exec: Exec,
@@ -51,14 +51,6 @@ export async function loadPack(
     const text = await readText($, `${dir}/${f.name}`)
     if (text !== null) userPacks.push({ path: `${dir}/${f.name}`, text })
   }
-  const repo = await readText($, `${root}/${REPO_FILE}`)
-  const local = await readText($, `${root}/${LOCAL_FILE}`)
-  const ignored = local === null ? null : await exec(['git', 'check-ignore', '-q', `${root}/${LOCAL_FILE}`]).catch(() => null)
-  const realPaths: Record<string, string | null> = {}
-  for (const path of pathsToResolve({ repo, local })) {
-    const stat = await $.fs.stat(`${root}/${path}`, { resolve: true }).catch(() => null)
-    realPaths[path] = stat ? (stat.realPath ?? `${root}/${path}`) : null
-  }
   const stored = await $.store.get(STORE_TRUST + repoKey)
   return resolvePack({
     root,
@@ -66,19 +58,14 @@ export async function loadPack(
     repoKey,
     markers,
     userPacks,
-    repo,
-    local,
-    isLocalIgnored: ignored?.exitCode === 0,
-    realPaths,
     storedTrust: isStoredTrust(stored) ? stored : null,
-    hash: await configHash([repo, local]),
     now: await $.clock.now(),
   })
 }
 
 // When any file the pack comes from last changed, as one string: a different string means read it all again.
 export async function packSignature($: EngineInterface, root: string, configDir: string): Promise<string> {
-  const files = [...markerFiles(BUILTINS), REPO_FILE, LOCAL_FILE].map(f => `${root}/${f}`)
+  const files = markerFiles(BUILTINS).map(f => `${root}/${f}`)
   const times: string[] = []
   for (const path of files) times.push(String((await $.fs.stat(path).catch(() => null))?.mtimeMs ?? '-'))
   const listed = await $.fs.list(userPackDir(configDir)).catch(() => [])
@@ -90,7 +77,7 @@ const ALLOW = 'Allow'
 const DENY = "Don't allow"
 
 // Asks whether the repo's own tools (linters, builds, the checks that load its config) may run, and keeps a yes for
-// these exact config files. Resolves whether it was given; a dismissal is a no. Either way the repo is marked as
+// this repo until the person withdraws it. Resolves whether it was given; a dismissal is a no. Either way the repo is marked as
 // asked, so the checks never ask about it on their own again. `isToldClaude`: Debug › Settings lets what the tools find
 // reach Claude, which the question then says.
 export async function askTrust($: EngineInterface, report: PackReport, isToldClaude: boolean): Promise<boolean> {
@@ -103,7 +90,7 @@ export async function askTrust($: EngineInterface, report: PackReport, isToldCla
   // Its callers decide whether it may be asked: the person asked, or Ask about repo trust allows it.
   const answer = await $.ui.ask(question, { options: [ALLOW, DENY], header: 'Repo trust' }).catch(() => '') // relay
   if (answer !== ALLOW) return false
-  await $.store.set(STORE_TRUST + report.repoKey, { hash: report.hash, at: await $.clock.now() })
+  await $.store.set(STORE_TRUST + report.repoKey, { at: await $.clock.now() })
   return true
 }
 

@@ -168,7 +168,7 @@ export type MemoryReading = { freeMb: number; totalMb: number; at: number; isLow
 
 // The pack this repo resolved to, as Debug › Pack shows it: each layer's file and how it went, every value with the
 // layer that set it, and whether the repo's own tools may run.
-export type PackLayer = 'built-in' | 'user' | 'repo' | 'local'
+export type PackLayer = 'built-in' | 'user'
 export type PackLayerRow = {
   layer: PackLayer
   source: string
@@ -185,14 +185,12 @@ export type PackEntryRow = {
   removedBy?: PackLayer
   needsTrust: boolean
 }
-export type PackTrust = { isTrusted: boolean; by: 'user pack' | 'you' | ''; at: number; isStale: boolean }
+export type PackTrust = { isTrusted: boolean; by: 'user pack' | 'you' | ''; at: number }
 export type PackReport = {
   id: string
   root: string
   remote: string
   repoKey: string
-  // SHA-256 of the repo's config files: a yes to trust holds for these exact files.
-  hash: string
   layers: PackLayerRow[]
   entries: PackEntryRow[]
   trust: PackTrust
