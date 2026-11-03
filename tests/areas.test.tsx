@@ -38,6 +38,8 @@ const PANE = {
 } as const
 
 const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
+// A test that draws every area on two surfaces runs past the default 5 s of real time on a busy machine.
+const TWO_SURFACES = { timeoutMs: 20_000 }
 
 // A repository on develop with one unstaged file, as git answers for it; gh isn't set up.
 const ANSWERS: [RegExp, string][] = [
@@ -80,52 +82,62 @@ const engine = (on: Parameters<TestBody>[1], store: Record<string, unknown> = {}
   return { opened, closed }
 }
 
-test('each view sits under its area, and Timeline is not drawn until it has a view', async ($, on) => {
+test('each view sits under its area, and Timeline is not drawn until it has a view, on the terminal and the desktop', TWO_SURFACES, async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await $.tool.call({ tool: 'Bash', command: 'git status' })
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  expect(await ui.find({ key: 'area-timeline' })).toBeUndefined()
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    expect(await ui.find({ key: 'area-timeline' })).toBeUndefined()
 
-  await ui.press({ key: 'area-now' })
-  expect(await ui.find({ type: 'Text', text: /STARTED HERE/ })).toBeDefined()
-  await ui.press({ key: 'view-sessions' })
-  expect(await ui.find({ type: 'Text', text: /this session/ })).toBeDefined()
+    await ui.press({ key: 'area-now' })
+    expect(await ui.find({ type: 'Text', text: /STARTED HERE/ })).toBeDefined()
+    await ui.press({ key: 'view-sessions' })
+    expect(await ui.find({ type: 'Text', text: /this session/ })).toBeDefined()
 
-  await ui.press({ key: 'area-code' })
-  expect(await ui.find({ type: 'Text', text: /Unstaged · 1/ })).toBeDefined()
+    await ui.press({ key: 'area-code' })
+    expect(await ui.find({ type: 'Text', text: /Unstaged · 1/ })).toBeDefined()
 
-  await ui.press({ key: 'area-work' })
-  expect(await ui.find({ type: 'Text', text: /No workflow has run/ })).toBeDefined()
-  await ui.press({ key: 'view-stats' })
-  expect(await ui.find({ type: 'Text', text: /No finished workflow runs/ })).toBeDefined()
+    await ui.press({ key: 'area-work' })
+    expect(await ui.find({ type: 'Text', text: /No workflow has run/ })).toBeDefined()
+    await ui.press({ key: 'view-stats' })
+    expect(await ui.find({ type: 'Text', text: /No finished workflow runs/ })).toBeDefined()
 
-  await ui.press({ key: 'area-debug' })
-  expect(await ui.find({ key: 'view-tools', text: /Calls/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /git status/ })).toBeDefined()
-  await ui.press({ key: 'view-requests' })
-  await ui.press({ key: 'view-context' })
-  expect(await ui.find({ key: 'view-context' })).toBeDefined()
-  await ui.unmount()
+    await ui.press({ key: 'area-debug' })
+    expect(await ui.find({ key: 'view-tools', text: /Calls/ })).toBeDefined()
+    expect(await ui.find({ type: 'Text', text: /git status/ })).toBeDefined()
+    await ui.press({ key: 'view-requests' })
+    await ui.press({ key: 'view-context' })
+    expect(await ui.find({ key: 'view-context' })).toBeDefined()
+    // The next surface starts where this one left off: back on the first views.
+    await ui.press({ key: 'view-tools' })
+    await ui.press({ key: 'area-work' })
+    await ui.press({ key: 'view-runs' })
+    await ui.press({ key: 'area-now' })
+    await ui.press({ key: 'view-env' })
+    await ui.unmount()
+  }
 })
 
-test('every hotkey drawn in an area is in its key map, and none is drawn twice', async ($, on) => {
+test('every hotkey drawn in an area is in its key map, and none is drawn twice, on the terminal and the desktop', TWO_SURFACES, async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  for (const area of AREAS.filter(isBuilt)) {
-    await ui.press({ key: 'area-' + area.id })
-    for (const view of area.views.length > 1 ? area.views : [null]) {
-      if (view) await ui.press({ key: 'view-' + view.id })
-      const drawn = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter((h): h is string => typeof h === 'string')
-      const where = area.id + (view ? '/' + view.id : '')
-      expect({ where, twice: drawn.filter((h, i) => drawn.indexOf(h) !== i) }).toEqual({ where, twice: [] })
-      expect({ where, unmapped: drawn.filter(h => !keysOf(area).includes(h)) }).toEqual({ where, unmapped: [] })
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await $.ui.mount({ ...PANE, surface })
+    for (const area of AREAS.filter(isBuilt)) {
+      await ui.press({ key: 'area-' + area.id })
+      for (const view of area.views.length > 1 ? area.views : [null]) {
+        if (view) await ui.press({ key: 'view-' + view.id })
+        const drawn = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter((h): h is string => typeof h === 'string')
+        const where = surface + ' ' + area.id + (view ? '/' + view.id : '')
+        expect({ where, twice: drawn.filter((h, i) => drawn.indexOf(h) !== i) }).toEqual({ where, twice: [] })
+        expect({ where, unmapped: drawn.filter(h => !keysOf(area).includes(h)) }).toEqual({ where, unmapped: [] })
+      }
     }
+    await ui.unmount()
   }
-  await ui.unmount()
 })
 
 test('/ccinformer and /side open an area by its name or an old tab name, and an argument never closes the pane', async ($, on) => {

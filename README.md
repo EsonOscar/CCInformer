@@ -1,6 +1,6 @@
 # CCInformer
 
-A Claude Code mod: a pane docked on the right of the terminal, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings.
+A Claude Code mod: a pane docked on the right of the terminal, or of a session in the desktop app's Code tab, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings.
 
 - **Now** (`1`)
   - **Env** (`e`): the processes this session started, which environment each points at and how long it has run; the processes your pack knows on this machine, with their memory; and free memory, with a toast when it runs low. Command lines and env values are never kept.
@@ -66,6 +66,7 @@ Answer `y` to add the marketplace, then pick the user scope. From a shell: `clau
 
 - `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/ccinformer settings` opens the switches. `/side` is a short alias.
 - Ctrl+X Tab gives the pane the keyboard: `1`-`5` switch areas, the letters shown switch views and run actions, `r` refreshes, Esc gives the keyboard back. Clicking works without it.
+- In the desktop app `/ccinformer` works the same, and a click in the pane gives it the keyboard. There the pane scrolls as one page: the areas sit at its top and the usage line at its bottom, rather than staying put as they do in the terminal.
 
 ## Skills
 

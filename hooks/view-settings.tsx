@@ -57,9 +57,12 @@ export const SettingsView = (k: Kit, choices: PermissionChoices, nav: SettingsNa
                       </Text>
                     </Button>,
                   )}
-                  <Text dimColor wrap="wrap">
-                    {'  ' + d.description}
-                  </Text>
+                  {/* Indented by padding, not spaces, so a wrapped line keeps the indent. */}
+                  <Box paddingLeft={2}>
+                    <Text dimColor wrap="wrap">
+                      {d.description}
+                    </Text>
+                  </Box>
                 </Box>
               )
             })}

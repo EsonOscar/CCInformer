@@ -178,13 +178,14 @@ test('Code > Git shows the mode, i switches it, and a mode another session set s
   await env.clock.settle()
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /on a failed check: Claude looks into it \(read-only\)/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'i passive' })).toBeDefined()
+  // The button draws its key (i) itself, so its label is the mode it switches to, alone.
+  expect(await ui.find({ key: 'ci-mode', text: 'passive' })).toBeDefined()
 
   await ui.press({ key: 'ci-mode' })
   await env.clock.settle()
   expect(env.toasts).toContain('CI passive here: a failed check gives a toast')
   expect(await ui.find({ type: 'Text', text: /on a failed check: a toast/ })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'i active' })).toBeDefined()
+  expect(await ui.find({ key: 'ci-mode', text: 'active' })).toBeDefined()
   await ui.unmount()
 })
 

@@ -155,6 +155,9 @@ let lastWriteAt = 0
 // The pane's own scroll position, kept here as well as in state: scroll events that arrive together each move it from
 // here, so none undoes another.
 let paneTop = 0
+// The surface the pane was last drawn for. A scroll event names none, so the scroll hook reads it here: only the
+// terminal's pane scrolls its own content; any other surface scrolls the pane itself.
+let paneSurface = 'terminal'
 
 async function setPaneTop($: EngineInterface, top: number): Promise<void> {
   if (top === paneTop) return
@@ -679,11 +682,11 @@ export const register: Register = on => {
     void live?.wake()
     return next(e)
   }).catch(($, e, next) => next(e))
-  // The pane scrolls its own content and keeps Claude Code's window where it is, so the footer drawn over the window's
-  // bottom rows never moves. Other sites scroll as usual.
+  // In the terminal the pane scrolls its own content and keeps Claude Code's window where it is, so the footer drawn over
+  // the window's bottom rows never moves. Other sites, and the pane on any other surface, scroll as usual.
   on('ui.scroll', async ($, e, next) => {
     void live?.wake()
-    if (e.component !== 'Pane' || e.requestId !== PANE) return next(e)
+    if (e.component !== 'Pane' || e.requestId !== PANE || paneSurface !== 'terminal') return next(e)
     const top = scrolledTop(paneTop, e.by, e.contentRows, e.bodyRows)
     // A move without whole row counts is left to Claude Code, rather than guessed at.
     if (!Number.isFinite(top)) return next(e)
@@ -903,7 +906,9 @@ export const register: Register = on => {
       tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
+      surface: String(e.surface),
     }
+    paneSurface = data.surface
     return PaneView(k, paneTitle(TITLE, $.plugin.root), data, {
       showArea: a => void live?.showArea({ area: a }),
       pickView: view => {

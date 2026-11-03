@@ -46,7 +46,7 @@ const Session = (k: Kit, b: SessionBeat, selfId: string, now: number, showFolder
           <Text color={isSelf ? ACCENT : 'text'} weight={isSelf ? 'semibold' : 'regular'}>
             {name}
           </Text>
-          <Box flexShrink={1}>
+          <Box flexShrink={1} minWidth={0}>
             <Text dimColor wrap="truncate-end">
               {facts}
             </Text>

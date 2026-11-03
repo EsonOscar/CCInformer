@@ -23,7 +23,7 @@ export const EnvBand = (k: Kit, tasks: EnvTask[], dismiss: (id: string) => void)
       <Text color={color} weight="bold">
         {'⚠ ' + top.envLabel.toUpperCase()}
       </Text>
-      <Box flexShrink={1}>
+      <Box flexShrink={1} minWidth={0}>
         <Text wrap="truncate-end">{top.label || 'a process'}</Text>
       </Box>
       <Text dimColor>{top.tone === 'prod' ? 'targets production' : 'targets a shared environment'}</Text>

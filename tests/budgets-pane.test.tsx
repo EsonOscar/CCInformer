@@ -182,6 +182,8 @@ test('with nothing built it says so; m builds, then reads', async ($, on) => {
 
   expect(await ui.find({ type: 'Text', text: /dist\/index\.html isn't there: build first \(m\)/ })).toBeDefined()
   expect(calls.report).toBeUndefined()
+  // The button draws its key (m) itself, so its label doesn't repeat it.
+  expect(await ui.find({ key: 'budgets-measure', text: 'measure now (builds first)' })).toBeDefined()
 
   await ui.press({ key: 'budgets-measure' })
   await clock.settle()

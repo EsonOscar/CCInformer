@@ -54,14 +54,16 @@ const Tools = (k: Kit, rows: ToolRow[], now: number, label: (id: string) => stri
                 {r.tool}
               </Text>
             </Box>
-            <Box flexGrow={1} flexShrink={1}>
+            <Box flexGrow={1} flexShrink={1} minWidth={0}>
               <Text dimColor wrap="truncate-end">
                 {(r.agent ? '↳ ' + label(r.agent) + ' · ' : '') + r.summary}
               </Text>
             </Box>
           </Box>,
           <Box flexDirection="row" columnGap={1}>
-            <Text color={r.outcome === 'running' ? ACCENT : 'inactive'}>{duration(ms)}</Text>
+            <Text color={r.outcome === 'running' ? ACCENT : 'inactive'} mono>
+              {duration(ms)}
+            </Text>
             <Box width={BAR_WIDTH}>
               <Text color={ACCENT} dimColor>
                 {bar(ms, slowest, BAR_WIDTH)}

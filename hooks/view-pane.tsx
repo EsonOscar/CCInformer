@@ -70,6 +70,9 @@ export type PaneData = {
   scrollTop: number
   // How far the pane has scrolled its own content (see scrolledTop).
   contentTop: number
+  // The surface this drawing is for (`e.surface`): the terminal gets the fixed header and footer; any other surface (the
+  // desktop app, VS Code, mobile) a plain column that it scrolls itself.
+  surface: string
 }
 
 // The footer's rows: a line, then the usage. The header's: the title, the areas and a line, then, for an area with
@@ -146,7 +149,10 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const hasChecks = !!d.pack?.entries.some(e => e.section === 'checks' && !e.removedBy)
   const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
-  const width = d.width - 2
+  // The body less its padding: a cell each side, and off the terminal one more on the right, under the surface's own
+  // scrollbar.
+  const isTerminal = d.surface === 'terminal'
+  const width = d.width - (isTerminal ? 2 : 3)
   const gitNav = { showAll: d.showAllFiles, toggleAll: nav.toggleAllFiles, diff: d.diff, openDiff: nav.openDiff, fetch: nav.fetch, openDiffPane: nav.openDiffPane, ciActive: d.ciActive, toggleCiMode: nav.toggleCiMode, isHandoffOn: isAllowed(d.permissions, 'claude.ciHandoff'), isCiToastOn: isAllowed(d.permissions, 'notify.ciToast') }
   // Work keeps one selected row: a run, or a plan (marked by its prefix), which Runs leaves alone.
   const isPlanSelected = d.selected.work.startsWith(PLAN_SELECTED)
@@ -155,23 +161,65 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions }
   const hasViewBar = def.views.length > 1
   const headerRows = hasViewBar ? HEADER_ROWS + VIEW_BAR_ROWS : HEADER_ROWS
+  // The shown view, the same on every surface.
+  const view = (
+    <>
+      {d.area === 'now' && d.nowView === 'env' && EnvView(k, d.tasks, d.processes, d.memory, d.now)}
+      {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
+      {d.area === 'code' && d.codeView === 'git' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
+      {d.area === 'code' && d.codeView === 'rules' && RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)}
+      {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
+      {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
+      {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
+      {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now, planNav)}
+      {d.area === 'debug' && d.debugView !== 'pack' && d.debugView !== 'settings' && DebugPanel(k, d.debugView, debugData, d.now, width)}
+      {d.area === 'debug' && d.debugView === 'settings' && SettingsView(k, d.permissions, settingsNav)}
+      {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes') })}
+    </>
+  )
+  // A full-width line in a box one row high that hides what doesn't fit: off the terminal a ─ is drawn wider than a
+  // cell, and the line would wrap, or with a cut mark if truncated; the box clips it at the edge instead.
+  const divider = (
+    <Box height={1} overflow="hidden">
+      <Text color={ACCENT} dimColor>
+        {'─'.repeat(Math.max(1, width))}
+      </Text>
+    </Box>
+  )
+  const usage = usageLine(d.usage ?? { contextPercent: null, fiveHour: null, sevenDay: null, fiveHourResetsAt: null, sevenDayResetsAt: null }, d.now)
+
+  // Off the terminal (the desktop app, VS Code, mobile) the pane is one plain column the surface scrolls itself: nothing
+  // laid over anything, as a web page puts a layer drawn on top above its other elements (it caught the area bar's
+  // clicks), and the surface scrolls the pane on its own, which a fixed header can't follow without jumping. The surface
+  // draws the pane's name, so the version moves to the area bar; at least the pane's height, so the footer sits at the
+  // bottom of a short view.
+  if (!isTerminal)
+    return (
+      <Box key="pane" flexDirection="column" paddingLeft={1} paddingRight={2} minHeight={d.rows}>
+        <Box key="header" flexDirection="column">
+          {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh, d.version)}
+          {divider}
+          {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts, true)}
+        </Box>
+        <Box key="content" flexDirection="column" flexGrow={1}>
+          {view}
+        </Box>
+        <Box key="footer" flexDirection="column">
+          {divider}
+          <Text dimColor mono wrap="truncate-end">
+            {usage}
+          </Text>
+        </Box>
+      </Box>
+    )
+
   return (
     // The padding leaves room for the header above the content and the footer below it, so a long view scrolls clear
     // of both.
     <Box flexDirection="column" paddingX={1} paddingBottom={FOOTER_ROWS} minHeight={d.rows}>
       {/* The content, moved up by the rows the pane has scrolled itself; the header and footer stay where they are. */}
       <Box key="content" flexDirection="column" paddingTop={headerRows} marginTop={d.contentTop ? -d.contentTop : 0}>
-        {d.area === 'now' && d.nowView === 'env' && EnvView(k, d.tasks, d.processes, d.memory, d.now)}
-        {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
-        {d.area === 'code' && d.codeView === 'git' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
-        {d.area === 'code' && d.codeView === 'rules' && RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)}
-        {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
-        {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
-        {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
-        {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now, planNav)}
-        {d.area === 'debug' && d.debugView !== 'pack' && d.debugView !== 'settings' && DebugPanel(k, d.debugView, debugData, d.now, width)}
-        {d.area === 'debug' && d.debugView === 'settings' && SettingsView(k, d.permissions, settingsNav)}
-        {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes') })}
+        {view}
       </Box>
       {/* The header, laid over the tree at the window's top rows, as the footer is at its bottom: the pane scrolls its
           own content, so neither moves, and the area and view hotkeys stay in view. A layer of blank rows is drawn first
@@ -192,19 +240,15 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
           {d.version ? <Text dimColor>{`v${d.version}`}</Text> : null}
         </Box>
         {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh)}
-        <Text color={ACCENT} dimColor>
-          {'─'.repeat(Math.max(1, width))}
-        </Text>
+        {divider}
         {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts)}
       </Box>
       {/* The footer, in every area, laid over the tree at the window's bottom rows. Its rows run the full width,
           covering what's beneath. */}
       <Box key="footer" position="absolute" top={Math.max(0, d.scrollTop + d.rows - FOOTER_ROWS)} left={1} width={width} flexDirection="column">
-        <Text color={ACCENT} dimColor>
-          {'─'.repeat(Math.max(1, width))}
-        </Text>
-        <Text dimColor wrap="truncate-end">
-          {usageLine(d.usage ?? { contextPercent: null, fiveHour: null, sevenDay: null, fiveHourResetsAt: null, sevenDayResetsAt: null }, d.now).padEnd(width)}
+        {divider}
+        <Text dimColor mono wrap="truncate-end">
+          {usage.padEnd(width)}
         </Text>
       </Box>
     </Box>
