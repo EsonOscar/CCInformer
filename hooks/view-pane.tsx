@@ -158,22 +158,21 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions }
   const hasViewBar = def.views.length > 1
   const badges = badgesOf(d)
-  // The shown view, the same on every surface.
-  const view = (
-    <>
-      {d.area === 'now' && d.nowView === 'env' && EnvView(k, d.tasks, d.processes, d.memory, d.now)}
-      {d.area === 'now' && d.nowView === 'sessions' && SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)}
-      {d.area === 'code' && d.codeView === 'git' && GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)}
-      {d.area === 'code' && d.codeView === 'rules' && RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)}
-      {d.area === 'code' && d.codeView === 'budgets' && BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)}
-      {d.area === 'work' && d.workView === 'runs' && AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)}
-      {d.area === 'work' && d.workView === 'stats' && StatsView(k, d.stats, d.statsName, width, nav.pickStats)}
-      {d.area === 'work' && d.workView === 'plans' && PlansView(k, d.plans, d.now, planNav)}
-      {d.area === 'debug' && d.debugView !== 'pack' && d.debugView !== 'settings' && DebugPanel(k, d.debugView, debugData, d.now, width)}
-      {d.area === 'debug' && d.debugView === 'settings' && SettingsView(k, d.permissions, settingsNav)}
-      {d.area === 'debug' && d.debugView === 'pack' && PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes') })}
-    </>
-  )
+  // The shown view, the same on every surface: one element, or null for an area with nothing built. A fragment holds
+  // only elements and strings, so the views are picked here rather than switched on and off inside one.
+  const view =
+    d.area === 'now' && d.nowView === 'env' ? EnvView(k, d.tasks, d.processes, d.memory, d.now)
+    : d.area === 'now' && d.nowView === 'sessions' ? SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)
+    : d.area === 'code' && d.codeView === 'git' ? GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)
+    : d.area === 'code' && d.codeView === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)
+    : d.area === 'code' && d.codeView === 'budgets' ? BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)
+    : d.area === 'work' && d.workView === 'runs' ? AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)
+    : d.area === 'work' && d.workView === 'stats' ? StatsView(k, d.stats, d.statsName, width, nav.pickStats)
+    : d.area === 'work' && d.workView === 'plans' ? PlansView(k, d.plans, d.now, planNav)
+    : d.area === 'debug' && d.debugView === 'settings' ? SettingsView(k, d.permissions, settingsNav)
+    : d.area === 'debug' && d.debugView === 'pack' ? PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes') })
+    : d.area === 'debug' ? DebugPanel(k, d.debugView, debugData, d.now, width)
+    : null
   // A full-width line in a box one row high that hides what doesn't fit: off the terminal a ─ is drawn wider than a
   // cell, and the line would wrap, or with a cut mark if truncated; the box clips it at the edge instead.
   const divider = (
