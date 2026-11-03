@@ -56,6 +56,8 @@ const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix' | 'macos', 
     windows: JSON.stringify({ procs: { pid: 4242, ws: 104857600, m: 'vite-dev', e: 'staging' }, freeKb: 8388608, totalKb: 16777216 }),
     freeKb: 8388608,
     ps: '  4242 102400 node node_modules/.bin/vite --mode staging --api-key SENTINEL_CMD_123\n',
+    // How the next uname calls fail, in turn: a non-zero exit, or no run at all.
+    unameFailures: [] as ('exit' | 'throw')[],
   }
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.env(on, os === 'windows' ? { HOME: '/home/test', OS: 'Windows_NT' } : { HOME: '/home/test' })
@@ -96,6 +98,9 @@ const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix' | 'macos', 
     }
     if (line === 'uname -s') {
       unames += 1
+      const failure = machine.unameFailures.shift()
+      if (failure === 'throw') throw new Error('spawn failed')
+      if (failure === 'exit') return { value: { exitCode: 1, stdout: '', stderr: 'uname: failed', isStdoutTruncated: false, isStderrTruncated: false } }
       return out(os === 'macos' ? 'Darwin\n' : 'Linux\n')
     }
     if (line === 'sh -c sysctl hw.memsize && vm_stat') {
@@ -186,6 +191,29 @@ test('on macOS, free memory comes from vm_stat, and uname tells it from Linux on
   await clock.advance(60_000)
   expect(calls).toEqual({ processes: 1, memory: 3 })
   expect(unames()).toBe(1)
+})
+
+test('a uname that fails, by its exit code or by not running, is asked again on the next read', CLOCK_HEAVY, async ($, on) => {
+  const { clock, machine, unames } = engine(on, 'macos')
+  machine.unameFailures = ['exit', 'throw']
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'env' })
+  await clock.settle()
+  expect(unames()).toBe(1)
+  // Read as Linux meanwhile: /proc/meminfo isn't there, so no memory is shown, and nothing breaks.
+  const before = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await before.find({ type: 'Text', text: '8.0 GB free' })).toBeUndefined()
+  await before.unmount()
+  await clock.advance(30_000)
+  expect(unames()).toBe(2)
+  await clock.advance(30_000)
+  expect(unames()).toBe(3)
+  const after = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await after.find({ type: 'Text', text: '8.0 GB free' })).toBeDefined()
+  await after.unmount()
+  // Answered once, it stays answered.
+  await clock.advance(60_000)
+  expect(unames()).toBe(3)
 })
 
 test('on Linux, uname says so once and /proc/meminfo is read', CLOCK_HEAVY, async ($, on) => {

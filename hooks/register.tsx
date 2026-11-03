@@ -317,19 +317,19 @@ export const register: Register = on => {
     // lane. A toast says so once when memory runs low, and again only after it recovered.
     const platform: Platform = (await $.env.get('OS')) === 'Windows_NT' ? 'windows' : 'posix'
     // macOS has no /proc/meminfo, and the environment doesn't tell it from Linux: uname does, once per session, on
-    // the first memory read (so only from the reads below, never at start). A failed uname is asked again next time.
+    // the first memory read (so only from the reads below, never at start). A failed uname (an exit code, or no run
+    // at all) answers posix for that read and is asked again on the next.
     let memoryPlatformRead: Promise<Platform> | null = null
     const memoryPlatform = (): Promise<Platform> =>
       (memoryPlatformRead ??=
         platform === 'windows'
           ? Promise.resolve(platform)
-          : exec(['uname', '-s']).then(
-              (run): Platform => (run.exitCode === 0 && run.stdout.trim() === 'Darwin' ? 'macos' : 'posix'),
-              (): Platform => {
-                memoryPlatformRead = null
-                return 'posix'
-              },
-            ))
+          : exec(['uname', '-s'])
+              .then(run => (run.exitCode === 0 ? run.stdout.trim() : null), () => null)
+              .then((name): Platform => {
+                if (name === null) memoryPlatformRead = null
+                return name === 'Darwin' ? 'macos' : 'posix'
+              }))
     let isMemoryLow = false
     const noteMemory = async (memory: MemoryReading | null) => {
       if (!memory) return
