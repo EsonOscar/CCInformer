@@ -22,14 +22,15 @@ const USER_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { 
 const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 
 // A Vite repo on a machine whose process list and free memory the test sets. `calls` counts the process and memory
-// queries; `machine` is what they answer.
-const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix', isRecording = false) => {
+// queries, `unames` the uname calls; `machine` is what they answer.
+const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix' | 'macos', isRecording = false) => {
   const files: Record<string, string> = {
     '/repo/package.json': PACKAGE,
     '/repo/.env.staging': 'VITE_API_URL=https://api.staging.example.test\nSECRET_KEY=SENTINEL_ENV_456\n',
     [PACKS + '/shop.pack.jsonc']: USER_PACK,
   }
   const calls = { processes: 0, memory: 0 }
+  let unames = 0
   const toasts: string[] = []
   // Every value written to state or the store, as text.
   const kept: string[] = []
@@ -89,7 +90,20 @@ const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix', isRecordin
     }
     if (line === 'cat /proc/meminfo') {
       calls.memory += 1
+      // A Mac has no /proc/meminfo.
+      if (os === 'macos') return { value: { exitCode: 1, stdout: '', stderr: 'No such file or directory', isStdoutTruncated: false, isStderrTruncated: false } }
       return out(`MemTotal: 16777216 kB\nMemAvailable: ${machine.freeKb} kB\n`)
+    }
+    if (line === 'uname -s') {
+      unames += 1
+      return out(os === 'macos' ? 'Darwin\n' : 'Linux\n')
+    }
+    if (line === 'sh -c sysctl hw.memsize && vm_stat') {
+      calls.memory += 1
+      // machine.freeKb as 16 KiB pages, split over free, inactive and speculative.
+      const pages = machine.freeKb / 16
+      const counts = `Pages free: ${pages / 4}.\nPages inactive: ${pages / 2}.\nPages speculative: ${pages / 4}.\n`
+      return out(`hw.memsize: 17179869184\nMach Virtual Memory Statistics: (page size of 16384 bytes)\n${counts}`)
     }
     return out('')
   })
@@ -110,7 +124,7 @@ const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix', isRecordin
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  return { clock, calls, machine, toasts, kept }
+  return { clock, calls, machine, toasts, kept, unames: () => unames }
 }
 
 test('Now › Env lists the processes the pack knows and the free memory, read every 30 s only while it shows', CLOCK_HEAVY, async ($, on) => {
@@ -152,6 +166,47 @@ test('the memory probe runs every 30 s only while a heavy task of this session r
   await $.prompt.submit({ text: '<task-notification><task-id>bg-1</task-id><status>completed</status></task-notification>', origin: { kind: 'task-notification' }, wait: false })
   await clock.advance(90_000)
   expect(calls.memory).toBe(2)
+})
+
+test('on macOS, free memory comes from vm_stat, and uname tells it from Linux once, on the first read', CLOCK_HEAVY, async ($, on) => {
+  const { clock, calls, unames } = engine(on, 'macos')
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.advance(90_000)
+  // Nothing reads memory yet, so nothing asks which system this is.
+  expect(unames()).toBe(0)
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'env' })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: '8.0 GB free' })).toBeDefined()
+  await ui.unmount()
+  // The probe reads memory the same way, and neither asks uname again.
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'sessions' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run e2e', run_in_background: true })
+  await clock.advance(60_000)
+  expect(calls).toEqual({ processes: 1, memory: 3 })
+  expect(unames()).toBe(1)
+})
+
+test('on Linux, uname says so once and /proc/meminfo is read', CLOCK_HEAVY, async ($, on) => {
+  const linux = engine(on, 'posix')
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'npm run e2e', run_in_background: true })
+  await linux.clock.advance(60_000)
+  linux.machine.freeKb = 900 * 1024
+  await linux.clock.advance(30_000)
+  expect(linux.calls.memory).toBe(3)
+  expect(linux.unames()).toBe(1)
+  expect(linux.toasts).toEqual(['Memory is low: 0.9 GB free'])
+})
+
+test('on Windows, uname never runs', CLOCK_HEAVY, async ($, on) => {
+  const { clock, calls, unames } = engine(on, 'windows')
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'npm run e2e', run_in_background: true })
+  await clock.advance(60_000)
+  expect(calls.memory).toBe(2)
+  expect(unames()).toBe(0)
 })
 
 test('low memory toasts once, and again only after it recovered', CLOCK_HEAVY, async ($, on) => {

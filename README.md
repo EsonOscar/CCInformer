@@ -33,7 +33,7 @@ The rest is optional; without it, only the parts that use it stay empty:
 |---|---|---|
 | `gh`, logged in (`gh auth status`) | CI in Code › Git and looking into a failed check, a budget's `ci-log` source, merged-PR warnings in Work › Plans | no CI, no CI readings, no merged-PR warnings |
 | Node | the install script's auto-update step; a repo's own tools | the script leaves auto-update off, and says how to switch it on |
-| Windows PowerShell (Windows) / `ps`, `/proc/meminfo`, `rm` (elsewhere) | Now › Env's processes and memory; removing a plan's original when it's archived | Env says the process list could not be read; an archive keeps the original |
+| Windows PowerShell (Windows) / `ps`, `/proc/meminfo`, `rm` (Linux) / `ps`, `uname`, `sysctl`, `vm_stat`, `rm` (macOS) | Now › Env's processes and memory; removing a plan's original when it's archived | Env says the process list could not be read; an archive keeps the original |
 | bash (Git Bash on Windows) | the build waves of `/ccinformer:plan-feature` | build that plan in the main session instead |
 | Python 3 (standard library only) | applying the changes of `/ccinformer:audit-docs` | the audit runs, but its changes can't be checked or applied |
 
