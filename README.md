@@ -63,6 +63,8 @@ Or install by hand, without auto-update. At the prompt of a terminal session:
 
 Answer `y` to add the marketplace, then pick the user scope. From a shell: `claude plugin install ccinformer --marketplace EsonOscar/CCInformer`. In the desktop app, where `/plugin` doesn't run: + next to the prompt box → Plugins → Add marketplace `EsonOscar/CCInformer` → Add plugin.
 
+One install covers both: installed at the user scope, from the script or a terminal, the mod also loads in the desktop app's Code tab.
+
 ## Use
 
 - `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/ccinformer settings` opens the switches. `/side` is a short alias.
