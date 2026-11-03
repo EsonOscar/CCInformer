@@ -5,7 +5,7 @@ import type {
 import { areaDef } from './areas'
 import { spinner } from './format'
 import { sessionGroups } from './insight'
-import { ACCENT, AreaBar, ViewBar } from './ui'
+import { ACCENT, AreaBar, ViewBar, areaBarFit, viewBarFit } from './ui'
 import type { Badge, Kit } from './ui'
 import { AgentsView as AgentsPanel } from './view-agents'
 import { DebugPanel, debugCounts } from './view-debug'
@@ -75,11 +75,8 @@ export type PaneData = {
   surface: string
 }
 
-// The footer's rows: a line, then the usage. The header's: the title, the areas and a line, then, for an area with
-// several views, a blank row and the view bar.
+// The footer's rows: a line, then the usage. The header's are worked out per drawing (headerRows below).
 const FOOTER_ROWS = 2
-const HEADER_ROWS = 3
-const VIEW_BAR_ROWS = 2
 
 // The pane scrolls its own content, so the footer drawn over it never moves: a scroll of `by` rows moves the content
 // from `top`, clamped so its last row still clears the footer. `contentRows` is the tree's height as drawn now, which
@@ -160,7 +157,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const planNav = { selected: isPlanSelected ? d.selected.work.slice(PLAN_SELECTED.length) : '', pick: nav.pickPlan, archive: nav.archivePlan }
   const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions }
   const hasViewBar = def.views.length > 1
-  const headerRows = hasViewBar ? HEADER_ROWS + VIEW_BAR_ROWS : HEADER_ROWS
+  const badges = badgesOf(d)
   // The shown view, the same on every surface.
   const view = (
     <>
@@ -197,9 +194,9 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
     return (
       <Box key="pane" flexDirection="column" paddingLeft={1} paddingRight={2} minHeight={d.rows}>
         <Box key="header" flexDirection="column">
-          {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh, d.version)}
+          {AreaBar(k, d.area, badges, nav.showArea, nav.refresh, null, d.version)}
           {divider}
-          {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts, true)}
+          {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts, null)}
         </Box>
         <Box key="content" flexDirection="column" flexGrow={1}>
           {view}
@@ -213,6 +210,11 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
       </Box>
     )
 
+  // In the terminal the bars take the rows they need at this width: the header's rows are the title, the area bar's, a
+  // line, then, for an area with several views, a blank row and the view bar's.
+  const areaPlace = areaBarFit(badges, width)
+  const viewPlace = hasViewBar ? viewBarFit(def.views, counts, width) : null
+  const headerRows = 1 + areaPlace.rows.length + 1 + (viewPlace ? 1 + viewPlace.rows.length : 0)
   return (
     // The padding leaves room for the header above the content and the footer below it, so a long view scrolls clear
     // of both.
@@ -239,9 +241,9 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
           <Box flexGrow={1} />
           {d.version ? <Text dimColor>{`v${d.version}`}</Text> : null}
         </Box>
-        {AreaBar(k, d.area, badgesOf(d), nav.showArea, nav.refresh)}
+        {AreaBar(k, d.area, badges, nav.showArea, nav.refresh, areaPlace)}
         {divider}
-        {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts)}
+        {viewPlace && ViewBar(k, def.views, views[d.area], nav.pickView, counts, viewPlace)}
       </Box>
       {/* The footer, in every area, laid over the tree at the window's bottom rows. Its rows run the full width,
           covering what's beneath. */}

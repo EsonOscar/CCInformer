@@ -83,6 +83,7 @@ The pane draws on more than the terminal: the desktop app, VS Code and mobile dr
 - Size a line of `─` to the width and put it in a one-row box with `overflow="hidden"`: a page draws `─` wider than a cell.
 - Indent wrapping text with a box's padding, not leading spaces, so its second line is indented too.
 - `size`, `weight` and `mono` on `Text` style the page and the terminal ignores them, so they need no surface check.
+- The terminal's header is drawn over the content at a height worked out before drawing, so nothing in it may wrap on its own: a row that doesn't fit squeezes its last item into a narrow column that spills over the content. `areaBarFit` and `viewBarFit` (`hooks/ui.tsx`) fit each bar to the width (a narrower gap, then the view bar without its counts, then more rows), and the header takes the rows they return.
 - UI tests mount on the surfaces they cover: `$.ui.mount({ ..., surface: 'desktop' })`, as `tests/desktop-pane.test.tsx` and `tests/areas.test.tsx` do.
 
 To try a working copy in the desktop app, which takes no `--plugin-dir`: quit the app fully, then start it from a shell that names the folder for that process only, so terminal sessions keep the release. In PowerShell: `$env:CLAUDE_CODE_PLUGIN_DIRS = '<folder>'; $env:CLAUDE_CODE_PLUGIN_DIR_WATCH = '1'; & '<path to the app>\Claude.exe'` (`CLAUDE_CODE_PLUGIN_DIR_WATCH` makes it reload on save). Never put the folder in `settings.json`'s `env`, which every session reads.
