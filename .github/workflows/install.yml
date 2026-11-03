@@ -1,0 +1,87 @@
+name: Install
+
+# Runs the install scripts as a person would, on a fresh machine of each kind: Claude Code from its native
+# installer (in ~/.local/bin, off PATH), then the PR's install.sh (Linux, macOS) or install.ps1 (Windows PowerShell,
+# through iex as the README's one-liner does), with no terminal, twice. The first run must leave the mod installed
+# with auto-update on; the second must change nothing. The scripts add the marketplace from GitHub, so the mod they
+# install is main's, not the PR's.
+#
+# Not a required check: it downloads Claude Code on every run, and a flaky download shouldn't hold up PRs that don't
+# touch the installer. It runs on the PRs that do, and by hand (Actions, Install, Run workflow).
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - install/**
+      - .github/workflows/install.yml
+      - .github/scripts/install-state.mjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: install-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15 # a script that waits for an answer nobody can give hangs here instead of for six hours
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # macOS's memory readouts, for the free-memory parser's test fixtures and to spot a changed format.
+      - name: Print macOS memory readouts
+        if: runner.os == 'macOS'
+        run: |
+          sw_vers
+          sysctl hw.memsize hw.pagesize
+          vm_stat
+
+      - name: Install Claude Code
+        if: runner.os != 'Windows'
+        run: curl -fsSL https://claude.ai/install.sh | bash
+
+      - name: Install Claude Code
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: irm https://claude.ai/install.ps1 | iex
+
+      - name: First run of install.sh
+        if: runner.os != 'Windows'
+        run: |
+          bash install/install.sh < /dev/null
+          node .github/scripts/install-state.mjs "$HOME/.local/bin/claude" > "$RUNNER_TEMP/first.json"
+
+      - name: Second run of install.sh changes nothing
+        if: runner.os != 'Windows'
+        run: |
+          bash install/install.sh < /dev/null
+          node .github/scripts/install-state.mjs "$HOME/.local/bin/claude" > "$RUNNER_TEMP/second.json"
+          git diff --no-index --exit-code "$RUNNER_TEMP/first.json" "$RUNNER_TEMP/second.json"
+
+      - name: First run of install.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Get-Content install/install.ps1 -Raw | Invoke-Expression
+          node .github/scripts/install-state.mjs "$HOME\.local\bin\claude.exe" | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\first.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Second run of install.ps1 changes nothing
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Get-Content install/install.ps1 -Raw | Invoke-Expression
+          node .github/scripts/install-state.mjs "$HOME\.local\bin\claude.exe" | Set-Content -Encoding utf8 "$env:RUNNER_TEMP\second.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --no-index --exit-code "$env:RUNNER_TEMP\first.json" "$env:RUNNER_TEMP\second.json"
