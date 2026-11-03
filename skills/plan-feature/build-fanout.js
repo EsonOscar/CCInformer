@@ -3,15 +3,23 @@ export const meta = {
   description: 'One build wave: per work package a builder, a read-only reviewer against the plan, and one fix round',
   whenToUse: 'Run by the CCInformer plan-feature skill in step 9, once per wave, with args {context, plan, wave, packages: [{key, brief, files, doneWhen, model?, effort?}], reserved, scopedChecks, snapshot: {script, baseline}}',
   phases: [
-    { title: 'Build', detail: 'one builder per package, own files only' },
-    { title: 'Review', detail: 'read-only check of each package against the plan and git' },
-    { title: 'Fix', detail: 'one fix round for packages the review sent back' },
+    { title: 'Build', detail: 'one builder per package, own files only', model: 'opus' },
+    { title: 'Review', detail: 'read-only check of each package against the plan and git', model: 'opus' },
+    { title: 'Fix', detail: 'one fix round for packages the review sent back', model: 'opus' },
   ],
 }
 
 // The packages share one working tree, so they never share a file: each owns its files, and every file more than
 // one package needs is reserved for the main session. At most 3 packages (up to 9 agents with a fix round each).
 const MAX_PACKAGES = 3
+// Every agent runs on Opus at high effort at most, whatever model the session runs on: a bigger model orchestrates
+// and checks, it doesn't fan out. A model or effort given above the cap, or one not on the lists, is brought down to it.
+const MAX_MODEL = 'opus'
+const MAX_EFFORT = 'high'
+const MODELS = ['haiku', 'sonnet', 'opus']
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const under = (list, value, max) => list.includes(value) && list.indexOf(value) <= list.indexOf(max) ? value : max
+const capped = (model, effort) => ({ model: under(MODELS, model, MAX_MODEL), effort: under(EFFORTS, effort, MAX_EFFORT) })
 
 const GIT_RULES = 'Git is read-only for you: no commit, push, stash, checkout, restore, reset, clean or branch switch. The working tree holds other uncommitted work, including the other packages being built right now, and those commands would roll it back.'
 const CHECK_RULES = 'Never loosen, skip or delete a test, assertion, lint rule or check to make it pass. If a check looks wrong, report it instead of changing it. A failing check in a file you do not own is not yours: report it, do not touch it.'
@@ -127,7 +135,7 @@ You are the BUILDER of this package.
 - Anything you notice outside your task goes under foundOutsideTask, one line each; don't fix it.
 - List every deviation from the plan and contract, however small; an unlisted one found in review sends the package back.
 - Run the scoped checks before you finish and report them truthfully.`,
-  { label: `build:${p.key}`, phase: 'Build', schema: BUILD_SCHEMA, ...(p.model ? { model: p.model } : {}), ...(p.effort ? { effort: p.effort } : {}) })
+  { label: `build:${p.key}`, phase: 'Build', schema: BUILD_SCHEMA, ...capped(p.model, p.effort) })
 
 const review = (p, built) => agent(`${spec(p)}
 
@@ -144,7 +152,7 @@ Check, in this order:
 5. Deviations the builder didn't list, and work beyond the package (scope creep).
 
 Assume the package is wrong until the code says otherwise, but report only what you can show. verdict: pass (no blocker or should-fix), fix (fixable within the owned files), escalate (needs a decision, a contract change or a reserved file).`,
-  { label: `review:${p.key}`, phase: 'Review', schema: REVIEW_SCHEMA })
+  { label: `review:${p.key}`, phase: 'Review', schema: REVIEW_SCHEMA, ...capped() })
 
 const fix = (p, built, reviewed) => agent(`${spec(p)}
 
@@ -159,7 +167,7 @@ ${JSON.stringify(built, null, 2)}
 - ${SHARED_RULES}
 - A finding you disagree with or can't fix within the owned files goes under notFixed with the reason.
 - Run the scoped checks before you finish and report them truthfully.`,
-  { label: `fix:${p.key}`, phase: 'Fix', schema: FIX_SCHEMA, ...(p.model ? { model: p.model } : {}), ...(p.effort ? { effort: p.effort } : {}) })
+  { label: `fix:${p.key}`, phase: 'Fix', schema: FIX_SCHEMA, ...capped(p.model, p.effort) })
 
 const results = await pipeline(packages,
   p => build(p).then(built => ({ key: p.key, built })),
