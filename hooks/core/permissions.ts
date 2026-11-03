@@ -5,6 +5,8 @@ import type { PermissionChoices } from '../../types'
 // so Approve all and Deny all leave it as it is; each of its switches still turns off by hand.
 
 export type PermissionGroup = 'claude' | 'ask' | 'notify' | 'show' | 'background' | 'safety'
+// isOnByDefault is what an install from before 0.24.0 keeps (its stored base is 'defaults'); a new install starts with
+// every ordinary permission off (NEW_INSTALL).
 export type PermissionDef = { id: string; group: PermissionGroup; label: string; description: string; isOnByDefault: boolean }
 
 export const PERMISSION_GROUPS: { id: PermissionGroup; label: string }[] = [
@@ -138,8 +140,17 @@ const isOrdinary = (id: string): boolean => {
   return !!def && def.group !== 'safety'
 }
 
-// Nothing chosen: every permission at its default, which is today's behaviour.
+// The defaults: what an install that ran an older version keeps, and what an odd stored value reads as.
 export const NO_CHOICES: PermissionChoices = { base: 'defaults', set: {} }
+
+// A new install: every ordinary permission off, Safety on (the same state as Deny all).
+export const NEW_INSTALL: PermissionChoices = { base: 'off', set: {} }
+
+// The choices a session starts with when nothing is stored. This version writes the first-open marker, then the
+// choices, before any other key, so the marker or an empty store means a new install; any other key was written by an
+// older version, which ran at the defaults, so they stay.
+export const startingChoices = (hasMarker: boolean, hasOtherKeys: boolean): { choices: PermissionChoices; isNew: boolean } =>
+  hasMarker || !hasOtherKeys ? { choices: NEW_INSTALL, isNew: true } : { choices: NO_CHOICES, isNew: false }
 
 // The stored choices as this version reads them: anything odd is no choice at all, a base other than 'off' is the
 // defaults, and only yes/no entries count. Ids this version doesn't know are kept, so a newer build's choices survive.

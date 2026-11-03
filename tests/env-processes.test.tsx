@@ -40,7 +40,8 @@ const engine = (on: Parameters<TestBody>[1], os: 'windows' | 'posix' | 'macos', 
       return next(e)
     })
   // The store, in memory and written down: mock.store would hide what it holds.
-  const store = new Map<string, unknown>()
+  // An install from before 0.24.0, so every switch keeps its old default.
+  const store = new Map<string, unknown>([['permissions', { base: 'defaults', set: {} }]])
   on('store.get', (_, e) => ({ value: store.get(e.key) }) as never)
   on('store.set', (_, e) => {
     store.set(e.key, e.value)

@@ -51,7 +51,7 @@ const ANSWERS: [RegExp, string][] = [
 ]
 
 // `opened` and `closed` collect the pane ids the plugin opens and closes.
-const engine = (on: Parameters<TestBody>[1], store: Record<string, unknown> = {}) => {
+const engine = (on: Parameters<TestBody>[1], store: Record<string, unknown> = { permissions: { base: 'defaults', set: {} } }) => {
   const opened: string[] = []
   const closed: string[] = []
   mock.clock(on, { now: 1_000_000 })

@@ -29,7 +29,7 @@ const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop
   const toasts: string[] = []
   const commands: string[] = []
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on, { ...(opts.mode ? { ['ciMode:' + REPO_KEY]: opts.mode } : {}), ...(opts.permissions ? { permissions: opts.permissions } : {}) })
+  mock.store(on, { ...(opts.mode ? { ['ciMode:' + REPO_KEY]: opts.mode } : {}), permissions: opts.permissions ?? { base: 'defaults', set: {} } })
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))

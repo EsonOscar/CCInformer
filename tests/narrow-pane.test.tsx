@@ -55,7 +55,8 @@ const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: true
 // A session in a repository with nothing to report.
 const engine = (on: Parameters<TestBody>[1]) => {
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on)
+  // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
+  mock.store(on, { permissions: { base: 'defaults', set: {} } })
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))

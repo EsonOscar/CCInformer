@@ -1,13 +1,13 @@
 # CCInformer
 
-A Claude Code mod: a pane docked on the right of the terminal, or of a session in the desktop app's Code tab, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings.
+A Claude Code mod: a pane docked on the right of the terminal, or of a session in the desktop app's Code tab, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings. On a new install all of them start off except Safety (the band and the production status line), so the toasts, notes for Claude and background checks below come once you switch them on; an install from before 0.24.0 keeps the switches it had.
 
 - **Now** (`1`)
   - **Env** (`e`): the processes this session started, which environment each points at and how long it has run; the processes your pack knows on this machine, with their memory; and free memory, with a toast when it runs low. Command lines and env values are never kept.
-  - **Sessions** (`s`): the other Claude sessions on this machine and what each is working on, with a warning when another one works in this folder.
+  - **Sessions** (`s`): the other Claude sessions on this machine that have Tell other sessions on in Debug › Settings, and what each is working on, with a warning when another one works in this folder.
 - **Code** (`2`)
   - **Git** (`g`): the repository's name, branch, upstream, ahead/behind, and a warning during a rebase or merge. CI for the branch's PR, a failed check linking to its run, and a toast plus a desktop notification when a commit's checks finish. In active mode (`i`, per repo, off by default), a failed check makes Claude look into it and present the cause and a fix idea in a turn of its own, which stays read-only until it ends or you type into it. It uses tokens. Changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits to push and pull, recent commits, branches, stashes and worktrees. `u` fetches.
-  - **Rules** (`k`): what the pack's [checks](#checks) found in the files Claude wrote, marked `CI` where pushing would fail CI and `rule` where it's the project's own rule. Press a finding, then `x` to dismiss it. Claude is told about them too.
+  - **Rules** (`k`): what the pack's [checks](#checks) found in the files Claude wrote, marked `CI` where pushing would fail CI and `rule` where it's the project's own rule. Press a finding, then `x` to dismiss it. With Inline check notes on, Claude is told about them too.
   - **Budgets** (`b`): the pack's [budgets](#budgets), such as a bundle's size, against their limits. `m` builds, then measures.
 - **Work** (`3`)
   - **Runs** (`w`): the running workflow's phases (`p`/`n`, `l` follows the live one) and its agents with their model, tools and tokens; recent runs in this project (press one to open it, `x` closes it); subagents.
@@ -16,7 +16,7 @@ A Claude Code mod: a pane docked on the right of the terminal, or of a session i
 - **Debug** (`5`)
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its time, every model request with its tokens, and how the context grew, with compactions marked.
   - **Pack** (`p`): the [pack](#packs) this repo resolved to and where each value came from. `a` lets the repo's own tools run, or stops them.
-  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band and the production status line) stay as they are under both; you switch them off by hand.
+  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band and the production status line) stay as they are under both; you switch them off by hand. On a new install a bare `/ccinformer` opens here until you have seen it.
 
 An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The top right shows the version running, such as `v0.19.0`. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
 
@@ -39,7 +39,7 @@ The rest is optional; without it, only the parts that use it stay empty:
 
 ## Install
 
-The install script adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. If git, Node or `gh` is missing, it says what each is for and offers to install it (winget on Windows; brew, apt-get, dnf or pacman elsewhere), one at a time; nothing is installed without your yes. It is safe to run again at any time: on a machine that already has the mod, it only offers the tools that are missing and updates the mod.
+The install script adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. If git, Node or `gh` is missing, it says what each is for and offers to install it (winget on Windows; brew, apt-get, dnf or pacman elsewhere), one at a time; nothing is installed without your yes. It is safe to run again at any time: on a machine that already has the mod, it only offers the tools that are missing and updates the mod. Its last line says where the switches are: Debug › Settings (in the pane, `5` then `s`). A new install starts with them off except Safety; an update keeps yours.
 
 Windows (PowerShell):
 
@@ -113,7 +113,7 @@ A repo's own files may only add or tighten, with globs and literals:
 
 A repo file that names a command, switches anything off, holds a regex or points outside the repo is refused whole, and Debug › Pack says why.
 
-**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). Trusting a repo also means Claude is told what those tools find, unless Turn check notes is off in Debug › Settings. The first such check asks once per repo, and never again, whatever you answer, unless Ask about repo trust is off in Debug › Settings. A yes lapses when the repo's config files change, and you allow it again in Debug › Pack. `a` there (or `/ccinformer pack untrust`) also takes it back.
+**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). With Turn checks on in Debug › Settings they run after each turn that wrote files, and with Turn check notes on Claude is told what they find. With Ask about repo trust on, the first such check asks once per repo, and never again, whatever you answer. All three start off on a new install. A yes lapses when the repo's config files change, and you allow it again in Debug › Pack. `a` there (or `/ccinformer pack untrust`) also takes it back.
 
 ### Environments
 

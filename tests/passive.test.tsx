@@ -43,7 +43,17 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
     ...(opts.userPack === false ? {} : { [PACKS + '/shop.pack.jsonc']: USER_PACK }),
   }
   const ci = { bucket: 'pending' as 'pending' | 'fail' }
-  const seen = { commands: [] as string[], toasts: [] as string[], notifies: [] as string[], statuses: [] as string[], asks: [] as string[], opens: 0, submits: [] as string[], contexts: [] as string[] }
+  const seen = {
+    commands: [] as string[],
+    toasts: [] as string[],
+    notifies: [] as string[],
+    statuses: [] as string[],
+    asks: [] as string[],
+    opens: 0,
+    submits: [] as string[],
+    contexts: [] as string[],
+    writes: [] as string[],
+  }
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.env(on, { HOME: '/home/test' })
   const store = new Map<string, unknown>(Object.entries(seed))
@@ -64,6 +74,7 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
   on('fs.exists', (_, e) => ({ value: posix(e.path) in files }))
   on('fs.read', (_, e) => ({ value: files[posix(e.path)] ?? null }) as never)
   on('fs.write', (_, e) => {
+    seen.writes.push(posix(e.path))
     files[posix(e.path)] = e.text
     return { value: undefined }
   })
@@ -142,9 +153,11 @@ type Dollar = Parameters<TestBody>[0]
 // person does asks for anything in the background. Claude starts the end-to-end tests in the background, writes a file
 // past its limit, pushes, ends its turn; the person types; CI fails; Now › Sessions is opened and closed; then a long turn
 // runs past the 10-minute mark. Returns how many commands had run when the person closed the pane, and the Write's result.
-const workingSession = async ($: Dollar, env: Env) => {
+// `atStart` looks at the session right after it started, before the person does anything.
+const workingSession = async ($: Dollar, env: Env, atStart: () => void = () => {}) => {
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await env.clock.settle()
+  atStart()
   const opensAtStart = env.seen.opens
   await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
   await env.clock.settle()
@@ -172,7 +185,7 @@ const workingSession = async ($: Dollar, env: Env) => {
   return { mark, opensAtStart, written }
 }
 
-test('with nothing stored, a working session does all it did before', CLOCK_HEAVY, async ($, on) => {
+test('an install that ran an older version (other keys, nothing chosen) does all it did before', CLOCK_HEAVY, async ($, on) => {
   const env = engine(on, { isOpen: true })
   const { opensAtStart, written } = await workingSession($, env)
   expect(opensAtStart).toBe(1)
@@ -183,6 +196,60 @@ test('with nothing stored, a working session does all it did before', CLOCK_HEAV
   expect(env.seen.toasts).toContain('✗ CI failed on PR #7: lint')
   expect(env.seen.notifies).toContain('CI failed on PR #7: lint')
   expect(env.store.has(SESSION_KEY)).toBe(true)
+  // Pinned at the first read, with no first-open marker.
+  expect(env.store.get('permissions')).toEqual({ base: 'defaults', set: {} })
+  expect(env.store.has('settingsFirst')).toBe(false)
+})
+
+test('a new install (empty store): a working session runs nothing in the background, says nothing and tells Claude nothing', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on)
+  const { mark, opensAtStart, written } = await workingSession($, env, () => {
+    // Right after start: only the pack read, and only the Settings' own record in the store.
+    expect(env.seen.commands.filter(c => !PACK_READ.test(c))).toEqual([])
+    expect([...env.store.keys()].sort()).toEqual(['permissions', 'settingsFirst'])
+    expect(env.store.get('permissions')).toEqual(DENY_ALL)
+  })
+  expect(opensAtStart).toBe(0)
+  expect(env.seen.commands.slice(mark).filter(c => !PACK_READ.test(c))).toEqual([])
+  expect(written.context).toBeUndefined()
+  expect(env.seen.contexts).toEqual([])
+  expect(env.seen.toasts).toEqual([])
+  expect(env.seen.notifies).toEqual([])
+  expect(env.seen.statuses).toEqual([])
+  expect(env.seen.asks).toEqual([])
+  expect(env.seen.submits).toEqual([])
+  expect(env.seen.writes).toEqual([])
+  // Beyond the Settings' record, only what the person's own actions wrote (opening Code, closing the pane).
+  const own = ['permissions', 'settingsFirst', 'isOpen', 'columns', 'area', 'ciPinged']
+  expect([...env.store.keys()].filter(k => !own.includes(k))).toEqual([])
+
+  // What the person asks for still runs.
+  const before = env.seen.commands.length
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  await env.clock.settle()
+  expect(env.seen.commands.slice(before).some(c => c.startsWith('git status'))).toBe(true)
+})
+
+test("a new install's first bare /ccinformer shows Settings and reads nothing for Code", async ($, on) => {
+  const env = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await env.clock.settle()
+  const mark = env.seen.commands.length
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: '' })
+  await env.clock.settle()
+  expect(env.seen.opens).toBe(1)
+  expect(env.seen.commands.slice(mark).filter(c => !PACK_READ.test(c))).toEqual([])
+  expect(env.store.has('settingsFirst')).toBe(false)
+})
+
+test("a new install's second session reopens nothing, runs nothing by itself and keeps the choices", CLOCK_HEAVY, async ($, on) => {
+  // What a new install's first session leaves behind when the person left the pane open on Code.
+  const env = engine(on, { permissions: DENY_ALL, settingsFirst: true, isOpen: true, columns: 40, area: 'code' })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await env.clock.advance(60_000)
+  expect(env.seen.opens).toBe(0)
+  expect(env.store.get('permissions')).toEqual(DENY_ALL)
+  expect(env.seen.commands.filter(c => !PACK_READ.test(c))).toEqual([])
 })
 
 test('with Deny all, a working session runs nothing in the background, says nothing and tells Claude nothing', CLOCK_HEAVY, async ($, on) => {
@@ -261,8 +328,12 @@ test('Deny all leaves the band on', async ($, on) => {
   expect(await isBandShown($, engine(on, { permissions: DENY_ALL }))).toBe(true)
 })
 
+test('the band shows on a new install', async ($, on) => {
+  expect(await isBandShown($, engine(on))).toBe(true)
+})
+
 test('Tell other sessions switched off in another session takes this one out of their list within seconds', async ($, on) => {
-  const env = engine(on)
+  const env = engine(on, { permissions: { base: 'defaults', set: {} } })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await env.clock.advance(16_000)
   expect(env.store.has(SESSION_KEY)).toBe(true)

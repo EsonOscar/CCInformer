@@ -12,15 +12,27 @@ const PANE = {
 
 const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
 
+// How the store misbehaves for a test: `afterKeys` and `afterSet` run as another session writing in between (after the
+// keys are listed, after a key is set); `keysFail` rejects that many key listings; `setFails` rejects every set of
+// those keys.
+type StoreOpts = {
+  afterKeys?: (store: Map<string, unknown>) => void
+  afterSet?: (key: string, store: Map<string, unknown>) => void
+  keysFail?: number
+  setFails?: string[]
+}
+
 // A session in a folder that is no repository, with the store in memory and open to the test: `store` is what every
-// session sees. `holdNextRead()` makes the next read of the choices wait until `release()`, as a slow read would; it
-// resolves once that read is waiting.
-const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {}, opts: { submitDrop?: string } = {}) => {
+// session sees, `sets` every key written, `registered` every command registered. Seeded by default with a key an older
+// version wrote, so it is an install from before 0.24.0. `holdNextRead()` makes the next read of the choices wait until
+// `release()`, as a slow read would; it resolves once that read is waiting.
+const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = { area: 'code' }, opts: { submitDrop?: string } & StoreOpts = {}) => {
   const clock = mock.clock(on, { now: 1_000_000 })
   const submits: { text: string; context: readonly string[] }[] = []
   const toasts: string[] = []
   on('prompt.submit', (_, e) => {
     if (e.origin.kind === 'plugin') submits.push({ text: e.text, context: e.context ?? [] })
+    else contexts.push(...(e.context ?? []))
     return (opts.submitDrop ? { drop: opts.submitDrop } : { text: e.text, context: e.context }) as never
   })
   on('ui.toast', (_, e) => {
@@ -43,27 +55,54 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
     }
     return { value } as never
   })
+  const sets: string[] = []
+  const registered: string[] = []
+  let keysFail = opts.keysFail ?? 0
   on('store.set', (_, e) => {
+    if (opts.setFails?.includes(e.key)) throw new Error('the store could not be written')
+    sets.push(e.key)
     store.set(e.key, e.value)
+    opts.afterSet?.(e.key, store)
     return { value: undefined } as never
   })
   on('store.delete', (_, e) => {
     store.delete(e.key)
     return { value: undefined } as never
   })
-  on('store.keys', () => ({ value: [...store.keys()] }) as never)
+  on('store.keys', () => {
+    if (keysFail > 0) {
+      keysFail -= 1
+      throw new Error('the store could not be read')
+    }
+    const value = [...store.keys()]
+    opts.afterKeys?.(store)
+    return { value } as never
+  })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/elsewhere' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('agent.list', () => ({ value: [] }))
   on('fs.read', () => ({ value: null }) as never)
-  on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }))
-  on('command.register', (_, e) => ({ value: { command: e.name } }))
+  const commands: string[] = []
+  const contexts: string[] = []
+  on('process.run', (_, e) => {
+    commands.push((e as { argv: string[] }).argv.join(' '))
+    return { value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }
+  })
+  on('command.register', (_, e) => {
+    registered.push(e.name)
+    return { value: { command: e.name } }
+  })
   on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('ui.close', () => ({ value: undefined }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   return {
     clock,
     store,
+    sets,
+    registered,
+    commands,
+    contexts,
     submits,
     toasts,
     holdNextRead: () => {
@@ -82,16 +121,210 @@ const settings = async ($: Parameters<TestBody>[0]) => {
 type Ui = Awaited<ReturnType<typeof settings>>
 const rowState = async (ui: Ui, id: string) => (await ui.find({ key: 'perm-' + id }))?.text
 
-test('/ccinformer settings opens the view: every permission in a row of its own, all on with nothing stored', async ($, on) => {
-  const { clock } = engine(on)
+const DEFAULTS = { base: 'defaults', set: {} }
+const NEW_INSTALL = { base: 'off', set: {} }
+const allOn = async (ui: Ui) => {
+  for (const d of PERMISSIONS) expect(await rowState(ui, d.id)).toBe('on')
+}
+const quiet = async (ui: Ui) => {
+  for (const d of PERMISSIONS) expect(await rowState(ui, d.id)).toBe(d.group === 'safety' ? 'on' : 'off')
+}
+
+test('an install from before 0.24.0 keeps every switch on, pinned at the first read: every permission in a row of its own', async ($, on) => {
+  const { clock, store } = engine(on)
   await start($)
+  expect(store.get('permissions')).toEqual(DEFAULTS)
+  expect(store.has('settingsFirst')).toBe(false)
   const ui = await settings($)
   await clock.settle()
   expect(await ui.find({ key: 'settings-approve' })).toBeDefined()
   const rows = (await ui.findAll({ type: 'Button' })).filter(b => b.key?.startsWith('perm-'))
   expect(rows.length).toBe(PERMISSIONS.length)
-  for (const d of PERMISSIONS) expect(await rowState(ui, d.id)).toBe('on')
+  await allOn(ui)
   expect(await ui.find({ type: 'Text', text: `${PERMISSIONS.length} of ${PERMISSIONS.length} on` })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a new install (empty store) starts with only Safety on, and stores the marker before the choices', async ($, on) => {
+  const { clock, store, sets } = engine(on, {})
+  await start($)
+  expect(sets).toEqual(['settingsFirst', 'permissions'])
+  expect(store.get('permissions')).toEqual(NEW_INSTALL)
+  const ui = await settings($)
+  await clock.settle()
+  await quiet(ui)
+  expect(await ui.find({ type: 'Text', text: 'passive' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /A new install starts that way, except Safety\./ })).toBeDefined()
+  await ui.unmount()
+})
+
+test('choices another session stores between this one\'s key listing and its read stand, and nothing is written', async ($, on) => {
+  const approved = { base: 'defaults', set: { 'notify.ciToast': true } }
+  const { clock, store, sets } = engine(on, {}, { afterKeys: s => s.set('permissions', approved) })
+  await start($)
+  // The start's own work (the session row, the pack) finishes before the test does.
+  await clock.settle()
+  expect(store.get('permissions')).toEqual(approved)
+  expect(sets.filter(k => k === 'permissions' || k === 'settingsFirst')).toEqual([])
+})
+
+test('choices another session stores between this one\'s marker and its choices stand', async ($, on) => {
+  const approved = { base: 'defaults', set: { 'notify.ciToast': true } }
+  const { clock, store, sets } = engine(on, {}, { afterSet: (key, s) => key === 'settingsFirst' && s.set('permissions', approved) })
+  await start($)
+  expect(store.get('permissions')).toEqual(approved)
+  expect(sets.filter(k => k === 'permissions' || k === 'settingsFirst')).toEqual(['settingsFirst'])
+  const ui = await settings($)
+  await clock.settle()
+  await allOn(ui)
+  await ui.unmount()
+})
+
+test('an odd stored value is read as the defaults and never rewritten', async ($, on) => {
+  const { clock, store, sets } = engine(on, { permissions: 'odd' })
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  await allOn(ui)
+  expect(store.get('permissions')).toBe('odd')
+  expect(sets.includes('permissions')).toBe(false)
+  await ui.unmount()
+})
+
+test('choices deleted mid-session leave the session as it was, never at the defaults', async ($, on) => {
+  const { clock, store } = engine(on, {})
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  store.delete('permissions')
+  await clock.advance(6000)
+  await clock.settle()
+  await quiet(ui)
+  expect(store.has('permissions')).toBe(false)
+  await ui.unmount()
+})
+
+test('a store that cannot be read at start: quiet, nothing written, /ccinformer still there; the next poll decides', async ($, on) => {
+  const { clock, store, sets, registered } = engine(on, {}, { keysFail: 1 })
+  await start($)
+  expect(sets).toEqual([])
+  expect(registered).toContain('ccinformer')
+  await clock.advance(6000)
+  await clock.settle()
+  expect(store.get('permissions')).toEqual(NEW_INSTALL)
+  expect(store.get('settingsFirst')).toBe(true)
+})
+
+test('a store that cannot be read at start decides before /ccinformer writes anything, so the pane can\'t make it look older', async ($, on) => {
+  const { clock, store } = engine(on, {}, { keysFail: 1 })
+  await start($)
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  await clock.settle()
+  expect(store.get('isOpen')).toBe(true)
+  expect(store.get('permissions')).toEqual(NEW_INSTALL)
+})
+
+test('choices that could not be stored leave the marker, so the next session is still a new install', async ($, on) => {
+  // What a first session leaves when its choices couldn't be stored and the person then opened the pane.
+  const { clock, store } = engine(on, { settingsFirst: true, isOpen: true, columns: 40, area: 'code' })
+  await start($)
+  expect(store.get('permissions')).toEqual(NEW_INSTALL)
+  const ui = await settings($)
+  await clock.settle()
+  await quiet(ui)
+  await ui.unmount()
+})
+
+test('choices that cannot be stored are tried again on the next poll', async ($, on) => {
+  const failing = ['permissions']
+  const { clock, store } = engine(on, {}, { setFails: failing })
+  await start($)
+  expect(store.get('settingsFirst')).toBe(true)
+  expect(store.has('permissions')).toBe(false)
+  failing.length = 0
+  await clock.advance(6000)
+  await clock.settle()
+  expect(store.get('permissions')).toEqual(NEW_INSTALL)
+})
+
+const bare = ($: Parameters<TestBody>[0]) => $.command.run({ ...TYPED, command: 'ccinformer', args: '' })
+const mount = ($: Parameters<TestBody>[0]) => $.ui.mount({ ...PANE, surface: 'terminal' })
+const isOnSettings = async (ui: Ui) => !!(await ui.find({ key: 'settings-approve' }))
+const isOnCode = async (ui: Ui) => !!(await ui.find({ type: 'Text', text: /not a git repository/ }))
+
+test("a new install's first bare /ccinformer opens on Settings, once, without keeping that area or reading git", async ($, on) => {
+  const { clock, store, commands, submits, contexts } = engine(on, {})
+  await start($)
+  const before = commands.length
+  await bare($)
+  const ui = await mount($)
+  await clock.settle()
+  expect(await isOnSettings(ui)).toBe(true)
+  await quiet(ui)
+  expect(await ui.find({ type: 'Text', text: 'passive' })).toBeDefined()
+  expect(store.has('settingsFirst')).toBe(false)
+  expect(store.has('area')).toBe(false)
+  expect(commands.slice(before).filter(c => /^(git|gh) /.test(c))).toEqual([])
+  // Nothing about it reaches Claude.
+  await $.prompt.submit({ text: 'hello', origin: { kind: 'composer' }, wait: false })
+  expect(submits).toEqual([])
+  expect(contexts).toEqual([])
+  // The pane keeps its area for the rest of the session, as it always has.
+  await bare($)
+  await bare($)
+  await clock.settle()
+  expect(await isOnSettings(ui)).toBe(true)
+  await ui.unmount()
+})
+
+test("a new install's next session opens on Code, from what the first one left behind", async ($, on) => {
+  const { clock } = engine(on, { permissions: NEW_INSTALL, isOpen: false, columns: 40 })
+  await start($)
+  await bare($)
+  const ui = await mount($)
+  await clock.settle()
+  expect(await isOnSettings(ui)).toBe(false)
+  expect(await isOnCode(ui)).toBe(true)
+  await ui.unmount()
+})
+
+test('on a new install a named area wins and keeps the marker, so the next bare open still shows Settings', async ($, on) => {
+  const { clock, store } = engine(on, {})
+  await start($)
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  const ui = await mount($)
+  await clock.settle()
+  expect(await isOnCode(ui)).toBe(true)
+  expect(store.get('settingsFirst')).toBe(true)
+  await bare($)
+  await bare($)
+  await clock.settle()
+  expect(await isOnSettings(ui)).toBe(true)
+  expect(store.has('settingsFirst')).toBe(false)
+  await ui.unmount()
+})
+
+test('on a new install, picking Settings in Debug clears the marker', async ($, on) => {
+  const { clock, store } = engine(on, {})
+  await start($)
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'debug' })
+  const ui = await mount($)
+  await clock.settle()
+  expect(store.get('settingsFirst')).toBe(true)
+  await ui.press({ key: 'view-settings' })
+  await clock.settle()
+  expect(await isOnSettings(ui)).toBe(true)
+  expect(store.has('settingsFirst')).toBe(false)
+  await ui.unmount()
+})
+
+test("an older install's bare /ccinformer opens where it always did", async ($, on) => {
+  const { clock } = engine(on)
+  await start($)
+  await bare($)
+  const ui = await mount($)
+  await clock.settle()
+  expect(await isOnCode(ui)).toBe(true)
   await ui.unmount()
 })
 
@@ -216,7 +449,7 @@ test('explain hands Claude one prompt naming every switch and its state, and onl
 })
 
 test("a prompt Claude Code doesn't take says why, and the button works again", async ($, on) => {
-  const { clock, submits, toasts } = engine(on, {}, { submitDrop: 'the session is closing' })
+  const { clock, submits, toasts } = engine(on, { area: 'code' }, { submitDrop: 'the session is closing' })
   await start($)
   const ui = await settings($)
   await ui.press({ key: 'settings-explain' })
