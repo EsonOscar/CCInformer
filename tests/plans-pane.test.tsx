@@ -203,6 +203,18 @@ const SEARCH = [
 const SEARCH_PRS = { 41: 'MERGED', 42: 'MERGED', 43: 'CLOSED', 44: 'OPEN' }
 const NO_PLANS_IN_PACK = USER_PACK.replace(/,"plans":\{[^}]*\}/, '')
 
+test('with plan files off, the empty board says so instead of where a plan goes', async ($, on) => {
+  const { clock } = engine(on, { [PACKS + '/shop.pack.jsonc']: NO_PLANS_IN_PACK, '/home/test/.claude/ccinformer/skills.json': '{ "planFiles": false }' })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'plans' })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /Plan files are off \(Debug › Settings\)/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /No plans yet: a plan in/ })).toBeUndefined()
+  await ui.unmount()
+})
+
 test("GitHub is asked only about an open checkpoint's PRs, and again only about those still open", async ($, on) => {
   const { clock, asked } = engine(on, { [PACKS + '/shop.pack.jsonc']: NO_PLANS_IN_PACK, '/repo/.local/plans/2026-10-29-search.md': SEARCH }, SEARCH_PRS)
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })

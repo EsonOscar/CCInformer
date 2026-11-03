@@ -2,6 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { EXPLAIN_TEXTS, PERMISSIONS, PERMISSION_GROUPS } from '../hooks/core/permissions'
+import { PLAN_FILES } from '../hooks/core/skills'
 
 const PANE = {
   plugin: 'ccinformer',
@@ -11,6 +12,8 @@ const PANE = {
 } as const
 
 const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
+const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
+const SKILLS_FILE = '/home/test/.claude/ccinformer/skills.json'
 
 // How the store misbehaves for a test: `afterKeys` and `afterSet` run as another session writing in between (after the
 // keys are listed, after a key is set); `keysFail` rejects that many key listings; `setFails` rejects every set of
@@ -82,7 +85,13 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = { a
   on('session.cwd', () => ({ value: '/elsewhere' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('agent.list', () => ({ value: [] }))
-  on('fs.read', () => ({ value: null }) as never)
+  // The files the mod reads and writes, the planning skills' settings among them.
+  const files = new Map<string, string>()
+  on('fs.read', (_, e) => ({ value: files.get(posix(e.path)) ?? null }) as never)
+  on('fs.write', (_, e) => {
+    files.set(posix(e.path), e.text)
+    return { value: undefined } as never
+  })
   const commands: string[] = []
   const contexts: string[] = []
   on('process.run', (_, e) => {
@@ -105,6 +114,7 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = { a
     contexts,
     submits,
     toasts,
+    files,
     holdNextRead: () => {
       isHolding = true
       return new Promise<void>(resolve => (reached = resolve))
@@ -419,6 +429,53 @@ test('a read of the store that began before a press never undoes it', async ($, 
 
 const mainEnd = { answer: '', durationMs: 1, isAborted: false, turnId: 't-main', reason: 'answer' } as never
 
+test('the planning skills\' Plan files switch: on with no file, a press writes the file off, approve all and deny all leave it, and a new session reads it back', async ($, on) => {
+  const { clock, files } = engine(on)
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('on')
+  await ui.press({ key: 'skills-planFiles' })
+  await clock.settle()
+  expect(files.get(SKILLS_FILE)).toBe('{\n  "planFiles": false\n}\n')
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('off')
+  await ui.press({ key: 'settings-approve' })
+  await clock.settle()
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('off')
+  await ui.press({ key: 'settings-deny' })
+  await clock.settle()
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('off')
+  expect(await rowState(ui, 'notify.ciToast')).toBe('off')
+  await ui.unmount()
+
+  // A later session reads the file; the switch is not in the store.
+  await start($)
+  const again = await settings($)
+  await clock.settle()
+  expect((await again.find({ key: 'skills-planFiles' }))?.text).toBe('off')
+  await again.press({ key: 'skills-planFiles' })
+  await clock.settle()
+  expect(files.get(SKILLS_FILE)).toBe('{\n  "planFiles": true\n}\n')
+  expect((await again.find({ key: 'skills-planFiles' }))?.text).toBe('on')
+  await again.unmount()
+})
+
+test('a skills file written elsewhere is read when Settings is shown again, and one that is not JSON reads as on', async ($, on) => {
+  const { clock, files } = engine(on)
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  files.set(SKILLS_FILE, '{ "planFiles": false }')
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('off')
+  files.set(SKILLS_FILE, 'not json')
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('on')
+  await ui.unmount()
+})
+
 test('explain hands Claude one prompt naming every switch and its state, and only once until the session ends a turn', async ($, on) => {
   const { clock, submits, toasts } = engine(on)
   await start($)
@@ -434,6 +491,7 @@ test('explain hands Claude one prompt naming every switch and its state, and onl
     const group = PERMISSION_GROUPS.find(g => g.id === d.group)!.label
     expect(submits[0]!.text).toContain(`${d.group === 'safety' ? 'On' : 'Off'} · ${group} · ${d.label}: ${d.description}`)
   }
+  expect(submits[0]!.text).toContain(`On · ${PLAN_FILES.group} · ${PLAN_FILES.label}: ${PLAN_FILES.description}`)
   expect(submits[0]!.context).toEqual([])
   expect(toasts).toContain(EXPLAIN_TEXTS.sent)
 

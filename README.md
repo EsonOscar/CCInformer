@@ -16,7 +16,7 @@ A Claude Code mod: a pane docked on the right of the terminal, or of a session i
 - **Debug** (`5`)
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its time, every model request with its tokens, and how the context grew, with compactions marked.
   - **Pack** (`p`): the [pack](#packs) this repo resolved to and where each value came from. `a` lets the repo's own tools run, or stops them.
-  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band and the production status line) stay as they are under both; you switch them off by hand. On a new install a bare `/ccinformer` opens here until you have seen it.
+  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band and the production status line) stay as they are under both; you switch them off by hand. Last comes the planning skills' own switch, Plan files (`f`), which both leave alone too (see [Plans](#plans)). On a new install a bare `/ccinformer` opens here until you have seen it.
 
 An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The top right shows the version running, such as `v0.19.0`. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
 
@@ -83,7 +83,7 @@ Three planning skills come with the mod. Each plans in plan mode, asks you only 
 
 1. Switch to plan mode (Shift+Tab until the bottom of the screen says plan mode) and run the skill with what you want built.
 2. Answer its questions: only real decisions, each with a recommended option.
-3. Approve the plan. plan-feature and plan-feature-small save it to `.local/plans/` and build it checkpoint by checkpoint. Nothing is committed or pushed unless you ask.
+3. Approve the plan. plan-feature and plan-feature-small save it to `.local/plans/` (unless Plan files is off in Debug › Settings) and build it checkpoint by checkpoint. Nothing is committed or pushed unless you ask.
 4. Follow along in Work › Plans (`3`, then `t`), and archive the plan there once it's done.
 
 **Planning settings.** A repo's checks, the risks to review for, the actions that need your OK and its commit rules can be written down once: in a committed `## Planning` section of its CLAUDE.md, or privately in `.local/ccinformer-planning.md`. After a first run in a repo with neither, the skill offers to write the private one for you.
@@ -176,6 +176,7 @@ The board reads every Markdown plan in `.local/plans/`, in every repo, and the f
 - **Merged PRs.** With `gh`, the board checks the PRs that open checkpoints name. A merged one shows `⚠ #21 merged` on its row and `!` on Work, and a toast says so when it merges while you work. The plan's own status is left as it is.
 - **Finished plans** (every checkpoint done or dropped) read "ready to archive", with a reminder toast at most once a day.
 - **Archiving.** Press a plan's header, then `a`. It asks first, naming every file it will change, then moves the plan to `.local/plans/archive/` (or the pack's `plans.archiveDir`) and points the references to it there, in `.local/`, the plan's folder and your Claude memory notes for this project.
+- **Plan files off.** The Plan files switch in Debug › Settings (`f`) is the planning skills' own, kept for every repo in `~/.claude/ccinformer/skills.json` (`{ "planFiles": false }`; no file means on), which the skills read as a file. Off, plan-feature and plan-feature-small save no plan to `.local/plans/` and keep the checkpoint lines in Claude Code's own plan file instead, plan-handoff still writes its handoff doc, and none of them offers to write `.local/ccinformer-planning.md`; the empty board says so. Approve all and Deny all leave it as it is.
 
 ## Numbers
 

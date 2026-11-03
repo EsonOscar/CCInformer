@@ -4,6 +4,8 @@ export type DebugView = 'tools' | 'requests' | 'context' | 'pack' | 'settings'
 // The Debug › Settings choices: Deny all as a base (so a permission added later starts off too), and each switch set by
 // hand. Kept in the store all sessions share.
 export type PermissionChoices = { base: 'defaults' | 'off'; set: Record<string, boolean> }
+// The planning skills' own settings (~/.claude/ccinformer/skills.json): whether they save plan files into the repo.
+export type SkillsSettings = { planFiles: boolean }
 
 export type FileChange = { path: string; code: string; added: number; removed: number }
 export type Commit = { sha: string; subject: string; age: string }
@@ -328,6 +330,8 @@ declare module 'claude-code' {
       isOpen: boolean
       // The Debug › Settings choices, as the store holds them.
       permissions: PermissionChoices
+      // The planning skills' settings, as their file holds them; the defaults until read.
+      skills: SkillsSettings
       // The mod's own version, from its plugin.json; '' until read, or when it names none.
       version: string
       // False while the session has been idle a while: git polling pauses.

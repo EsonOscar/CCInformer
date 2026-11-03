@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, SkillsSettings, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaFor, areaNames } from './areas'
@@ -16,6 +16,7 @@ import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
 import { EXPLAIN_TEXTS, NEW_INSTALL, allSet, choicesFrom, explainPrompt, isAllowed, startingChoices, toggled } from './core/permissions'
 import type { May, PermissionId } from './core/permissions'
+import { DEFAULT_SKILLS, SKILLS_FILE, readSkills, skillsText } from './core/skills'
 import { endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
@@ -118,6 +119,8 @@ const isOpenAtom = atom({ plugin: 'ccinformer', key: 'isOpen' } as const, false)
 const permissionsAtom = atom({ plugin: 'ccinformer', key: 'permissions' } as const, NEW_INSTALL as PermissionChoices)
 // The version the pane shows in its top right, read from plugin.json at session start.
 const versionAtom = atom({ plugin: 'ccinformer', key: 'version' } as const, '')
+// The planning skills' settings, from their file: read at session start and with Debug.
+const skillsAtom = atom({ plugin: 'ccinformer', key: 'skills' } as const, DEFAULT_SKILLS as SkillsSettings)
 const isActiveAtom = atom({ plugin: 'ccinformer', key: 'isActive' } as const, true)
 // The clock elapsed times and spinners draw from, ticked once a second while the pane is open.
 const nowAtom = atom({ plugin: 'ccinformer', key: 'now' } as const, 0)
@@ -290,6 +293,7 @@ type Live = {
   archive: (path: string) => Promise<void>
   ci: CiActive
   setPermissions: (change: (c: PermissionChoices) => PermissionChoices) => Promise<unknown>
+  setPlanFiles: (isOn: boolean) => Promise<void>
   explain: () => Promise<void>
 }
 let live: Live | null = null
@@ -337,6 +341,13 @@ export const register: Register = on => {
     const configDir =
       (await $.env.get('CLAUDE_CONFIG_DIR')) || ((await $.env.get('USERPROFILE')) || (await $.env.get('HOME')) || '') + '/.claude'
     const projectsDir = configDir + '/projects/' + projectDirName(cwd)
+    // The planning skills' switch is a file, so the skills can read it too.
+    const skillsFile = configDir + '/' + SKILLS_FILE
+    const loadSkills = async () => {
+      const skills = await readSkills($, skillsFile)
+      await update($, skillsAtom, () => skills)
+    }
+    await loadSkills()
 
     // The one place the mod runs commands: everything else goes through a lane (a CI check holds this).
     const lanes = createLanes((argv, timeoutMs, dir) => $.process.run(argv, dir ? { timeoutMs, cwd: dir } : { timeoutMs }))
@@ -549,7 +560,7 @@ export const register: Register = on => {
       if (area === 'work' && (await read($, workViewAtom)) === 'plans') await plans.refresh()
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
       if (area === 'now' && (await read($, nowViewAtom)) === 'env') await refreshProcesses()
-      if (area === 'debug') await queueChoices($)
+      if (area === 'debug') await queueChoices($).then(loadSkills)
     }
 
     live = {
@@ -653,6 +664,11 @@ export const register: Register = on => {
       },
       // The person changed the Settings choices.
       setPermissions: change => queueChoices($, change),
+      // The person flipped the planning skills' Plan files switch: the file is what the skills read.
+      setPlanFiles: async isOn => {
+        await $.fs.write(skillsFile, skillsText({ planFiles: isOn })).catch(e => $.ui.toast(`Couldn't write ${skillsFile}: ${String(e)}`)) // asked
+        await loadSkills()
+      },
       // The person asked Claude to explain the Settings: one prompt, framed as from CCInformer, run once the session is free.
       explain: async () => {
         if (isExplainSent) return
@@ -662,7 +678,7 @@ export const register: Register = on => {
           $.ui.toast(EXPLAIN_TEXTS.refused(why)) // asked
         }
         $.ui.toast(EXPLAIN_TEXTS.sent) // asked
-        void $.prompt.submit({ text: explainPrompt(choices) }) // asked
+        void $.prompt.submit({ text: explainPrompt(choices, await read($, skillsAtom)) }) // asked
           .then(result => (result.drop !== undefined ? refused(result.drop) : undefined))
           .catch((err: unknown) => refused(String(err)))
       },
@@ -974,14 +990,14 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive, version, permissions] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive, version, permissions, skills] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
-      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom),
+      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
       surface: String(e.surface),
@@ -1020,6 +1036,7 @@ export const register: Register = on => {
       togglePermission: (id: PermissionId) => void live?.setPermissions(c => toggled(c, id)),
       setAllPermissions: isOn => void live?.setPermissions(c => allSet(c, isOn)),
       explainPermissions: () => void live?.explain(),
+      togglePlanFiles: () => void live?.setPlanFiles(!skills.planFiles),
     })
   })
 }

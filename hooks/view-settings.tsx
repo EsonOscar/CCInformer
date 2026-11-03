@@ -1,18 +1,20 @@
-import type { PermissionChoices } from '../types'
+import type { PermissionChoices, SkillsSettings } from '../types'
 import { ACTIONS } from './areas'
 import { PERMISSIONS, PERMISSION_GROUPS, SAFETY_NOTE, isAllowed, isPassive } from './core/permissions'
 import type { PermissionId } from './core/permissions'
+import { PLAN_FILES } from './core/skills'
 import { ACCENT, Line, Section } from './ui'
 import type { Glyph, Kit } from './ui'
 
-export type SettingsNav = { toggle: (id: PermissionId) => void; approveAll: () => void; denyAll: () => void; explain: () => void }
+export type SettingsNav = { toggle: (id: PermissionId) => void; approveAll: () => void; denyAll: () => void; explain: () => void; togglePlanFiles: () => void }
 
 const ON: Glyph = { char: '✓', color: 'success' }
 const OFF: Glyph = { char: '○', color: 'inactive', dim: true }
 
 // Everything CCInformer does by itself, each with its switch: press a row's on/off to flip it. Approve all and Deny all
-// change every switch but the Safety ones; explain hands Claude the list to put in plain words.
-export const SettingsView = (k: Kit, choices: PermissionChoices, nav: SettingsNav): JSX.Element => {
+// change every switch but the Safety ones; explain hands Claude the list to put in plain words. Last, the planning
+// skills' own switch, which neither of them touches.
+export const SettingsView = (k: Kit, choices: PermissionChoices, skills: SkillsSettings, nav: SettingsNav): JSX.Element => {
   const { Box, Button, Text } = k
   const onCount = PERMISSIONS.filter(d => isAllowed(choices, d.id)).length
   return (
@@ -69,6 +71,27 @@ export const SettingsView = (k: Kit, choices: PermissionChoices, nav: SettingsNa
           </Box>
         )
       })}
+      <Box flexDirection="column">
+        {Section(k, PLAN_FILES.group, skills.planFiles ? '1/1' : '0/1')}
+        <Text dimColor wrap="wrap">
+          {PLAN_FILES.note}
+        </Text>
+        {Line(
+          k,
+          skills.planFiles ? ON : OFF,
+          PLAN_FILES.label,
+          <Button key="skills-planFiles" plain hotkey={ACTIONS.debug.planFiles} onPress={nav.togglePlanFiles}>
+            <Text color={skills.planFiles ? ACCENT : 'inactive'} dimColor={!skills.planFiles}>
+              {skills.planFiles ? 'on' : 'off'}
+            </Text>
+          </Button>,
+        )}
+        <Box paddingLeft={2}>
+          <Text dimColor wrap="wrap">
+            {PLAN_FILES.description}
+          </Text>
+        </Box>
+      </Box>
     </Box>
   )
 }

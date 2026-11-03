@@ -1,4 +1,5 @@
-import type { PermissionChoices } from '../../types'
+import type { PermissionChoices, SkillsSettings } from '../../types'
+import { PLAN_FILES } from './skills'
 
 // What CCInformer does by itself, each on a switch in Debug › Settings. A key, button or /ccinformer command the person
 // uses is never gated: only what happens on its own. The Safety group warns before harm (a process aimed at production),
@@ -194,8 +195,8 @@ export const EXPLAIN_TEXTS = {
   refused: (why: string) => `Claude Code didn't take the prompt: ${why}`,
 }
 
-// The prompt the explain button hands Claude: every permission, whether it's on and what it does.
-export const explainPrompt = (c: PermissionChoices): string =>
+// The prompt the explain button hands Claude: every permission and the skills' switch, whether it's on and what it does.
+export const explainPrompt = (c: PermissionChoices, skills: SkillsSettings): string =>
   [
     'CCInformer, a Claude Code mod, lists below what it may do on its own and whether each is on. Explain each in plain words: ' +
       'what it does, what it costs (tokens, commands, interruptions) and what turning it off changes. Answer from this message alone; ' +
@@ -204,6 +205,7 @@ export const explainPrompt = (c: PermissionChoices): string =>
     ...PERMISSION_GROUPS.flatMap(g =>
       PERMISSIONS.filter(d => d.group === g.id).map(d => `- ${isAllowed(c, d.id) ? 'On' : 'Off'} · ${groupLabel(g.id)} · ${d.label}: ${d.description}`),
     ),
+    `- ${skills.planFiles ? 'On' : 'Off'} · ${PLAN_FILES.group} · ${PLAN_FILES.label}: ${PLAN_FILES.description}`,
     '',
-    'Approve all and Deny all switch every one except the Safety group; keys, buttons and /ccinformer commands in the pane always work.',
+    'Approve all and Deny all switch every one except the Safety group and the planning skills\' switch; keys, buttons and /ccinformer commands in the pane always work.',
   ].join('\n')

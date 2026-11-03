@@ -1,5 +1,5 @@
 import type {
-  AgentRow, Area, BudgetState, PermissionChoices, CheckRun, CiActiveState, PlansState, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, PermissionChoices, CheckRun, CiActiveState, PlansState, SkillsSettings, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef } from './areas'
@@ -64,6 +64,8 @@ export type PaneData = {
   version: string
   // The Debug › Settings choices.
   permissions: PermissionChoices
+  // The planning skills' settings.
+  skills: SkillsSettings
   width: number
   // The rows the pane shows at once, and the first row its window shows: the footer is drawn at the window's bottom.
   rows: number
@@ -106,6 +108,7 @@ export type PaneNav = {
   togglePermission: (id: PermissionId) => void
   setAllPermissions: (isOn: boolean) => void
   explainPermissions: () => void
+  togglePlanFiles: () => void
 }
 
 // Each area's badge: its worst item.
@@ -155,7 +158,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const isPlanSelected = d.selected.work.startsWith(PLAN_SELECTED)
   const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: isPlanSelected ? '' : d.selected.work, pickRun: nav.pickRun }
   const planNav = { selected: isPlanSelected ? d.selected.work.slice(PLAN_SELECTED.length) : '', pick: nav.pickPlan, archive: nav.archivePlan }
-  const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions }
+  const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions, togglePlanFiles: nav.togglePlanFiles }
   const hasViewBar = def.views.length > 1
   const badges = badgesOf(d)
   // The shown view, the same on every surface: one element, or null for an area with nothing built. A fragment holds
@@ -168,8 +171,8 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
     : d.area === 'code' && d.codeView === 'budgets' ? BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)
     : d.area === 'work' && d.workView === 'runs' ? AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)
     : d.area === 'work' && d.workView === 'stats' ? StatsView(k, d.stats, d.statsName, width, nav.pickStats)
-    : d.area === 'work' && d.workView === 'plans' ? PlansView(k, d.plans, d.now, planNav)
-    : d.area === 'debug' && d.debugView === 'settings' ? SettingsView(k, d.permissions, settingsNav)
+    : d.area === 'work' && d.workView === 'plans' ? PlansView(k, d.plans, d.now, planNav, d.skills.planFiles)
+    : d.area === 'debug' && d.debugView === 'settings' ? SettingsView(k, d.permissions, d.skills, settingsNav)
     : d.area === 'debug' && d.debugView === 'pack' ? PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes') })
     : d.area === 'debug' ? DebugPanel(k, d.debugView, debugData, d.now, width)
     : null

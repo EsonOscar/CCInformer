@@ -34,6 +34,7 @@ Plan (small): $ARGUMENTS
 
    Read it through once as its builder (cross-references right, no placeholder left), then call ExitPlanMode.
 7. Once the plan is approved, build it yourself, checkpoint by checkpoint, in the main session: the code, the tests and the docs.
+   - **Plan files switch:** read `~/.claude/ccinformer/skills.json` (under `$CLAUDE_CONFIG_DIR` instead of `~/.claude` when that variable is set). `"planFiles": false` means the user switched plan files off in CCInformer's Debug › Settings: skip the copy below and the planning-settings offer at the end, build from Claude Code's own plan file (the one you wrote in plan mode) and keep its checkpoint lines current there, and tell the user in one line that plan files are off, so Work › Plans won't show this plan. A missing file means on.
    - **Save the plan where the user can follow it:** copy the approved plan file to `.local/plans/<YYYY-MM-DD>-<slug>.md` from the project root (or the plans folder the planning settings name), where CCInformer's Work › Plans shows its checkpoints. First check that git ignores that path (`git check-ignore -q <path>`); if it doesn't, ask the user where to keep the plan instead. From here on that copy is the plan you build from.
    - **Keep each checkpoint's line current** as you go (`done`, `merged as #N`, `dropped`). A status written anywhere else doesn't reach the board.
    - Run the project's checks after each checkpoint and check its "done when". Docs last, so they quote real texts.
@@ -45,5 +46,5 @@ Plan (small): $ARGUMENTS
      - run all builds and tests once more;
      - make sure throwaway files are deleted;
      - every checkpoint's line in the saved plan says how it ended; CCInformer's board then offers to archive the plan, so leave it in place;
-     - if the project had no planning settings, offer once to save what this run learned as `.local/ccinformer-planning.md` (only if git ignores it): copy `planning-template.md` from the plan-feature skill's folder (`../plan-feature/` from this file), fill each section from the run, mark anything you guessed "(check)", and leave a section you know nothing about as its placeholder;
+     - if the project had no planning settings (and plan files are on), offer once to save what this run learned as `.local/ccinformer-planning.md` (only if git ignores it): copy `planning-template.md` from the plan-feature skill's folder (`../plan-feature/` from this file), fill each section from the run, mark anything you guessed "(check)", and leave a section you know nothing about as its placeholder;
      - give the user the "Found outside the task" list, the manual test steps, and the files for their commit.
