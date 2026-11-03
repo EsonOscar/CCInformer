@@ -1,4 +1,4 @@
-// How the pane writes times, counts and states.
+// How the pane writes times, counts and states (live probe: this branch is never merged).
 
 const SECOND = 1000
 const MINUTE = 60 * SECOND
