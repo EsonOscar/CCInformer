@@ -50,7 +50,7 @@ const engine = (
     files[path] = text
     mtimes[path] = (mtimes[path] ?? 1) + 1
   }
-  mock.store(on, opts.store ?? {})
+  mock.store(on, opts.store ?? { permissions: { base: 'defaults', set: {} } })
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))

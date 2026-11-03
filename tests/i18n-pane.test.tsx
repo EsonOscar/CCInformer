@@ -48,7 +48,8 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>) => {
     files[path] = text
     mtimes[path] = (mtimes[path] ?? 1) + 1
   }
-  mock.store(on)
+  // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
+  mock.store(on, { permissions: { base: 'defaults', set: {} } })
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))

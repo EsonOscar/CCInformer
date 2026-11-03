@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NO_CHOICES, PERMISSIONS, PERMISSION_GROUPS, allSet, choicesFrom, explainPrompt, isAllowed, isPassive, toggled } from '../hooks/core/permissions'
+import { NEW_INSTALL, NO_CHOICES, PERMISSIONS, PERMISSION_GROUPS, allSet, choicesFrom, explainPrompt, isAllowed, isPassive, startingChoices, toggled } from '../hooks/core/permissions'
 import type { PermissionId } from '../hooks/core/permissions'
 
 const ORDINARY = PERMISSIONS.filter(d => d.group !== 'safety').map(d => d.id)
@@ -15,6 +15,23 @@ describe('permissions', () => {
       set: { 'bg.ciWatch': true, 'safety.future': false },
     })
     for (const d of PERMISSIONS) expect(isAllowed(NO_CHOICES, d.id)).toBe(d.isOnByDefault)
+  })
+
+  test('with nothing stored, the first-open marker or an empty store is a new install; any other key, an older one', async () => {
+    expect(startingChoices(false, false)).toEqual({ choices: NEW_INSTALL, isNew: true })
+    // The marker alone, or with keys the person's own actions wrote after a failed choices write: still new.
+    expect(startingChoices(true, false)).toEqual({ choices: NEW_INSTALL, isNew: true })
+    expect(startingChoices(true, true)).toEqual({ choices: NEW_INSTALL, isNew: true })
+    expect(startingChoices(false, true)).toEqual({ choices: NO_CHOICES, isNew: false })
+  })
+
+  test('a new install has every ordinary permission off and Safety on, the same as Deny all, and older versions read it so', async () => {
+    for (const id of ORDINARY) expect(isAllowed(NEW_INSTALL, id)).toBe(false)
+    for (const id of SAFETY) expect(isAllowed(NEW_INSTALL, id)).toBe(true)
+    expect(isPassive(NEW_INSTALL)).toBe(true)
+    expect(NEW_INSTALL).toEqual(allSet(NO_CHOICES, false))
+    // choicesFrom is unchanged since 0.21, so this is also how a downgraded version reads it.
+    expect(choicesFrom(NEW_INSTALL)).toEqual(NEW_INSTALL)
   })
 
   test('a switch set by hand wins; Deny all turns the rest of the ordinary ones off, never Safety', async () => {

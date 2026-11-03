@@ -136,3 +136,4 @@ if ($installed -match "`"id`":\s*`"$Plugin@$Marketplace`"") {
 if ($LASTEXITCODE -ne 0) { throw "The install step failed (exit $LASTEXITCODE)." }
 
 Step "Done. Start a new Claude Code session (or run /reload-plugins in an open one) and type /ccinformer (or /side)."
+Step "Settings: everything the mod does by itself has a switch in Debug > Settings (in the /ccinformer pane: 5, then s). A new install starts with them off except Safety; an update keeps yours."

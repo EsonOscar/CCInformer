@@ -37,7 +37,7 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 // `prs` is GitHub's state for each PR gh knows (any other fails, as gh does; a test may change it), `asked` counts each
 // PR's lookups, and `toasts` holds what was toasted. `all` is every file (written ones too; `rm` removes one), and a
 // dialog is answered with `dialog.answer`, its questions kept in `dialog.questions`.
-const engine = (on: Parameters<TestBody>[1], files: Record<string, string>, prs: Record<number, string> = {}, stored: Record<string, unknown> = {}) => {
+const engine = (on: Parameters<TestBody>[1], files: Record<string, string>, prs: Record<number, string> = {}, stored: Record<string, unknown> = { permissions: { base: 'defaults', set: {} } }) => {
   const all: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK, ...files }
   const mtimes: Record<string, number> = {}
   const reads: Record<string, number> = {}

@@ -14,7 +14,7 @@ import { createCiActive } from './ci/run'
 import type { CiActive } from './ci/run'
 import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
-import { EXPLAIN_TEXTS, NO_CHOICES, allSet, choicesFrom, explainPrompt, isAllowed, toggled } from './core/permissions'
+import { EXPLAIN_TEXTS, NEW_INSTALL, allSet, choicesFrom, explainPrompt, isAllowed, startingChoices, toggled } from './core/permissions'
 import type { May, PermissionId } from './core/permissions'
 import { endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
@@ -53,6 +53,8 @@ const STORE_COLUMNS = 'columns'
 const STORE_SESSION = 'session:'
 // The Debug › Settings choices, one value for every session.
 const STORE_PERMISSIONS = 'permissions'
+// On a new install, true until Debug › Settings has been shown: a bare /ccinformer opens there.
+const STORE_SETTINGS_FIRST = 'settingsFirst'
 
 // Everything below counts in ticks of a second.
 const TICK_MS = 1000
@@ -113,7 +115,7 @@ const showAllFilesAtom = atom({ plugin: 'ccinformer', key: 'showAllFiles' } as c
 const diffAtom = atom({ plugin: 'ccinformer', key: 'diff' } as const, null as DiffPreview | null)
 const isOpenAtom = atom({ plugin: 'ccinformer', key: 'isOpen' } as const, false)
 // The Debug › Settings choices (the store holds them for every session; see applyChoices).
-const permissionsAtom = atom({ plugin: 'ccinformer', key: 'permissions' } as const, NO_CHOICES as PermissionChoices)
+const permissionsAtom = atom({ plugin: 'ccinformer', key: 'permissions' } as const, NEW_INSTALL as PermissionChoices)
 // The version the pane shows in its top right, read from plugin.json at session start.
 const versionAtom = atom({ plugin: 'ccinformer', key: 'version' } as const, '')
 const isActiveAtom = atom({ plugin: 'ccinformer', key: 'isActive' } as const, true)
@@ -176,9 +178,41 @@ async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void>
 }
 
 // The Debug › Settings choices, kept here as well as in state so every gate decides at once with no `$` call. Only
-// applyChoices changes them.
-let choices: PermissionChoices = NO_CHOICES
+// applyChoices changes them. Quiet until the stored choices are read.
+let choices: PermissionChoices = NEW_INSTALL
 const may: May = id => isAllowed(choices, id)
+
+// A session decides the starting choices once when none are stored, and stores them: the first-open marker first on a
+// new install, then the choices (startingChoices says why that order tells a new install from an older one). These
+// writes are the Settings' own record, like the area and the open pane, so they take no permission. When the store
+// can't be read or the choices can't be stored, the session starts quiet and decides again later (isStartPending).
+let isStartPending = false
+async function readStartingChoices($: EngineInterface): Promise<PermissionChoices> {
+  let keys: string[]
+  let stored: unknown
+  try {
+    keys = await $.store.keys()
+    stored = await $.store.get(STORE_PERMISSIONS)
+  } catch {
+    isStartPending = true
+    return NEW_INSTALL
+  }
+  isStartPending = false
+  if (stored !== undefined) return choicesFrom(stored)
+  const start = startingChoices(
+    keys.includes(STORE_SETTINGS_FIRST),
+    keys.some(k => k !== STORE_SETTINGS_FIRST && k !== STORE_PERMISSIONS),
+  )
+  if (start.isNew) await $.store.set(STORE_SETTINGS_FIRST, true).catch(() => undefined)
+  // Another session may have decided, or its person chosen, since the read above: theirs stands.
+  const now = await $.store.get(STORE_PERMISSIONS).catch(() => undefined)
+  if (now !== undefined) return choicesFrom(now)
+  isStartPending = !(await $.store.set(STORE_PERMISSIONS, start.choices).then(
+    () => true,
+    () => false,
+  ))
+  return start.choices
+}
 
 // Takes up new choices: the gates, the state the pane draws from and the status line follow. Switched off, this
 // session's entry for the other sessions goes too (whichever session made the change).
@@ -189,6 +223,14 @@ async function applyChoices($: EngineInterface, next: PermissionChoices): Promis
   if (selfId && !may('bg.sessionBeat')) await $.store.delete(STORE_SESSION + selfId)
 }
 
+// Debug › Settings has been shown, so a new install's bare /ccinformer opens where the pane was left from now on. The
+// marker goes only once the choices are stored: until then it is what tells a new install from an older one.
+async function markSettingsShown($: EngineInterface): Promise<void> {
+  if ((await $.store.get(STORE_SETTINGS_FIRST)) !== true) return
+  if ((await $.store.get(STORE_PERMISSIONS)) === undefined) return
+  await $.store.delete(STORE_SETTINGS_FIRST)
+}
+
 // Reads the stored choices and takes them up, after applying `change` (and storing the result) when one is given. One
 // at a time, so two quick presses never undo each other and a read never undoes a press.
 let choicesQueue: Promise<unknown> = Promise.resolve()
@@ -197,7 +239,10 @@ let isExplainSent = false
 function queueChoices($: EngineInterface, change?: (c: PermissionChoices) => PermissionChoices): Promise<unknown> {
   choicesQueue = choicesQueue
     .then(async () => {
-      const stored = choicesFrom(await $.store.get(STORE_PERMISSIONS))
+      // With nothing stored, a start whose decision didn't get stored decides again; otherwise the session keeps its
+      // choices, never falling back to the defaults.
+      const raw = await $.store.get(STORE_PERMISSIONS)
+      const stored = raw !== undefined ? choicesFrom(raw) : isStartPending ? await readStartingChoices($) : choices
       const next = change ? change(stored) : stored
       if (change) await $.store.set(STORE_PERMISSIONS, next)
       if (JSON.stringify(next) !== JSON.stringify(choices)) await applyChoices($, next)
@@ -251,6 +296,9 @@ let live: Live | null = null
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
+    // Decided before anything else, /ccinformer included: a later session.start (as after /reload-plugins) isn't awaited,
+    // and a /ccinformer typed then writes isOpen and columns, which would make a new store look like an older install's.
+    const starting = await readStartingChoices($)
     await $.command.register({
       name: COMMAND,
       description: 'Toggle the CCInformer pane: sessions, git and CI, workflows, debug',
@@ -275,7 +323,7 @@ export const register: Register = on => {
     // A reload keeps the processes already tracked, and active CI mode's state (a read-only turn included). The Settings
     // choices are taken up before anything below can act; taking them up also writes the processes back.
     envTasks = await read($, envTasksAtom)
-    await applyChoices($, choicesFrom(await $.store.get(STORE_PERMISSIONS)))
+    await applyChoices($, starting)
     ciState = { ...CI_IDLE, ...(await read($, ciActiveAtom)) }
     cwd = await $.session.cwd()
     // The engine gives a plugin its name and folder but not its version, so the pane reads its own manifest.
@@ -514,6 +562,7 @@ export const register: Register = on => {
         if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
         if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
         if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack' || view === 'settings') await update($, debugViewAtom, () => view)
+        if (view === 'settings') void markSettingsShown($).catch(() => undefined)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
       },
@@ -648,6 +697,8 @@ export const register: Register = on => {
   // argument it opens the pane, on that area when it names one (or an old tab), and never closes it.
   on('command.run', async ($, e, next) => {
     if (e.command !== COMMAND && e.command !== ALIAS) return next(e)
+    // A start that couldn't decide the choices decides now, before the pane or a command writes anything to the store.
+    if (isStartPending) await queueChoices($)
     const arg = e.args.trim().toLowerCase()
     void live?.wake()
     if (!arg && (await read($, isOpenAtom))) {
@@ -665,8 +716,16 @@ export const register: Register = on => {
       return { text: CI_TEXTS.replyStarted }
     }
     const target = name ? areaFor(name) : null
+    // A new install's bare /ccinformer opens on Debug › Settings until they have been shown, without keeping that area
+    // for the next session. Decided from what is read here, as state this hook writes reads back as it was when it began.
+    const isFirstOpen = !arg && (await $.store.get(STORE_SETTINGS_FIRST).catch(() => undefined)) === true
     // The area is set before the pane opens, so its first drawing is the right one.
     if (target) await update($, areaAtom, () => target.area)
+    if (isFirstOpen) {
+      await setPaneTop($, 0)
+      await update($, areaAtom, () => 'debug')
+      await update($, debugViewAtom, () => 'settings')
+    }
     const columns = Math.max(MIN_COLUMNS, Math.round(e.presentation.columns * SHARE))
     await $.ui.open({ id: PANE, title: paneTitle(TITLE, $.plugin.root), columns }) // asked
     const now = await $.clock.now()
@@ -675,7 +734,10 @@ export const register: Register = on => {
     await $.store.set(STORE_OPEN, true)
     await $.store.set(STORE_COLUMNS, columns)
     if (target) void live?.showArea(target)
-    else void live?.refresh(await read($, areaAtom))
+    else if (isFirstOpen) {
+      void live?.refresh('debug')
+      void markSettingsShown($).catch(() => undefined)
+    } else void live?.refresh(await read($, areaAtom))
     if (!target) return arg ? { text: `CCInformer has no area "${name}". Try: ${areaNames().join(', ')}.` } : {}
     if (name === 'pack' && (sub === 'trust' || sub === 'untrust')) return { text: (await live?.setTrust(sub === 'trust')) ?? '' }
     return sub ? { text: `/${COMMAND} ${name} takes no "${sub}"` + (name === 'pack' ? ': try trust or untrust.' : '.') } : {}
@@ -933,6 +995,7 @@ export const register: Register = on => {
         if (area === 'code') void update($, codeViewAtom, () => view as CodeView).then(() => (view === 'budgets' ? live?.refresh('code') : undefined))
         if (area === 'work') void update($, workViewAtom, () => view as WorkView).then(() => live?.refresh('work'))
         if (area === 'debug') void update($, debugViewAtom, () => view as DebugView).then(() => live?.refresh('debug'))
+        if (area === 'debug' && view === 'settings') void markSettingsShown($).catch(() => undefined)
       },
       refresh: () => void live?.refresh(area),
       toggleAllFiles: () => void update($, showAllFilesAtom, v => !v),

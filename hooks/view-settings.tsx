@@ -19,7 +19,7 @@ export const SettingsView = (k: Kit, choices: PermissionChoices, nav: SettingsNa
     <Box flexDirection="column">
       {Section(k, 'Settings', isPassive(choices) ? 'passive' : `${onCount} of ${PERMISSIONS.length} on`)}
       <Text dimColor wrap="wrap">
-        What CCInformer does by itself. With everything off it only shows what you open; keys, buttons and /ccinformer commands still work.
+        What CCInformer does by itself. With all of it off, it only shows what you open; keys, buttons and /ccinformer commands always work. A new install starts that way, except Safety.
       </Text>
       <Box flexDirection="row" columnGap={2} marginTop={1}>
         <Button key="settings-approve" plain hotkey={ACTIONS.debug.approveAll} onPress={nav.approveAll}>
