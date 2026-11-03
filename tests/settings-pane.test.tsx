@@ -160,6 +160,12 @@ test("a change made in another session shows here within a few seconds; one this
   await ui.unmount()
 })
 
+// Real time, so the press's work runs on until it waits behind the held read; the mocked clock can't move it, and a
+// settle would wait for the held read. The test runner has timers, but the types describe a hooks module's globals,
+// which have none.
+const waitReal = (ms: number) =>
+  new Promise<void>(resolve => (globalThis as unknown as { setTimeout: (done: () => void, ms: number) => unknown }).setTimeout(resolve, ms))
+
 test('a read of the store that began before a press never undoes it', async ($, on) => {
   const { clock, store, holdNextRead, release } = engine(on)
   await start($)
@@ -170,7 +176,7 @@ test('a read of the store that began before a press never undoes it', async ($, 
   void clock.advance(5000)
   await isReading
   void ui.press({ key: 'perm-notify.memory' })
-  await new Promise(resolve => setTimeout(resolve, 50))
+  await waitReal(50)
   release()
   await clock.settle()
   expect(store.get('permissions')).toEqual({ base: 'defaults', set: { 'notify.memory': false } })
