@@ -46,8 +46,8 @@ const engine = (files: Record<string, string>, opts: { isTrusted?: boolean; fail
   const commands: string[][] = []
   let script: Script = () => ({ exitCode: 0, stdout: '', stderr: '' })
   let isTrusted = opts.isTrusted ?? false
-  const pack: ResolvedPack = { id: 'own', processes: [], environments: [], checks: [], budgets: [], locks: [], noise: [], signals: [], claudeMd: [] }
-  const report = () => ({ root: ROOT, trust: { isTrusted, by: isTrusted ? 'you' : '', at: 0, isStale: false } }) as unknown as PackReport
+  const pack: ResolvedPack = { id: 'own', processes: [], environments: [], checks: [], budgets: [], noise: [] }
+  const report = () => ({ root: ROOT, trust: { isTrusted, by: isTrusted ? 'you' : '', at: 0 } }) as unknown as PackReport
   const deps: CheckDeps = {
     cwd: ROOT,
     emptySuppressions: CFG + '/empty-suppressions.json',

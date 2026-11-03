@@ -16,7 +16,7 @@ const USER_PACK = `{
   "schema": 1, "id": "acme-shop", "version": "1",
   "match": { "remote": ["github.com/acme/*"] },
   "extends": ["node-vite"],
-  "locks": [{ "id": "migrations", "glob": "db/migrations/**", "mode": "exclusive", "reason": "one migration at a time" }],
+  "noise": [{ "id": "storybook", "glob": "storybook-static/**", "kind": "generated" }],
   "checks": [{ "id": "eslint", "label": "ESLint (shop rules)", "on": ["src/**/*.ts"], "analyzer": "eslint-json", "cost": "turn", "class": "ci" }],
 }`
 
@@ -76,8 +76,13 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>) => {
   return { asked, state, change }
 }
 
-test('/ccinformer pack shows each layer and every value with the layer that set it', async ($, on) => {
-  engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK, '/repo/.ccinformer.jsonc': '{ "locks": { "warn": ["package-lock.json"] } }' })
+test('/ccinformer pack shows both layers and every value with the layer that set it; repo config files are not read', async ($, on) => {
+  engine(on, {
+    '/repo/package.json': VITE_PKG,
+    [PACKS + '/shop.pack.jsonc']: USER_PACK,
+    '/repo/.ccinformer.jsonc': '{ "envHosts": { "prod": ["db.example.test"] } }',
+    '/repo/.ccinformer.local.jsonc': '{ "plans": { "globs": ["notes/*.md"] } }',
+  })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
@@ -87,8 +92,11 @@ test('/ccinformer pack shows each layer and every value with the layer that set 
   expect(await ui.find({ type: 'Text', text: /matched git@github.com:acme\/shop.git/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'ESLint (shop rules) · eslint' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'built-in → user pack' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'db/migrations/** · migrations' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: 'package-lock.json · repo:package-lock.json' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'storybook-static/** · storybook' })).toBeDefined()
+  // Packs are personal: no repo or local layer, and nothing from the repo's files.
+  const layerNames = (await ui.findAll({ type: 'Text', text: /^(built-in|user pack|repo|local)$/ })).filter(t => (t.props as { weight?: string }).weight === 'semibold')
+  expect(layerNames.map(t => t.text)).toEqual(['built-in', 'user pack'])
+  expect(await ui.find({ type: 'Text', text: /db\.example\.test|notes\/\*\.md|ccinformer\.(local\.)?jsonc/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /a user pack matches this repo/ })).toBeDefined()
   // A user pack's trust is withdrawn in the pack, not here.
   expect(await ui.find({ key: 'pack-trust' })).toBeUndefined()
@@ -96,7 +104,11 @@ test('/ccinformer pack shows each layer and every value with the layer that set 
 })
 
 test('a broken file adds nothing, the Pack view says why, and the rest of the pane still draws', async ($, on) => {
-  engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: '{ "schema": 1, ', '/repo/.ccinformer.jsonc': '{ "pack": "acme-shop" }' })
+  engine(on, {
+    '/repo/package.json': VITE_PKG,
+    [PACKS + '/shop.pack.jsonc']: '{ "schema": 1, ',
+    [PACKS + '/old.pack.jsonc']: '{ "schema": 1, "id": "old", "version": "1", "locks": [] }',
+  })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
@@ -110,7 +122,7 @@ test('a broken file adds nothing, the Pack view says why, and the rest of the pa
   expect(await ui.find({ type: 'Text', text: /PACK · NODE-VITE/ })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'broken' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: 'refused' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /"pack" may name a built-in only/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /"locks" isn't a pack setting \(it takes schema, id, version/ })).toBeDefined()
   await ui.unmount()
 })
 
@@ -149,17 +161,16 @@ test('repo tools wait until the person allows them, once, and can be stopped aga
   await ui.unmount()
 })
 
-test('a yes goes stale when the repo config changes, and the pack is read again on the next turn', async ($, on) => {
-  const { change } = engine(on, { '/repo/package.json': VITE_PKG, '/repo/.ccinformer.jsonc': '{ "locks": { "warn": ["a.md"] } }' })
+test('a changed user pack is read again on the next turn', async ($, on) => {
+  const { change } = engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
-  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack trust' })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
-  expect(await ui.find({ type: 'Text', text: /allowed by you/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'storybook-static/** · storybook' })).toBeDefined()
 
-  change('/repo/.ccinformer.jsonc', '{ "locks": { "warn": ["a.md", "b.md"] } }')
+  change(PACKS + '/shop.pack.jsonc', USER_PACK.replace('"storybook-static/**"', '"storybook-out/**"'))
   await $.turn.start({ text: 'go on', turnId: 'turn-1' })
-  expect(await ui.find({ type: 'Text', text: 'b.md · repo:b.md' })).toBeDefined()
-  expect(await ui.find({ type: 'Text', text: /the config changed since you allowed them/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'storybook-out/** · storybook' })).toBeDefined()
   await ui.unmount()
 })
 
