@@ -61,6 +61,8 @@ export type AnalyzerId =
   | 'size-lines'
   | 'i18n-keysets'
   | 'eslint-json'
+  | 'sarif'
+  | 'problem-matcher'
   | 'ruff-json'
   | 'mypy-text'
   | 'msbuild'
@@ -69,6 +71,20 @@ export type AnalyzerId =
   | 'tscn-connections'
   | 'tscn-nodepaths'
 export type CheckCost = 'edit' | 'batch' | 'turn' | 'demand'
+// A sarif or problem-matcher check runs the command its pack names (`bin`, the whole argv) once a turn ends; these
+// placeholders in it are replaced by the engine. `{files}`, a list item on its own, at most once: the run's files
+// (repo-relative, forward slashes, at most 40 a run); without it the command runs once over the whole project.
+// `{output}`, inside any item, sarif only: the mod's own file the tool writes its results to. For eslint-json `bin`
+// stays a prefix that gets ESLint's flags and the files appended.
+export const FILES_SLOT = '{files}'
+export const OUTPUT_SLOT = '{output}'
+// A problem-matcher's `options.pattern`: one regex with named groups, tested per output line. The first three are
+// required; `options.severity` is the severity when the pattern has no severity group or its word isn't known.
+export const MATCHER_REQUIRED = ['file', 'line', 'message'] as const
+export const MATCHER_GROUPS = ['file', 'line', 'message', 'column', 'severity', 'code'] as const
+export const MATCHER_SEVERITIES = ['error', 'warn', 'info'] as const
+export const MAX_PATTERN_CHARS = 300
+export const MAX_TIMEOUT_MS = 600_000
 export type CheckSpec = {
   id: string
   label: string

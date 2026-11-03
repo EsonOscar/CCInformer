@@ -33,3 +33,20 @@ export const repoPath = (root: string, path: string): string => {
   if (!a.startsWith(b + '/')) return ''
   return full.slice(top.length + 1)
 }
+
+// A file's repo-relative path from what a tool reported: a relative path is joined to the root, `.` and `..` are
+// resolved (one that climbs out of the root lands outside), backslashes read as `/`; then as repoPath. No decoding
+// here: a gcc path may hold a literal `%`.
+export const toRepoFile = (root: string, path: string): string => {
+  const norm = path.replace(/\\/g, '/')
+  const full = /^([a-z]:)?\//i.test(norm) ? norm : root.replace(/\\/g, '/').replace(/\/+$/, '') + '/' + norm
+  const [head, ...parts] = full.split('/')
+  const out: string[] = []
+  for (const part of parts) {
+    if (part === '..') {
+      if (!out.length) return ''
+      out.pop()
+    } else if (part && part !== '.') out.push(part)
+  }
+  return repoPath(root, head + '/' + out.join('/'))
+}

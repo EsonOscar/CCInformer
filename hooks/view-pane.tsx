@@ -50,7 +50,7 @@ export type PaneData = {
   pack: PackReport | null
   findings: Finding[]
   dismissed: string[]
-  checkRun: CheckRun | null
+  checkRuns: CheckRun[]
   budgets: BudgetState | null
   plans: PlansState | null
   usage: UsageReading | null
@@ -149,6 +149,8 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const hasChecks = !!d.pack?.entries.some(e => e.section === 'checks' && !e.removedBy)
   const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
+  // The pack's checks in its order: the run lines Rules draws, and only for checks still in the pack.
+  const checkIds = d.pack?.entries.filter(e => e.section === 'checks' && !e.removedBy).map(e => e.id) ?? []
   // The body less its padding: a cell each side, and off the terminal one more on the right, under the surface's own
   // scrollbar.
   const isTerminal = d.surface === 'terminal'
@@ -167,7 +169,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
     d.area === 'now' && d.nowView === 'env' ? EnvView(k, d.tasks, d.processes, d.memory, d.now)
     : d.area === 'now' && d.nowView === 'sessions' ? SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)
     : d.area === 'code' && d.codeView === 'git' ? GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)
-    : d.area === 'code' && d.codeView === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRun, hasChecks, d.now, rulesNav)
+    : d.area === 'code' && d.codeView === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRuns, checkIds, hasChecks, d.now, rulesNav)
     : d.area === 'code' && d.codeView === 'budgets' ? BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)
     : d.area === 'work' && d.workView === 'runs' ? AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)
     : d.area === 'work' && d.workView === 'stats' ? StatsView(k, d.stats, d.statsName, width, nav.pickStats)

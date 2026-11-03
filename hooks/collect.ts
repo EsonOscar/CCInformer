@@ -4,7 +4,8 @@ import {
   parseBranches, parseChecks, parseLog, parseNumstat, parsePr, parseRuns, parseStashes, parseStatus, parseWorktrees, withNumstat,
 } from './parse'
 
-export type Ran = { exitCode: number; stdout: string; stderr: string }
+// The host says when it cut a stream at 4 MiB; a lane passes its result object through, so the flags come along.
+export type Ran = { exitCode: number; stdout: string; stderr: string; isStdoutTruncated?: boolean; isStderrTruncated?: boolean }
 // Runs one command; the hooks module hands in the light exec lane (core/lanes.ts).
 export type Exec = (argv: string[]) => Promise<Ran>
 

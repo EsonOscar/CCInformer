@@ -7,7 +7,8 @@ import { BUILTINS } from '../hooks/packs/node-vite'
 import { resolvePack } from '../hooks/packs/resolve'
 import type { PackInput } from '../hooks/packs/resolve'
 import { configHash, runnableChecks, trustOf } from '../hooks/packs/trust'
-import { checkPack } from '../hooks/packs/validate'
+import type { ResolvedPack } from '../hooks/packs/types'
+import { checkPack, groupsOf, scanPattern } from '../hooks/packs/validate'
 
 // A synthetic Vite shop: invented names, the shapes of a real repo.
 const VITE_PKG = JSON.stringify({ name: 'shop', devDependencies: { vite: '^5.0.0' } })
@@ -91,6 +92,82 @@ describe('reading pack files', () => {
     expect(checkPack(pack(check({ cost: 'edit', options: { languages: ['da'] } })), 'user').reasons).toEqual([
       'check i18n: an i18n-keysets check runs once a turn ends, so its cost must be "turn"',
     ])
+  })
+})
+
+describe('command checks: sarif and problem-matcher', () => {
+  const pack = (c: object) => ({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] }, checks: [c] })
+  const reasons = (c: object) => checkPack(pack(c), 'user').reasons
+  const sarif = (fields: object) =>
+    ({ id: 'ruff', label: 'ruff', on: ['**/*.py'], analyzer: 'sarif', cost: 'turn', class: 'ci', bin: ['ruff', 'check', '--output-format', 'sarif', '{files}'], ...fields })
+  // The README's gcc pattern.
+  const GCC =
+    '^(?<file>(?:[A-Za-z]:)?[^:]+):(?<line>\\d+):(?:(?<column>\\d+):)?\\s+(?:fatal\\s+)?(?<severity>error|warning|note):\\s+(?<message>.*?)(?:\\s+\\[(?<code>-W[^\\]]+)\\])?$'
+  const matcher = (fields: object) =>
+    ({ id: 'gcc', label: 'gcc', on: ['**/*.c'], analyzer: 'problem-matcher', cost: 'turn', class: 'ci', bin: ['gcc', '-fsyntax-only', '{files}'], options: { pattern: GCC }, ...fields })
+  const needsBin = (analyzer: string, example: string) => `check ${analyzer === 'sarif' ? 'ruff' : 'gcc'}: needs "bin", the command to run as a list (e.g. ${example})`
+  const RUFF_BIN = '["ruff", "check", "--output-format", "sarif", "{files}"]'
+
+  test('a sarif check names its command: {files} on its own, {output} inside an item, a bounded timeout', async () => {
+    expect(reasons(sarif({}))).toEqual([])
+    expect(reasons(sarif({ bin: ['dotnet', 'build', '-p:ErrorLog={output}%2Cversion=2.1'], timeoutMs: 300_000 }))).toEqual([])
+    expect(reasons(sarif({ cost: 'edit' }))).toEqual(['check ruff: a sarif check runs the repo\'s tool once a turn ends, so its cost must be "turn"'])
+    for (const bin of [undefined, [], ['', 'x'], 'ruff']) expect(reasons(sarif({ bin }))).toEqual([needsBin('sarif', RUFF_BIN)])
+    expect(reasons(sarif({ bin: ['{files}', 'ruff'] }))).toEqual(['check ruff: "bin"\'s first item is the program to run; "{files}" and "{output}" can\'t be it'])
+    const onItsOwn = 'check ruff: "{files}" must be a list item on its own, at most once; it\'s replaced by the files to check'
+    expect(reasons(sarif({ bin: ['ruff', '--files={files}'] }))).toEqual([onItsOwn])
+    expect(reasons(sarif({ bin: ['ruff', '{files}', '{files}'] }))).toEqual([onItsOwn])
+    const timeout = 'check ruff: "timeoutMs" must be a whole number of milliseconds, from 1 to 600000'
+    for (const timeoutMs of [0, -5, 1.5, 600_001, '30s']) expect(reasons(sarif({ timeoutMs }))).toEqual([timeout])
+  })
+
+  test('a problem-matcher check names its pattern: the groups, the guards against a hanging regex, the severity words', async () => {
+    expect(reasons(matcher({}))).toEqual([])
+    expect(reasons(matcher({ bin: ['gcc', '-o', '{output}', '{files}'] }))).toEqual(['check gcc: "{output}" is for sarif checks; a problem-matcher check reads the command\'s output'])
+    expect(reasons(matcher({ bin: undefined }))).toEqual([needsBin('problem-matcher', '["gcc", "-fsyntax-only", "{files}"]')])
+    expect(reasons(matcher({ options: {} }))).toEqual(['check gcc: needs "options.pattern", the regex each output line is tested against'])
+    expect(reasons(matcher({ options: { pattern: '(' } }))).toEqual(['check gcc: "options.pattern" doesn\'t compile'])
+    expect(reasons(matcher({ options: { pattern: '(?<file>a):(?<line>1)' } }))).toEqual([
+      'check gcc: "options.pattern" needs the named groups file, line and message (missing: message), e.g. (?<file>[^:]+):(?<line>\\d+): (?<message>.*)',
+    ])
+    expect(reasons(matcher({ options: { pattern: '(?<file>a):(?<line>1):(?<col>2) (?<message>.*)' } }))).toEqual([
+      'check gcc: "options.pattern" has a group "col"; the groups are file, line, column, severity, code and message',
+    ])
+    const hangs = 'check gcc: "options.pattern" repeats a group that itself repeats or branches, like (\\w+)+ or (a|b)+, which can hang on a long line; drop the outer repeat'
+    expect(reasons(matcher({ options: { pattern: '(?<file>a):(?<line>1) (?<message>(\\w+\\s?)+)' } }))).toEqual([hangs])
+    expect(reasons(matcher({ options: { pattern: '(?<file>a):(?<line>1) (?<message>(x|y)+)' } }))).toEqual([hangs])
+    expect(reasons(matcher({ options: { pattern: '(?<file>a):(?<line>1) (?<message>(?:x{2,})*)' } }))).toEqual([hangs])
+    // Repeats inside a character class, a bounded `?` after the group, and a bounded count are fine.
+    expect(reasons(matcher({ options: { pattern: '(?<file>[+*]+):(?<line>1)(?:(?<column>\\d+):)?(?:\\d{1,3}\\.){3} (?<message>.*)' } }))).toEqual([])
+    expect(reasons(matcher({ options: { pattern: '(?<file>.*):(?<line>.+):(?<message>.*)' } }))).toEqual([
+      'check gcc: "options.pattern" has more than two unbounded wildcards (.* or .+); anchor the fields instead',
+    ])
+    expect(reasons(matcher({ options: { pattern: '(?<file>a):(?<line>1) (?<message>.*)'.padEnd(301, 'x') } }))).toEqual(['check gcc: "options.pattern" is over 300 characters'])
+    expect(reasons(matcher({ options: { pattern: GCC, severity: 'fatal' } }))).toEqual(['check gcc: "options.severity" must be "error", "warn" or "info"'])
+    expect(reasons(matcher({ options: { pattern: GCC, severity: 'warn' } }))).toEqual([])
+    expect(groupsOf(GCC)).toEqual(['file', 'line', 'column', 'severity', 'message', 'code'])
+    expect(scanPattern(GCC)).toEqual({ repeatsRepeat: false, wildcards: 1 })
+  })
+
+  test('an eslint-json check gets its files appended, so a placeholder in its bin is refused', async () => {
+    const eslint = (bin: string[]) => ({ id: 'eslint', label: 'ESLint', on: ['src/**/*.ts'], analyzer: 'eslint-json', cost: 'turn', class: 'ci', bin })
+    expect(reasons(eslint(['node', 'node_modules/eslint/bin/eslint.js']))).toEqual([])
+    expect(reasons(eslint(['node', 'node_modules/eslint/bin/eslint.js', '{files}']))).toEqual([
+      'check eslint: an eslint-json check gets its files appended; drop "{files}" and "{output}" from "bin"',
+    ])
+  })
+
+  test('a repo config holding a check is refused whole; without trust a sarif check is left out; a reused id keeps the built-in\'s fields', async () => {
+    const repo = resolvePack(input({ repo: `{ "checks": [{ "id": "x", "analyzer": "sarif", "bin": ["sh"] }] }` }))
+    expect(row(repo, 'repo').state).toBe('refused')
+    expect(row(repo, 'repo').reasons.join('\n')).toMatch(/"checks": a repo config can't name commands/)
+    const own: ResolvedPack = { id: 'own', processes: [], environments: [], checks: [sarif({}) as never], budgets: [], locks: [], noise: [], signals: [], claudeMd: [] }
+    expect(runnableChecks(own, false)).toEqual([])
+    expect(runnableChecks(own, true).map(c => c.id)).toEqual(['ruff'])
+    // A user pack check with the built-in's id merges field by field, so node-vite's suppressions stay on it: an
+    // ESLint SARIF check takes its own id (the README says so).
+    const reused = resolvePack(withUser())
+    expect(reused.pack.checks.find(c => c.id === 'eslint')?.suppressions).toBe('eslint-suppressions.json')
   })
 })
 

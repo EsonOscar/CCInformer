@@ -99,7 +99,7 @@ const workViewAtom = atom({ plugin: 'ccinformer', key: 'workView' } as const, 'r
 const codeViewAtom = atom({ plugin: 'ccinformer', key: 'codeView' } as const, 'git' as CodeView)
 const findingsAtom = atom({ plugin: 'ccinformer', key: 'findings' } as const, [] as Finding[])
 const dismissedAtom = atom({ plugin: 'ccinformer', key: 'dismissed' } as const, [] as string[])
-const checkRunAtom = atom({ plugin: 'ccinformer', key: 'checkRun' } as const, null as CheckRun | null)
+const checkRunsAtom = atom({ plugin: 'ccinformer', key: 'checkRuns' } as const, [] as CheckRun[])
 const budgetsAtom = atom({ plugin: 'ccinformer', key: 'budgets' } as const, null as BudgetState | null)
 const plansAtom = atom({ plugin: 'ccinformer', key: 'plans' } as const, null as PlansState | null)
 const usageAtom = atom({ plugin: 'ccinformer', key: 'usage' } as const, null as UsageReading | null)
@@ -417,18 +417,22 @@ export const register: Register = on => {
         const run = await exec(memoryQuery(os)).catch(() => null)
         await noteMemory(run?.exitCode === 0 ? parseMemory(os, run.stdout, await $.clock.now()) : null)
       })
-    // The pack's checks (checks/run.ts); the findings and the latest run are written here, where their atoms are.
+    // The pack's checks (checks/run.ts); the findings and the latest runs are written here, where their atoms are.
     const checks = createChecks($, {
       cwd,
       emptySuppressions: configDir + '/ccinformer/empty-suppressions.json',
+      outputDir: configDir + '/ccinformer/output',
+      sessionId: selfId,
       heavy: lanes.heavy,
       pack: async () => packResolved ?? (await reloadPack(), packResolved),
       report: () => packReport,
       reload: reloadPack,
       // A check's new findings for these files replace its old ones there.
       saveFindings: (check, files, found) => update($, findingsAtom, list => [...list.filter(f => f.check !== check || !files.includes(f.file)), ...found]),
-      saveRun: run => update($, checkRunAtom, () => run),
+      // One run per check: a newer one replaces the check's last.
+      saveRun: run => update($, checkRunsAtom, runs => [...runs.filter(r => r.check !== run.check), run]),
       dismissed: () => read($, dismissedAtom),
+      findingFiles: async check => [...new Set((await read($, findingsAtom)).filter(f => f.check === check).map(f => f.file))],
       may,
     })
     // The pack's budgets (budgets/run.ts), read on opening Code › Budgets, on r, and after a build on m.
@@ -990,14 +994,14 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRun, budgets, plans, usage, contentTop, ciActive, version, permissions, skills] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRuns, budgets, plans, usage, contentTop, ciActive, version, permissions, skills] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
-      read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunAtom),
+      read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunsAtom),
       read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRun, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
+      tools, steps, compactions, sessions, pack, findings, dismissed, checkRuns, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
       surface: String(e.surface),
