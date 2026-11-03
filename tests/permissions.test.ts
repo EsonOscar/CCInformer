@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { NEW_INSTALL, NO_CHOICES, PERMISSIONS, PERMISSION_GROUPS, allSet, choicesFrom, explainPrompt, isAllowed, isPassive, startingChoices, toggled } from '../hooks/core/permissions'
 import type { PermissionId } from '../hooks/core/permissions'
+import { DEFAULT_SKILLS } from '../hooks/core/skills'
 
 const ORDINARY = PERMISSIONS.filter(d => d.group !== 'safety').map(d => d.id)
 const SAFETY = PERMISSIONS.filter(d => d.group === 'safety').map(d => d.id)
@@ -70,7 +71,7 @@ describe('permissions', () => {
 
   test("the explain prompt names every permission with its group and whether it's on", async () => {
     const choices = toggled(NO_CHOICES, 'claude.turnNotes')
-    const prompt = explainPrompt(choices)
+    const prompt = explainPrompt(choices, DEFAULT_SKILLS)
     expect(prompt).toContain('no tools are needed')
     for (const d of PERMISSIONS) {
       const group = PERMISSION_GROUPS.find(g => g.id === d.group)!.label

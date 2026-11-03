@@ -24,8 +24,9 @@ const prList = (prs: number[]) => prs.slice(0, PRS_SHOWN).map(n => '#' + n).join
 // The checkpoint board: each plan file (in .local/plans/, or named by the pack), how many of its checkpoints are done,
 // and every checkpoint with its status (from the markers on its own line) and the PRs it names. The status is always
 // the plan's own; a PR GitHub reports merged on a checkpoint that still reads open is a warning beside it. Pressing a
-// plan's header selects it, and `a` archives the selected one (it asks first).
-export const PlansView = (k: Kit, state: PlansState | null, now: number, nav: PlanNav): JSX.Element => {
+// plan's header selects it, and `a` archives the selected one (it asks first). With the planning skills' plan files
+// off (Debug › Settings), the empty board says so, as no plan of theirs will appear.
+export const PlansView = (k: Kit, state: PlansState | null, now: number, nav: PlanNav, isPlanFilesOn: boolean): JSX.Element => {
   const { Box } = k
   // A state stored before the board asked GitHub has no `merged` (or `archiveDir`).
   const merged = new Set(state?.merged ?? [])
@@ -35,7 +36,8 @@ export const PlansView = (k: Kit, state: PlansState | null, now: number, nav: Pl
       {!state && Section(k, 'Plans')}
       {!state && Empty(k, 'Reading the plans…')}
       {state && state.plans.length === 0 && Section(k, 'Plans', ago(now - state.at))}
-      {state && state.plans.length === 0 && Empty(k, 'No plans yet: a plan in .local/plans/ (as /ccinformer:plan-feature saves it) shows here.')}
+      {state && state.plans.length === 0 && isPlanFilesOn && Empty(k, 'No plans yet: a plan in .local/plans/ (as /ccinformer:plan-feature saves it) shows here.')}
+      {state && state.plans.length === 0 && !isPlanFilesOn && Empty(k, 'No plans. Plan files are off (Debug › Settings): the planning skills save nothing to .local/plans/.')}
       {state?.plans.map(p => Plan(k, p, merged, archiveDir, nav))}
     </Box>
   )
