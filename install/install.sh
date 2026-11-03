@@ -10,23 +10,14 @@ set -euo pipefail
 repo='EsonOscar/CCInformer'
 marketplace='ccinformer'
 plugin='ccinformer'
+# The oldest Claude Code CCInformer is known to work with; raise by hand, with README "Requirements".
+min_claude='2.1.317'
 
 step() { printf '==> %s\n' "$1"; }
 die() { printf 'Error: %s\n' "$1" >&2; exit 1; }
 
-# 1. A claude that runs.
-claude=''
-for candidate in "${CLAUDE_BIN:-}" claude "$HOME/.local/bin/claude"; do
-  [ -n "$candidate" ] || continue
-  if "$candidate" --version > /dev/null 2>&1; then claude="$candidate"; break; fi
-done
-[ -n "$claude" ] || die "Claude Code doesn't run here. Install it, or set CLAUDE_BIN to a working claude, and run this again."
-step "Using $claude ($("$claude" --version))"
-
-# 2. The tools the mod uses (README "Requirements"): git, then gh and Node, which are optional. A missing one is
-#    offered, one at a time, through the package manager found here, and installed only on a yes. Piped into bash,
-#    this script's input is the script itself, so the question is asked on the terminal; with no terminal, the
-#    commands are only shown.
+# Questions are asked on the terminal: piped into bash, this script's input is the script itself. With no terminal,
+# nothing is asked and the commands are only shown.
 can_ask=false
 if { : < /dev/tty; } 2> /dev/null; then can_ask=true; fi
 ask() {
@@ -35,6 +26,51 @@ ask() {
   read -r answer < /dev/tty || return 1
   case "$answer" in y | Y | yes | Yes) return 0 ;; *) return 1 ;; esac
 }
+
+# 1. A claude that runs.
+claude=''
+ver_out=''
+for candidate in "${CLAUDE_BIN:-}" claude "$HOME/.local/bin/claude"; do
+  [ -n "$candidate" ] || continue
+  if ver_out=$("$candidate" --version < /dev/null 2>&1); then claude="$candidate"; break; fi
+done
+[ -n "$claude" ] || die "Claude Code doesn't run here. Install it, or set CLAUDE_BIN to a working claude, and run this again."
+step "Using $claude ($ver_out)"
+
+# 1b. One new enough: an older Claude Code can refuse the mod with an invalid manifest error. The version is the first
+#     x.y.z in the output; none found is a warning, as a build may name itself otherwise.
+version_at_least() {
+  local IFS=. i
+  local a=($1) b=($2)
+  for i in 0 1 2; do
+    if [ $((10#${a[$i]})) -gt $((10#${b[$i]})) ]; then return 0; fi
+    if [ $((10#${a[$i]})) -lt $((10#${b[$i]})) ]; then return 1; fi
+  done
+  return 0
+}
+re='([0-9]+)\.([0-9]+)\.([0-9]+)'
+read_version() { found=''; if [[ $ver_out =~ $re ]]; then found=${BASH_REMATCH[0]}; fi; }
+read_version
+if [ -z "$found" ]; then
+  printf 'Warning: couldn'\''t read a version from "%s"; carrying on. CCInformer is known to work with Claude Code %s or later.\n' "$ver_out" "$min_claude" >&2
+elif ! version_at_least "$found" "$min_claude"; then
+  step "Claude Code $found is older than $min_claude, the oldest version CCInformer is known to work with. An older one can refuse the mod with an invalid manifest error (Unrecognized key: \"types\")."
+  if ask "    Update it now with: claude update ?"; then
+    "$claude" update < /dev/tty || printf "Warning: claude update didn't finish.\n" >&2
+    ver_out=$("$claude" --version < /dev/null 2>&1 || true)
+    read_version
+    step "Claude Code is now ${found:-$ver_out}"
+  fi
+  if [ -z "$found" ] || ! version_at_least "$found" "$min_claude"; then
+    printf 'Claude Code %s is older than %s, so CCInformer isn'\''t installed. Update it, and run this again:\n' "${found:-$ver_out}" "$min_claude" >&2
+    printf '    claude update (native installer)\n    brew upgrade claude-code (Homebrew)\n    npm i -g @anthropic-ai/claude-code@latest (npm)\n' >&2
+    printf 'If it still shows the old version, an older copy earlier on PATH hides the new one: type -a claude\n' >&2
+    exit 1
+  fi
+fi
+
+# 2. The tools the mod uses (README "Requirements"): git, then gh and Node, which are optional. A missing one is
+#    offered, one at a time, through the package manager found here, and installed only on a yes.
 pm=''
 for candidate in brew apt-get dnf pacman; do
   if command -v "$candidate" > /dev/null 2>&1; then pm="$candidate"; break; fi

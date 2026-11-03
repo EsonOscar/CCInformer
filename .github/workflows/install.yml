@@ -4,7 +4,7 @@ name: Install
 # installer (in ~/.local/bin, off PATH), then the PR's install.sh (Linux, macOS) or install.ps1 (Windows PowerShell,
 # through iex as the README's one-liner does), with no terminal, twice. The first run must leave the mod installed
 # with auto-update on; the second must change nothing. The scripts add the marketplace from GitHub, so the mod they
-# install is main's, not the PR's.
+# install is main's, not the PR's. Before that, a fake old Claude Code must make the script stop.
 #
 # Not a required check: it downloads Claude Code on every run, and a flaky download shouldn't hold up PRs that don't
 # touch the installer. It runs on the PRs that do, and by hand (Actions, Install, Run workflow).
@@ -58,18 +58,39 @@ jobs:
         shell: powershell
         run: irm https://claude.ai/install.ps1 | iex
 
+      # A Claude Code older than the script's minimum must stop it before anything is installed. /bin/bash is what
+      # `curl | bash` gets: macOS's own bash 3.2, not Homebrew's, which the runner puts first on PATH.
+      - name: An old Claude Code stops install.sh
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p "$RUNNER_TEMP/old"
+          printf '#!/bin/sh\n[ "$1" = --version ] && echo "2.0.0 (Claude Code)" && exit 0\nexit 1\n' > "$RUNNER_TEMP/old/claude"
+          chmod +x "$RUNNER_TEMP/old/claude"
+          if out=$(CLAUDE_BIN="$RUNNER_TEMP/old/claude" /bin/bash install/install.sh < /dev/null 2>&1); then echo "$out"; exit 1; fi
+          echo "$out" | grep -q 'older than'
+
       - name: First run of install.sh
         if: runner.os != 'Windows'
         run: |
-          bash install/install.sh < /dev/null
+          /bin/bash install/install.sh < /dev/null
           node .github/scripts/install-state.mjs "$HOME/.local/bin/claude" > "$RUNNER_TEMP/first.json"
 
       - name: Second run of install.sh changes nothing
         if: runner.os != 'Windows'
         run: |
-          bash install/install.sh < /dev/null
+          /bin/bash install/install.sh < /dev/null
           node .github/scripts/install-state.mjs "$HOME/.local/bin/claude" > "$RUNNER_TEMP/second.json"
           git diff --no-index --exit-code "$RUNNER_TEMP/first.json" "$RUNNER_TEMP/second.json"
+
+      - name: An old Claude Code stops install.ps1
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force "$env:RUNNER_TEMP\old" | Out-Null
+          Set-Content -Path "$env:RUNNER_TEMP\old\claude.cmd" -Value "@echo off`r`nif `"%1`"==`"--version`" echo 2.0.0 (Claude Code)& exit /b 0`r`nexit /b 1"
+          $env:CLAUDE_BIN = "$env:RUNNER_TEMP\old\claude.cmd"
+          try { Get-Content install/install.ps1 -Raw | Invoke-Expression; exit 1 } catch { if ($_.Exception.Message -notmatch 'older than') { throw } }
+          $env:CLAUDE_BIN = ''
 
       - name: First run of install.ps1
         if: runner.os == 'Windows'
