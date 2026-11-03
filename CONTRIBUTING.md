@@ -141,7 +141,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 | `secret-scan` | `ci.yml` | gitleaks finds a secret in any commit of the PR or in the tree ([`.gitleaks.toml`](.gitleaks.toml)). The repo is public, so this one matters even solo |
 | `pr-title` | `pr-gates.yml` | The PR title isn't `type(scope): subject` |
 | `version-bump` | `pr-gates.yml` | Shipped files changed and `plugin.json`'s version didn't go up |
-| `install` | `install.yml` | On Linux, macOS or Windows, with Claude Code from its native installer: a run of the install script with no terminal fails, leaves the mod uninstalled or auto-update off, or a second run changes anything. Only on PRs that touch `install/` or the workflow, or run by hand; not required, as it downloads Claude Code each time |
+| `install` | `install.yml` | On Linux, macOS or Windows, with Claude Code from its native installer: a run of the install script with no terminal fails, leaves the mod uninstalled or auto-update off, a second run changes anything, or an old Claude Code doesn't stop it. Only on PRs that touch `install/` or the workflow, or run by hand; not required, as it downloads Claude Code each time |
 
 The job names above `install` are required status checks in [`.github/rulesets/main.json`](.github/rulesets/main.json). Renaming a job means updating the ruleset in the same PR. The file isn't applied by CI: the maintainer re-imports it on GitHub, so say so in the PR.
 

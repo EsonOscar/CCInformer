@@ -9,8 +9,14 @@ $ErrorActionPreference = 'Stop'
 $Repo = 'EsonOscar/CCInformer'
 $Marketplace = 'ccinformer'
 $Plugin = 'ccinformer'
+# The oldest Claude Code CCInformer is known to work with; raise by hand, with README "Requirements".
+$MinClaude = '2.1.317'
 
 function Step($text) { Write-Host "==> $text" }
+
+# Questions are asked in the console; with no console to ask in, nothing is asked and the commands are only shown.
+$canAsk = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+function Ask($question) { $canAsk -and ((Read-Host "$question [y/N]") -match '^(y|yes)$') }
 
 # 1. A claude that runs.
 $claude = $null
@@ -21,13 +27,36 @@ foreach ($candidate in @($env:CLAUDE_BIN, 'claude', (Join-Path $HOME '.local\bin
   } catch {}
 }
 if (-not $claude) { throw "Claude Code doesn't run here. Install it, or set CLAUDE_BIN to a working claude, and run this again." }
-Step "Using $claude ($(& $claude --version))"
+$verOut = (& $claude --version) -join ' '
+Step "Using $claude ($verOut)"
+
+# 1b. One new enough: an older Claude Code can refuse the mod with an invalid manifest error. The version is the first
+#     x.y.z in the output; none found is a warning, as a build may name itself otherwise.
+function ClaudeVersion($text) { if ($text -match '(\d+)\.(\d+)\.(\d+)') { [version]$Matches[0] } else { $null } }
+$found = ClaudeVersion $verOut
+if ($null -eq $found) {
+  Write-Warning "Couldn't read a version from ""$verOut""; carrying on. CCInformer is known to work with Claude Code $MinClaude or later."
+} elseif ($found -lt [version]$MinClaude) {
+  Step "Claude Code $found is older than $MinClaude, the oldest version CCInformer is known to work with. An older one can refuse the mod with an invalid manifest error (Unrecognized key: ""types"")."
+  if (Ask "    Update it now with: claude update ?") {
+    & $claude update
+    if ($LASTEXITCODE -ne 0) { Write-Warning "claude update didn't finish." }
+    $verOut = (& $claude --version) -join ' '
+    $found = ClaudeVersion $verOut
+    Step "Claude Code is now $verOut"
+  }
+  if ($null -eq $found -or $found -lt [version]$MinClaude) {
+    $shown = if ($null -eq $found) { $verOut } else { "$found" }
+    Write-Host "Claude Code $shown is older than $MinClaude, so CCInformer isn't installed. Update it, and run this again:"
+    Write-Host "    claude update (native installer)"
+    Write-Host "    npm i -g @anthropic-ai/claude-code@latest (npm)"
+    Write-Host "If it still shows the old version, an older copy earlier on PATH hides the new one: Get-Command claude -All"
+    throw "Claude Code $shown is older than $MinClaude. Update it (commands above), and run this again."
+  }
+}
 
 # 2. The tools the mod uses (README "Requirements"): git, then gh and Node, which are optional. A missing one is
-#    offered, one at a time, through winget, and installed only on a yes; with no console to ask in, the commands are
-#    only shown.
-$canAsk = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
-function Ask($question) { $canAsk -and ((Read-Host "$question [y/N]") -match '^(y|yes)$') }
+#    offered, one at a time, through winget, and installed only on a yes.
 $hasWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)
 $tools = @(
   @{ Name = 'git'; Id = 'Git.Git'; Why = "adding the marketplace and Code > Git (needed); Git for Windows also brings Git Bash, for plan-feature's build waves" }

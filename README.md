@@ -24,7 +24,7 @@ An area's badge flags something worth a look, such as `!` on Code while a push w
 
 ## Requirements
 
-- **Claude Code** with mods (plugins with a hooks module). Releases are tested against the latest Claude Code.
+- **Claude Code 2.1.317 or later**, the oldest version CCInformer is known to work with; releases are tested against the latest. An older one can refuse the mod with an invalid manifest error (`Unrecognized key: "types"`); `claude update` fixes that.
 - **git** on the PATH.
 
 The rest is optional; without it, only the parts that use it stay empty:
@@ -39,7 +39,7 @@ The rest is optional; without it, only the parts that use it stay empty:
 
 ## Install
 
-The install script adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. If git, Node or `gh` is missing, it says what each is for and offers to install it (winget on Windows; brew, apt-get, dnf or pacman elsewhere), one at a time; nothing is installed without your yes. It is safe to run again at any time: on a machine that already has the mod, it only offers the tools that are missing and updates the mod. Its last line says where the switches are: Debug › Settings (in the pane, `5` then `s`). A new install starts with them off except Safety; an update keeps yours.
+The install script first checks the Claude Code version: an older one than Requirements names is offered `claude update`, and without a yes the script stops and shows the update commands. Then it adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. If git, Node or `gh` is missing, it says what each is for and offers to install it (winget on Windows; brew, apt-get, dnf or pacman elsewhere), one at a time; nothing is installed without your yes. It is safe to run again at any time: on a machine that already has the mod, it only offers the tools that are missing and updates the mod. Its last line says where the switches are: Debug › Settings (in the pane, `5` then `s`). A new install starts with them off except Safety; an update keeps yours.
 
 Windows (PowerShell):
 
@@ -53,7 +53,7 @@ Linux or macOS:
 curl -fsSL https://raw.githubusercontent.com/EsonOscar/CCInformer/main/install/install.sh | bash
 ```
 
-If the first `claude` on your PATH doesn't run, set `CLAUDE_BIN` to a working one first.
+If the first `claude` on your PATH doesn't run, set `CLAUDE_BIN` to a working one first. If an update leaves the old version showing, an older copy earlier on PATH hides the new one: `type -a claude` (`Get-Command claude -All` on Windows) lists them.
 
 Or install by hand, without auto-update. At the prompt of a terminal session:
 
