@@ -154,6 +154,12 @@ await test('a 150-row run keeps summary first and under 5 KB', async () => {
   assert.ok(size < 5000, `summary is ${size} chars`)
 })
 
+await test('every agent runs on Opus at high effort', async () => {
+  const { calls } = await run(baseArgs(), (label) => label.startsWith('audit') ? { slice: 'a.md:1-50', changes: [row({})] } : { verdicts: [], missed: [] })
+  assert.ok(calls.length >= 2)
+  for (const c of calls) assert.deepEqual([c.opts.model, c.opts.effort], ['opus', 'high'], c.label)
+})
+
 await test('the script source has no backslash-u escape and no Date or Math.random', async () => {
   assert.ok(!source.includes('\\u'), 'found a backslash-u escape')
   assert.ok(!/\bDate\b|Math\.random/.test(source), 'found Date or Math.random')

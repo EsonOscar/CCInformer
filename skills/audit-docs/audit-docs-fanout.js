@@ -3,13 +3,21 @@ export const meta = {
   description: 'Read-only docs audit fan-out: auditors with slices that do not overlap, then adversarial verifiers; returns a compact summary and the full changelist',
   whenToUse: 'Run by the audit-docs skill in plan mode, with args {context, root, date, history, docs, auditors, verifiers?}',
   phases: [
-    { title: 'Audit', detail: 'one read-only auditor per slice' },
-    { title: 'Verify', detail: 'adversarial verifiers, each owning some rows, keep also as a verdict-only second opinion' },
+    { title: 'Audit', detail: 'one read-only auditor per slice', model: 'opus' },
+    { title: 'Verify', detail: 'adversarial verifiers, each owning some rows, keep also as a verdict-only second opinion', model: 'opus' },
   ],
 }
 
 // The user's rule: at most 10 agents at a time. Verify waits for Audit, so a cap per phase caps how many run at once.
 const MAX_PER_PHASE = 10
+// Every agent runs on Opus at high effort at most, whatever model the session runs on: a bigger model orchestrates
+// and checks, it doesn't fan out. A model or effort given above the cap, or one not on the lists, is brought down to it.
+const MAX_MODEL = 'opus'
+const MAX_EFFORT = 'high'
+const MODELS = ['haiku', 'sonnet', 'opus']
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const under = (list, value, max) => list.includes(value) && list.indexOf(value) <= list.indexOf(max) ? value : max
+const capped = (model, effort) => ({ model: under(MODELS, model, MAX_MODEL), effort: under(EFFORTS, effort, MAX_EFFORT) })
 const WORDS_CAP = 8000
 const WORDS_CAP_EXTRACT = 3000
 // The completion preview shows only the first few KB of the result, so the summary (first key) stays small.
@@ -180,7 +188,7 @@ const audits = (await parallel(args.auditors.map(a => () => {
     ? 'EXTRACT SLICE: these ranges move to history whole. Report each as one MOVE to the history file. Report every current rule, gotcha, number or reason that lives only here as an ADD to the current doc and section where it belongs (create: true for a new section), in that doc\'s style, with the source range. Never put moved text in new_text.'
     : 'Read every line of your slice and check each claim against what it describes, citing file:line.'
   return agent(`${head}\nYOUR SLICE (other auditors cover the rest): ${ranges}\n${a.brief}\n${role}\nQuote anchors exactly. Report only problems; a clean slice returns an empty changes list.`,
-    { label: `audit:${a.key}`, phase: 'Audit', schema: AUDIT })
+    { label: `audit:${a.key}`, phase: 'Audit', schema: AUDIT, ...capped() })
     .then(r => r && { key: a.key, ...r })
 }))).filter(Boolean)
 
@@ -201,7 +209,7 @@ const plan = verifiers.map(v => ({
   second: v.key === 'keep' ? changes.filter(c => ownerOf(c) !== v && secondOpinion(c)) : [],
 }))
 const verifications = await parallel(plan.map(p => () =>
-  agent(verifyPrompt(p.v, p.owned, p.second), { label: `verify:${p.v.key}`, phase: 'Verify', schema: VERIFY })
+  agent(verifyPrompt(p.v, p.owned, p.second), { label: `verify:${p.v.key}`, phase: 'Verify', schema: VERIFY, ...capped() })
     .then(r => r && { key: p.v.key, ...r })))
 
 const incomplete = [
@@ -241,7 +249,7 @@ const changed = final.filter(c => c.action_changed && c.verified_by !== 'keep')
 let agents = audits.length + verifications.filter(Boolean).length
 if (changed.length) {
   const keep = verifiers.find(v => v.key === 'keep')
-  const r = await agent(verifyPrompt(keep, [], changed), { label: 'verify:keep-changed', phase: 'Verify', schema: VERIFY })
+  const r = await agent(verifyPrompt(keep, [], changed), { label: 'verify:keep-changed', phase: 'Verify', schema: VERIFY, ...capped() })
   agents += 1
   if (!r) incomplete.push('verify:keep-changed')
   for (const c of changed) {

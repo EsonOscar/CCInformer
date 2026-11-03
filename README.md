@@ -77,7 +77,7 @@ Three planning skills come with the mod. Each plans in plan mode, asks you only 
 
 | Skill | Use it for | What it costs |
 |---|---|---|
-| `/ccinformer:plan-feature <task>` | A feature worth a thorough review: several parts of the code, data, access rules | A workflow of agents: scouts, 1 to 3 planners, then critics whose findings are checked against the code. Often 10 to 20 agents |
+| `/ccinformer:plan-feature <task>` | A feature worth a thorough review: several parts of the code, data, access rules | A workflow of agents: scouts, 1 to 3 planners, then critics whose findings are checked against the code. Often 10 to 20 agents, on Opus at high effort at most |
 | `/ccinformer:plan-feature-small <task>` | A smaller change, or a tighter token budget | No workflow: Claude reads the code and reviews its own plan |
 | `/ccinformer:plan-handoff <feature>` | Planning for someone who isn't a developer | Like plan-feature, but it asks only product questions and ends with a doc a developer builds from |
 
@@ -87,6 +87,8 @@ Three planning skills come with the mod. Each plans in plan mode, asks you only 
 4. Follow along in Work › Plans (`3`, then `t`), and archive the plan there once it's done.
 
 **Planning settings.** A repo's checks, the risks to review for, the actions that need your OK and its commit rules can be written down once: in a committed `## Planning` section of its CLAUDE.md, or privately in `.local/ccinformer-planning.md`. After a first run in a repo with neither, the skill offers to write the private one for you.
+
+**Agent models.** The skills' workflows run their agents on Opus at high effort at most, whatever model your session runs on, so a session on a larger model orchestrates and checks without fanning it out. Defaults: scouts on Sonnet at medium effort (planners and critics check what they report against the code); planners, critics, builders, reviewers, auditors and verifiers on Opus at high; the side agents a build uses for menial tasks on Sonnet at medium. To change them for one run, say so in the task text (`scouts on Opus`, `builders on Sonnet`): the skill passes a `model` and `effort` per scout or work package, and the script brings anything above the cap down to it. To move the cap itself, change `MAX_MODEL` and `MAX_EFFORT` near the top of the three fan-out scripts (`skills/plan-feature/plan-fanout.js`, `skills/plan-feature/build-fanout.js`, `skills/audit-docs/audit-docs-fanout.js`) in your own clone or fork, and run that copy with `claude --plugin-dir <folder>` (CONTRIBUTING.md "Working on the mod"); the installed release is replaced on every update, so an edit there doesn't last.
 
 **Docs audit.** `/ccinformer:audit-docs <focus>` checks a repo's docs against its code, in plan mode: any kind of doc (READMEs, contributor docs, design docs, ADRs, plans, changelogs, CLAUDE.md files), git-tracked or git-ignored. A workflow of read-only agents finds drift, stale status, history in current docs, broken references, contradictions and duplicates; you decide what is really yours to decide; the plan you approve holds every change. Once approved, a script checks each change against the docs as they were, applies them to a work folder, and installs them after a moved-text check and a review, keeping copies of the old docs in `~/.claude/audit-backups/`. Moved history goes to a history file. Its scripts need Python 3 (standard library only).
 

@@ -4,8 +4,8 @@ export const meta = {
   whenToUse: 'Run by the CCInformer plan-feature and plan-handoff skills in plan mode, with args {context, requirements?, priorFindings?, scouts: [{key, brief, agentType?, model?, effort?}], planners, critics?, extraCritics?} or {context, recheck: {plan, changes}, critics?, extraCritics?}',
   phases: [
     { title: 'Scout', detail: 'one read-only scout per domain', model: 'sonnet' },
-    { title: 'Plan', detail: '1 to 3 planners owning domains that do not overlap' },
-    { title: 'Critique', detail: 'adversarial reviewers, one lens each, structured findings' },
+    { title: 'Plan', detail: '1 to 3 planners owning domains that do not overlap', model: 'opus' },
+    { title: 'Critique', detail: 'adversarial reviewers, one lens each, structured findings', model: 'opus' },
   ],
 }
 
@@ -13,9 +13,17 @@ export const meta = {
 // plan), so a cap per phase is a cap on how many run at once; the total can be higher.
 const MAX_PER_PHASE = 10
 const MAX_PLANNERS = 3
+// Every agent runs on Opus at high effort at most, whatever model the session runs on: a bigger model orchestrates
+// and checks, it doesn't fan out. A model or effort given above the cap, or one not on the lists, is brought down to it.
+const MAX_MODEL = 'opus'
+const MAX_EFFORT = 'high'
+const MODELS = ['haiku', 'sonnet', 'opus']
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const under = (list, value, max) => list.includes(value) && list.indexOf(value) <= list.indexOf(max) ? value : max
+const capped = (model, effort) => ({ model: under(MODELS, model, MAX_MODEL), effort: under(EFFORTS, effort, MAX_EFFORT) })
 // Scouts gather facts that the planners and critics check against the code, so a faster model is enough there and
-// shortens the first phase. Planners and critics inherit the session's model and effort. A scout whose report the
-// plan will rest on unchecked (proving something is absent, access rules) asks for more with its own model/effort.
+// shortens the first phase. Planners and critics run at the cap. A scout whose report the plan will rest on unchecked
+// (proving something is absent, access rules) asks for more with its own model/effort, up to the cap.
 const SCOUT_MODEL = 'sonnet'
 const SCOUT_EFFORT = 'medium'
 const READ_ONLY = 'YOU ARE READ-ONLY: do not create, edit or delete any file; no builds, tests, git, deploys or writes to any database or service. Only read and search.'
@@ -61,7 +69,7 @@ const section = (kind, items, field) => items.map(x => `### ${kind}: ${x.key}\n$
 
 const critique = (subject) => parallel(critics.map(c => () =>
   agent(`${context}${requirements}\n${READ_ONLY}\n${subject}\n\nYou are an ADVERSARIAL REVIEWER. Assume the plans are wrong until the code says otherwise. Focus: ${c.focus}\nReturn your findings: BLOCKERS (would break, contradict the code or the requirements, or skip a needed approval), SHOULD-FIX, NITS. Each with evidence (file and line where there is one) and the minimal fix. Don't restate the plans. At most about 15 findings.`,
-    { label: `critic:${c.key}`, phase: 'Critique', schema: CRITIQUE_SCHEMA })
+    { label: `critic:${c.key}`, phase: 'Critique', schema: CRITIQUE_SCHEMA, ...capped() })
     .then(r => r && { key: c.key, ...r })))
   .then(rs => rs.filter(Boolean))
 
@@ -85,7 +93,7 @@ log(`agents: ${scouts.length} scouts, ${planners.length} planners, ${critics.len
 phase('Scout')
 const reports = (await parallel(scouts.map(s => () =>
   agent(`${context}${requirements}${priorFindings}\n${READ_ONLY}\nSCOUT DOMAIN: ${s.brief}\nReturn a dense report (headings and bullets), at most about 900 words, facts with file:line citations, then a short "Implications for the plan" list. For anything you report as absent (no callers, no other uses), say how you searched; mark what you couldn't confirm as unconfirmed.`,
-    { label: `scout:${s.key}`, phase: 'Scout', model: s.model || SCOUT_MODEL, effort: s.effort || SCOUT_EFFORT, ...(s.agentType ? { agentType: s.agentType } : {}) })
+    { label: `scout:${s.key}`, phase: 'Scout', ...capped(s.model || SCOUT_MODEL, s.effort || SCOUT_EFFORT), ...(s.agentType ? { agentType: s.agentType } : {}) })
     .then(r => r && { key: s.key, report: r })))).filter(Boolean)
 const missingScouts = scouts.filter(s => !reports.some(r => r.key === s.key)).map(s => s.key)
 if (missingScouts.length)
@@ -105,7 +113,7 @@ Give:
 - how it is deployed and rolled back, and what behaves differently after deploy;
 - the tests, especially those that encode business or access rules.
 Say exactly what you need from or give to the other planners. List the defaults you took. End with "Open questions" (only real decisions, at most 5, each with your recommendation), split into "for the user" and "for other stakeholders". At most about 1500 words.`,
-    { label: `plan:${p.key}`, phase: 'Plan' }).then(r => r && { key: p.key, plan: r })
+    { label: `plan:${p.key}`, phase: 'Plan', ...capped() }).then(r => r && { key: p.key, plan: r })
 }))).filter(Boolean)
 
 // Don't review a plan with a hole in it: a missing domain would read as "nothing to say".
