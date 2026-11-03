@@ -19,12 +19,14 @@ export const shownFindings = (findings: Finding[], dismissed: string[]): Finding
 }
 
 // What the pack's checks found in the files Claude changed: per file, each finding with its rule and whether CI
-// would fail on it. Pressing one selects it; `x` dismisses the selected one for this session.
+// would fail on it, under one line per turn check's latest run, in the pack's order. Pressing a finding selects it;
+// `x` dismisses the selected one for this session.
 export const RulesView = (
   k: Kit,
   findings: Finding[],
   dismissed: string[],
-  run: CheckRun | null,
+  runs: CheckRun[],
+  checkIds: string[],
   hasChecks: boolean,
   now: number,
   nav: RulesNav,
@@ -36,7 +38,14 @@ export const RulesView = (
   return (
     <Box flexDirection="column">
       {Section(k, 'Rules', failing ? `${failing} would fail CI` : shown.length ? String(shown.length) : '')}
-      {run && Run(k, run, now)}
+      {checkIds.map(id => {
+        const run = runs.find(r => r.check === id)
+        return run ? (
+          <Box key={'run-' + id} flexDirection="column">
+            {Run(k, run, now)}
+          </Box>
+        ) : null
+      })}
       {!hasChecks && Empty(k, "This repo's pack has no checks.")}
       {hasChecks && shown.length === 0 && Empty(k, 'Nothing found in the files changed so far.')}
       {files.map(file => (
@@ -74,12 +83,14 @@ export const RulesView = (
   )
 }
 
-// The latest run of a check that runs the repo's own tools.
+// The latest run of a check that runs the repo's own tools; a passed one counts the findings the tool reported in
+// files the turn didn't write.
 const Run = (k: Kit, run: CheckRun, now: number): JSX.Element => {
   const { Text } = k
   if (run.isRunning) return Line(k, { char: spinner(now), color: ACCENT }, `${run.label} on ${run.files} file${run.files === 1 ? '' : 's'}…`)
   if (run.waitsForTrust)
     return Line(k, { char: '◌', color: 'warning' }, `${run.label} waits until this repo's own tools may run (Debug › Pack, a)`)
   if (run.error) return Line(k, { char: '✗', color: 'error' }, `${run.label}: ${run.error}`, <Text dimColor>{ago(now - run.at)}</Text>)
-  return Line(k, { char: '✓', color: 'success', dim: true }, `${run.label} on ${run.files} file${run.files === 1 ? '' : 's'} · ${duration(run.ms)}`, ago(now - run.at))
+  const elsewhere = run.elsewhere > 0 ? ` · ${run.elsewhere} elsewhere` : ''
+  return Line(k, { char: '✓', color: 'success', dim: true }, `${run.label} on ${run.files} file${run.files === 1 ? '' : 's'} · ${duration(run.ms)}${elsewhere}`, ago(now - run.at))
 }

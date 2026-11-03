@@ -123,12 +123,16 @@ The band and Now › Env place a process Claude starts by its environment: the c
 
 ### Checks
 
-A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Four analyzers so far:
+A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Six analyzers so far:
 
 - **`size-lines`** (`cost: "edit"`): a file over `options.max` lines, checked as Claude writes it. The repo's ESLint suppressions apply, and one that's no longer needed is reported.
 - **`regex-lines`** (`cost: "edit"`): each line matching `options.pattern`, checked as Claude writes the file, in any language, with `options.message` as what to do instead. In JS and TS files, comments and regex literals are skipped, and a match in a template string is reported on the line ESLint reports it on. Made for design rules (no raw `<button>`, no stock palette classes): an `advise` check reaches Claude as a project rule. A `ci` check that names the ESLint rule enforcing the same ban in `rules` says "CI will fail" at once, follows that rule's suppressions, and stands in for ESLint's finding on the same line at the end of the turn.
-- **`eslint-json`** (`cost: "turn"`): the repo's own ESLint, once a turn ends, over the files written in it, in a trusted repo, with the repo's suppressions applied. The built-in `node-vite` has it; in a repo without ESLint installed, it's skipped.
+- **`eslint-json`** (`cost: "turn"`): the repo's own ESLint, once a turn ends, over the files written in it, in a trusted repo, with the repo's suppressions applied. The built-in `node-vite` has it; like any `node <script>` command, it's skipped quietly in a repo where the script isn't installed.
 - **`i18n-keysets`** (`cost: "turn"`): translation tables, flat JSON with one file per language in a folder (`da.json`, `en.json`, ...). Once a turn that wrote one ends, each table it touched must have the same keys in every language of `options.languages`, and no key another table already has, as in `"cart_empty" is missing; da.json and en.json have it`. A key added to every language over several steps of one turn gives nothing. It compares the files itself, so it needs no repo trust.
+- **`sarif`** (`cost: "turn"`): any tool that writes SARIF 2.1.0, as ESLint's SARIF formatter, ruff, Semgrep, CodeQL, gcc 13 and Roslyn do. `bin` is the whole command, with `{files}` where the files written in the turn go (at most 40 a run, the rest in the next; without it the command runs once over the whole project, one run a turn, holding the heavy lane for as long as it takes, so set `timeoutMs`) and, for a tool that writes its log to a file rather than stdout, `{output}` where the mod's own file goes (`~/.claude/ccinformer/output/`, one per check, repo and session, emptied before and after each run; dotnet: `-p:ErrorLog={output}%2Cversion=2.1`, one project at a time, since a solution's projects would overwrite one log). A run's findings land on the files written in the turn; what the tool reports in other files is counted on its run line (`· 3 elsewhere`), not listed. A non-zero exit counts as findings only when an error is among them; otherwise the run is an error naming the cause, so drop flags that fail a tool on warnings alone. The repo's ESLint-format `suppressions` file applies as for `eslint-json`, for a tool that reports everything: ESLint applies its own and exits 2 on an unpruned one (unless run with `--pass-on-unpruned-suppressions`), so an ESLint SARIF check leaves `suppressions` out and takes an id of its own, with `"disable": ["eslint"]` to switch the built-in check off; `eslint-json` stays the ESLint route. An unused suppression is a warning here (no CI reads that file), reported for the files the tool looked at.
+- **`problem-matcher`** (`cost: "turn"`): any tool whose output has one diagnostic per line (gcc, clang, javac, mypy, msbuild). `bin` as for `sarif` (no `{output}`), and `options.pattern`, one regex tested against each line of stdout and stderr, with the named groups `file`, `line` and `message` (required) and `column`, `severity` and `code` (optional). The severity words `error`, `fatal error`, `warning`, `warn`, `note`, `info`, `information` and `hint` are read; any other, or no `severity` group, gives `options.severity` (`error` by default). The rule is `code`, else `rules[0]`, else the check's id. The pattern is refused when it is over 300 characters, repeats a group that itself repeats or branches (`(\w+)+`, `(a|b)+`), or holds more than two `.*` or `.+`: a heuristic, as JS has no regex timeout, and only a user pack can name a pattern. Lines are tested on their first 2000 characters; past 20000 lines the run is an error. Multi-line diagnostics aren't matched.
+
+Code › Rules draws one line per turn check with its latest run: running, waiting for trust, its error, or passed with the files and the time. The two placeholders, the group names and the severity words are the pack contract: a change to them is a breaking one.
 
 A user pack adds checks with the repo's own values:
 
@@ -141,7 +145,14 @@ A user pack adds checks with the repo's own values:
     "analyzer": "regex-lines", "cost": "edit", "class": "advise",
     "options": { "pattern": "<button\\b", "message": "use <Button> from the design system" } },
   { "id": "i18n", "label": "Translation keys", "on": ["src/i18n/*.json", "src/modules/*/i18n/*.json"],
-    "analyzer": "i18n-keysets", "cost": "turn", "class": "ci", "options": { "languages": ["da", "en", "sv"] } }
+    "analyzer": "i18n-keysets", "cost": "turn", "class": "ci", "options": { "languages": ["da", "en", "sv"] } },
+  { "id": "ruff", "label": "ruff", "on": ["**/*.py"],
+    "analyzer": "sarif", "cost": "turn", "class": "ci", "timeoutMs": 60000,
+    "bin": ["ruff", "check", "--output-format", "sarif", "{files}"] },
+  { "id": "gcc", "label": "gcc", "on": ["native/**/*.c"],
+    "analyzer": "problem-matcher", "cost": "turn", "class": "ci", "timeoutMs": 120000,
+    "bin": ["gcc", "-fsyntax-only", "{files}"],
+    "options": { "pattern": "^(?<file>(?:[A-Za-z]:)?[^:]+):(?<line>\\d+):(?:(?<column>\\d+):)?\\s+(?:fatal\\s+)?(?<severity>error|warning|note):\\s+(?<message>.*?)(?:\\s+\\[(?<code>-W[^\\]]+)\\])?$" } }
 ]
 ```
 

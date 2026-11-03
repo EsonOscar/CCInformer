@@ -7,24 +7,29 @@ import { askTrust, wasTrustAsked } from '../packs/load'
 import type { CheckSpec, ResolvedPack } from '../packs/types'
 import { filesOf } from '../read-files'
 import { readText } from '../read-records'
-import { ESLINT_BIN, covers, eslintFindings, isTold, noteFor, ownedRules, regexFindings, sizeFindings, withoutInline } from './findings'
+import { covers, isTold, noteFor, ownedRules, regexFindings, sizeFindings, withoutInline } from './findings'
 import { repoPath } from './glob'
 import { keysetFindings, languagesOf, tableOf } from './i18n'
 import type { TableFile } from './i18n'
 import { parseSuppressions } from './suppressions'
 import type { Suppressions } from './suppressions'
+import { MAX_OUTPUT_BYTES, OUTPUT_NOT_WRITTEN, SARIF_FILE_TOO_BIG, binOf, hasOutputFile, isQuietSkip, isToolCheck, outputFile, readRun, takesFiles, toolArgv } from './tools'
+import type { OutputRead } from './tools'
 
-// The most files one ESLint run takes (its JSON carries each file's source, and a run's output is cut at 4 MiB); the
-// rest wait for the next run.
+// The most files one run takes when the command takes files (ESLint's JSON carries each file's source, and a run's
+// output is cut at 4 MiB); the rest wait for the next run.
 const MAX_CHECKED_FILES = 40
 // How deep a `**` glob looks for translation tables.
 const MAX_TABLE_DEPTH = 6
 
 // What the checks take from the session: its pack and the report it came with (read again on `reload`), the heavy
-// lane, where the empty suppressions file goes, and the state they write and read (the atoms live in the hooks module).
+// lane, where the empty suppressions file and a tool's output files go, this session's id, and the state they write
+// and read (the atoms live in the hooks module).
 export type CheckDeps = {
   cwd: string
   emptySuppressions: string
+  outputDir: string
+  sessionId: string
   heavy: Lane
   pack: () => Promise<ResolvedPack | null>
   report: () => PackReport | null
@@ -32,6 +37,8 @@ export type CheckDeps = {
   saveFindings: (check: string, files: string[], found: Finding[]) => Promise<unknown>
   saveRun: (run: CheckRun) => Promise<unknown>
   dismissed: () => Promise<string[]>
+  // The files a check's findings sit in now (read once per check, then kept here).
+  findingFiles: (check: string) => Promise<string[]>
   may: May
 }
 
@@ -46,11 +53,14 @@ export type Checks = {
 }
 
 // The pack's checks. Inline ones read each file Claude writes, and the model reads what they find with the tool's
-// result. Turn ones run the repo's own tools (ESLint) once a main turn ends, over the files every agent wrote in it,
-// one run at a time in the heavy lane; the model reads their findings with the next prompt the person types, for the
-// files unchanged since the run.
+// result. Turn ones run the repo's own tools (ESLint, a pack's sarif or problem-matcher command) once a main turn
+// ends, over the files every agent wrote in it, one run at a time in the heavy lane; the model reads their findings
+// with the next prompt the person types, for the files unchanged since the run.
 export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
   const touched = new Set<string>()
+  // Per check, the files waiting for its next run: the overflow past one run's cap, and what a trust wait held back.
+  const pending = new Map<string, Set<string>>()
+  const held = new Map<string, Set<string>>()
   let isChecking = false
   let isCheckQueued = false
   let isTrustAsked = false
@@ -107,44 +117,74 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       toTell = { findings: [...kept, ...findings.filter(isTold)], stamps: { ...toTell?.stamps, ...told } }
     }
   }
-  // The turn's ESLint run: the files written since the last run that a check covers and that still exist.
+  // The files each check's findings sit in, as this engine saved them: a whole-project run (no files passed)
+  // clears the ones the tool no longer reports. Seeded once per check from the atom, as a get reads one moment per
+  // dispatch and this loop can run twice in one.
+  const heldFor = async (check: string) => {
+    let set = held.get(check)
+    if (!set) {
+      set = new Set(await deps.findingFiles(check))
+      held.set(check, set)
+    }
+    return set
+  }
+  // The tool's output file, read back after its run; over 4 MiB the host refuses the read, so its size is checked first.
+  const readOutput = async (path: string): Promise<OutputRead> => {
+    const stat = await $.fs.stat(path).catch(() => null)
+    if (stat && stat.kind === 'file' && stat.size > MAX_OUTPUT_BYTES) return { text: null, error: SARIF_FILE_TOO_BIG }
+    const text = await $.fs.read(path).catch(() => null)
+    return { text: typeof text === 'string' ? text : null, error: '' }
+  }
+  // The turn's tool runs (ESLint, a pack's sarif or problem-matcher command): per check, the files written since the
+  // last run that it covers and that still exist, plus the ones it has waiting, through the heavy lane once trust is
+  // given.
   const checkTurn = async () => {
     const written = [...touched]
     touched.clear()
-    const pack = written.length ? await deps.pack() : null
+    const pack = written.length || pending.size ? await deps.pack() : null
     const report = deps.report()
     if (!pack || !report) return
     await checkTables(pack, report.root, written)
-    for (const check of pack.checks.filter(c => c.cost === 'turn' && c.analyzer === 'eslint-json')) {
+    for (const check of pack.checks.filter(isToolCheck)) {
+      const queued = pending.get(check.id) ?? new Set<string>()
+      pending.delete(check.id)
       const covered: string[] = []
-      for (const f of written) if (covers(check, f) && (await stampOf(`${report.root}/${f}`))) covered.push(f)
+      for (const f of new Set([...queued, ...written.filter(f => covers(check, f))])) if (await stampOf(`${report.root}/${f}`)) covered.push(f)
       if (!covered.length) continue
-      // A repo without ESLint installed has nothing to run: skipped quietly, without asking for trust.
-      const bin = check.bin ?? ESLINT_BIN
-      if (bin[0] === 'node' && bin[1] && !(await $.fs.exists(`${report.root}/${bin[1]}`))) continue
-      const files = covered.slice(0, MAX_CHECKED_FILES)
-      const run: CheckRun = { check: check.id, label: check.label, at: await $.clock.now(), ms: 0, files: files.length, isRunning: false, waitsForTrust: false, error: '' }
+      // A repo without the script (ESLint not installed) has nothing to run: skipped quietly, without asking for trust.
+      const bin = binOf(check)
+      if (isQuietSkip(bin) && !(await $.fs.exists(`${report.root}/${bin[1]}`))) continue
+      const isWhole = !takesFiles(check)
+      const files = isWhole ? covered : covered.slice(0, MAX_CHECKED_FILES)
+      const run: CheckRun = { check: check.id, label: check.label, at: await $.clock.now(), ms: 0, files: files.length, isRunning: false, waitsForTrust: false, error: '', elsewhere: 0 }
       if (!(await mayRunRepoTools())) {
         // They run after the next main turn, once trust is given.
-        for (const f of covered) touched.add(f)
+        pending.set(check.id, new Set(covered))
         await deps.saveRun({ ...run, waitsForTrust: true })
         continue
       }
-      for (const f of covered.slice(MAX_CHECKED_FILES)) touched.add(f)
-      if (covered.length > MAX_CHECKED_FILES) isCheckQueued = true
+      if (!isWhole && covered.length > MAX_CHECKED_FILES) {
+        pending.set(check.id, new Set(covered.slice(MAX_CHECKED_FILES)))
+        isCheckQueued = true
+      }
       const stamps: Record<string, string> = {}
       for (const f of files) stamps[f] = await stampOf(`${report.root}/${f}`)
       await deps.saveRun({ ...run, isRunning: true })
-      if (!(await $.fs.exists(deps.emptySuppressions))) await $.fs.write(deps.emptySuppressions, '{}\n') // may: bg.turnChecks
       // Raw output (an empty suppressions file), so the repo's suppressions are applied here, exactly as ESLint would.
-      const argv = [...(check.bin ?? ESLINT_BIN), '--format', 'json', '--no-warn-ignored', '--suppressions-location', deps.emptySuppressions, ...files]
+      if (check.analyzer === 'eslint-json' && !(await $.fs.exists(deps.emptySuppressions))) await $.fs.write(deps.emptySuppressions, '{}\n') // may: bg.turnChecks
+      // A sarif tool that writes its log to a file gets the mod's own, emptied first, so a stale or skipped log never
+      // reads as this run's; emptied again once read, so the file keeps nothing of the repo.
+      const output = hasOutputFile(check) ? outputFile(deps.outputDir, check, report.root, deps.sessionId) : ''
+      if (output && !(await $.fs.write(output, '').then(() => true, () => false))) { // may: bg.turnChecks
+        await deps.saveRun({ ...run, error: OUTPUT_NOT_WRITTEN })
+        continue
+      }
+      const argv = toolArgv(check, isWhole ? [] : files, output, deps.emptySuppressions)
       const ran = await deps.heavy(argv, check.timeoutMs, report.root).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
-      // ESLint exits 1 when it found problems and 2 when it couldn't run.
+      const read = output ? await readOutput(output) : null
+      if (output) await $.fs.write(output, '').catch(() => undefined) // may: bg.turnChecks
       const owned = (file: string) => pack.checks.filter(c => c.cost === 'edit' && covers(c, file)).flatMap(ownedRules)
-      const parsed =
-        ran.exitCode === 0 || ran.exitCode === 1
-          ? eslintFindings(check, ran.stdout, report.root, await suppressionsOf(check, report.root), owned)
-          : { findings: [], files: [], error: ran.stderr.trim().split('\n').find(l => l.trim()) || `it exited with ${ran.exitCode}` }
+      const parsed = readRun(check, ran, read, report.root, files, await suppressionsOf(check, report.root), owned)
       if (!parsed.error) {
         // What a regex check already reports on a line, as the ESLint rule it stands for, shows and is told once.
         const inline: Finding[] = []
@@ -154,12 +194,16 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
           for (const c of regexChecks) inline.push(...(await inlineFindings(c, report.root, f, text)))
         }
         const findings = withoutInline(parsed.findings, inline)
-        await deps.saveFindings(check.id, files, findings)
+        const holding = await heldFor(check.id)
+        const saved = isWhole ? [...new Set([...files, ...holding])] : files
+        await deps.saveFindings(check.id, saved, findings)
+        for (const f of saved) holding.delete(f)
+        for (const f of findings) holding.add(f.file)
         const kept = toTell?.findings.filter(f => f.check !== check.id || !files.includes(f.file)) ?? []
         toTell = { findings: [...kept, ...findings.filter(isTold)], stamps: { ...toTell?.stamps, ...stamps } }
       }
       const ms = (await $.clock.now()) - run.at
-      await deps.saveRun({ ...run, ms, error: parsed.error })
+      await deps.saveRun({ ...run, ms, error: parsed.error, elsewhere: parsed.elsewhere })
     }
   }
 

@@ -31,14 +31,17 @@ export const finding = (check: CheckSpec, f: Omit<Finding, 'id' | 'check' | 'cla
   class: check.class,
 })
 
-const unusedFinding = (check: CheckSpec, file: string, rule: string, count: number): Finding =>
+// An unused suppression: for ESLint's own rules (eslint-json and the inline checks that stand for a rule) an error
+// CI fails on, as ESLint fails a run with one; for a tool that never reads the file (sarif, problem-matcher) a
+// warning, with the same message but ESLint's prune command, so the existing findings keep their ids.
+export const unusedFinding = (check: CheckSpec, file: string, rule: string, count: number, kind: 'ci' | 'warn' = 'ci'): Finding =>
   finding(check, {
     file,
     line: 0,
     rule,
-    severity: 'error',
-    message: `unused suppression (${count}): prune it before pushing (eslint --prune-suppressions)`,
-    ciWouldFail: check.class === 'ci',
+    severity: kind === 'ci' ? 'error' : 'warn',
+    message: `unused suppression (${count}): prune it before pushing` + (kind === 'ci' ? ' (eslint --prune-suppressions)' : ''),
+    ciWouldFail: kind === 'ci' && check.class === 'ci',
   })
 
 // A size-lines check on a file's text: over its limit is an error, unless the suppressions let the file through,
@@ -107,7 +110,62 @@ const scriptLines = (re: RegExp, text: string): number[] => {
 export const withoutInline = (turn: Finding[], inline: Finding[]): Finding[] =>
   turn.filter(t => !inline.some(i => i.file === t.file && i.line === t.line && i.rule === t.rule && (i.ciWouldFail || !t.ciWouldFail)))
 
-type EslintMessage = { ruleId: string | null; severity: number; message: string; line?: number }
+// What a tool reported, before the run's files, the repo's suppressions and the check's class are applied: `file`
+// is repo-relative, '' outside the repo; `column` 0 when the tool gave none.
+export type RawFinding = { file: string; line: number; column: number; rule: string; severity: Finding['severity']; message: string }
+
+// A tool's raw findings as a check's. Duplicates (one result in several runs of a log, msbuild's repeated lines)
+// are dropped; a raw's file is matched to the run's files, without case where the root has a drive letter, and
+// saved under the run's spelling. Per run file the tool reported on (a raw, or named in `reported`): the rules an
+// inline check owns are left out, the repo's suppressions are applied as ESLint applies them, an unused one is
+// reported as `unused` says, and a ci check's errors would fail CI. Raws on files outside the run are only counted.
+export const toolFindings = (
+  check: CheckSpec,
+  raws: RawFinding[],
+  files: string[],
+  root: string,
+  suppressions: Suppressions,
+  owned: (file: string) => string[],
+  unused: 'ci' | 'warn',
+  reported: string[] = [],
+): { findings: Finding[]; elsewhere: number } => {
+  const isWindows = /^[a-z]:/i.test(root)
+  const runFile = (file: string) => files.find(f => (isWindows ? f.toLowerCase() === file.toLowerCase() : f === file))
+  const seen = new Set<string>()
+  const byFile = new Map<string, RawFinding[]>()
+  let elsewhere = 0
+  for (const r of raws) {
+    const key = [r.file, r.line, r.column, r.rule, r.message].join('|')
+    if (seen.has(key)) continue
+    seen.add(key)
+    const file = r.file ? runFile(r.file) : undefined
+    if (!file) {
+      elsewhere += 1
+      continue
+    }
+    byFile.set(file, [...(byFile.get(file) ?? []), r])
+  }
+  const reportedOn = new Set(reported.map(runFile).filter((f): f is string => !!f))
+  const findings: Finding[] = []
+  for (const file of files) {
+    const own = byFile.get(file)
+    if (!own && !reportedOn.has(file)) continue
+    const skip = owned(file)
+    const messages = (own ?? []).filter(m => !skip.includes(m.rule))
+    const counts: Record<string, number> = {}
+    for (const m of messages) counts[m.rule] = (counts[m.rule] ?? 0) + 1
+    const evaluated = Object.keys(suppressions[file] ?? {}).filter(r => !skip.includes(r))
+    const { suppressed, unused: left } = suppress(suppressions[file], counts, evaluated)
+    for (const m of messages) {
+      if (suppressed.includes(m.rule)) continue
+      findings.push(finding(check, { file, line: m.line, rule: m.rule, severity: m.severity, message: m.message, ciWouldFail: check.class === 'ci' && m.severity === 'error' }))
+    }
+    for (const u of left) findings.push(unusedFinding(check, file, u.rule, u.count, unused))
+  }
+  return { findings, elsewhere }
+}
+
+type EslintMessage = { ruleId: string | null; severity: number; message: string; line?: number; column?: number }
 type EslintResult = { filePath: string; messages: EslintMessage[] }
 
 // What ESLint's JSON says about each file it ran on, with the repo's suppressions applied as ESLint applies them (it
@@ -128,26 +186,18 @@ export const eslintFindings = (
   } catch {
     return { findings: [], files: [], error: "ESLint's output could not be read" }
   }
-  const findings: Finding[] = []
   const files: string[] = []
+  const raws: RawFinding[] = []
   for (const result of results) {
     const file = repoPath(root, result.filePath)
     if (!file) continue
     files.push(file)
-    const skip = owned(file)
-    const messages = result.messages.filter(m => !m.ruleId || !skip.includes(m.ruleId))
-    const counts: Record<string, number> = {}
-    for (const m of messages) if (m.ruleId) counts[m.ruleId] = (counts[m.ruleId] ?? 0) + 1
-    const evaluated = Object.keys(suppressions[file] ?? {}).filter(r => !skip.includes(r))
-    const { suppressed, unused } = suppress(suppressions[file], counts, evaluated)
-    for (const m of messages) {
-      if (m.ruleId && suppressed.includes(m.ruleId)) continue
-      // A message with no rule is a file ESLint couldn't parse.
-      const severity = m.severity === 2 || !m.ruleId ? 'error' : 'warn'
-      findings.push(finding(check, { file, line: m.line ?? 0, rule: m.ruleId ?? 'parse', severity, message: m.message, ciWouldFail: check.class === 'ci' && severity === 'error' }))
-    }
-    for (const u of unused) findings.push(unusedFinding(check, file, u.rule, u.count))
+    // A message with no rule is a file ESLint couldn't parse.
+    for (const m of result.messages)
+      raws.push({ file, line: m.line ?? 0, column: m.column ?? 0, rule: m.ruleId ?? 'parse', severity: m.severity === 2 || !m.ruleId ? 'error' : 'warn', message: m.message })
   }
+  // Every file ESLint ran on is in its output, so each one's suppressions are evaluated.
+  const { findings } = toolFindings(check, raws, files, root, suppressions, owned, 'ci', files)
   return { findings, files, error: '' }
 }
 

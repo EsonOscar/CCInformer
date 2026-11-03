@@ -234,9 +234,10 @@ export type Finding = {
   message: string
   ciWouldFail: boolean
 }
-// The latest run of a check that runs the repo's own tools after a turn: over how many files, how long it took, and
-// what went wrong ('' for nothing). `waitsForTrust` while the repo's tools may not run yet.
-export type CheckRun = { check: string; label: string; at: number; ms: number; files: number; isRunning: boolean; waitsForTrust: boolean; error: string }
+// The latest run of a check that runs the repo's own tools after a turn, one per such check: over how many files, how
+// long it took, what went wrong ('' for nothing), and how many findings the tool reported in files the turn didn't
+// write (counted, not listed). `waitsForTrust` while the repo's tools may not run yet.
+export type CheckRun = { check: string; label: string; at: number; ms: number; files: number; isRunning: boolean; waitsForTrust: boolean; error: string; elsewhere: number }
 
 // The pane's footer: how full the context window is, and how much of the subscription's 5-hour and 7-day windows is
 // used, each a percentage; null where there's no reading (before the first response, or without a subscription).
@@ -311,10 +312,10 @@ declare module 'claude-code' {
       memory: MemoryReading | null
       codeView: CodeView
       // What the pack's checks found, newest run per check and file; the ids the person dismissed this session; the
-      // latest run of a check that runs the repo's own tools.
+      // latest run of each check that runs the repo's own tools.
       findings: Finding[]
       dismissed: string[]
-      checkRun: CheckRun | null
+      checkRuns: CheckRun[]
       budgets: BudgetState | null
       plans: PlansState | null
       usage: UsageReading | null

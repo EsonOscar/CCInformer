@@ -24,6 +24,20 @@ const USER_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { 
     { "id": "eslint", "label": "ESLint", "on": ["src/**/*.ts"], "analyzer": "eslint-json", "cost": "turn", "class": "ci" }
   ] }`
 
+// A user pack naming commands of its own: a matcher over cc's output for C files, dotnet's SARIF log for C#, a
+// whole-project matcher over the same C files, and a node script with a flag first.
+const TOOL_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { "remote": ["github.com/acme/*"] }, "extends": ["node-vite"],
+  "checks": [
+    { "id": "cc", "label": "cc", "on": ["native/**/*.c"], "analyzer": "problem-matcher", "cost": "turn", "class": "ci", "bin": ["cc", "-fsyntax-only", "{files}"],
+      "options": { "pattern": "^(?<file>[^:]+):(?<line>\\\\d+):(?<column>\\\\d+): (?<severity>error|warning|note): (?<message>.*)$" } },
+    { "id": "dotnet", "label": "dotnet build", "on": ["svc/**/*.cs"], "analyzer": "sarif", "cost": "turn", "class": "ci", "bin": ["dotnet", "build", "-p:ErrorLog={output}%2Cversion=2.1"] },
+    { "id": "make", "label": "make lint", "on": ["native/**/*.c"], "analyzer": "problem-matcher", "cost": "turn", "class": "advise", "bin": ["make", "lint"],
+      "options": { "pattern": "^(?<file>[^:]+):(?<line>\\\\d+):(?<column>\\\\d+): (?<severity>error|warning|note): (?<message>.*)$" } },
+    { "id": "lint-js", "label": "lint.js", "on": ["tools/**/*.js"], "analyzer": "problem-matcher", "cost": "turn", "class": "advise", "bin": ["node", "--max-old-space-size=64", "tools/lint.js", "{files}"],
+      "options": { "pattern": "^(?<file>[^:]+):(?<line>\\\\d+): (?<message>.*)$" } }
+  ] }`
+type Ran = { exitCode: number; stdout: string; stderr: string }
+
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `export const a${i} = ${i}`).join('\n') + '\n'
 const turnEnd = (agentId?: string) => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't-' + (agentId ?? 'main'), reason: 'answer' as const, ...(agentId ? { agentId } : {}) })
 const anyError = (line: number) => ({ ruleId: '@typescript-eslint/no-explicit-any', severity: 2, message: 'Unexpected any. Specify a different type.', line })
@@ -33,14 +47,16 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 
 // A Vite repo at /repo with an acme remote, its files in memory. A Write changes a file there. ESLint answers with
 // `lint`'s messages for each file it was given, after `lintMs` on the mocked clock; `runs` holds the files of each
-// run, and `mostAtOnce` how many ran together. `submitted` is each prompt as it entered, with its context.
+// run, and `mostAtOnce` how many ran together. A pack's own command is answered by `tool` (undefined for one it
+// doesn't know), and `commands` holds every argv it answered. `submitted` is each prompt as it entered, with its context.
 const engine = (
   on: Parameters<TestBody>[1],
   files: Record<string, string>,
-  opts: { lint?: (file: string) => object[]; lintMs?: number; answer?: string; store?: Record<string, unknown> } = {},
+  opts: { lint?: (file: string) => object[]; lintMs?: number; answer?: string; store?: Record<string, unknown>; tool?: (argv: string[]) => Ran | undefined } = {},
 ) => {
   const mtimes: Record<string, number> = Object.fromEntries(Object.keys(files).map(p => [p, 1]))
   const runs: string[][] = []
+  const commands: string[][] = []
   const asked: string[] = []
   const submitted: { text: string; context: readonly string[] }[] = []
   let running = 0
@@ -75,6 +91,15 @@ const engine = (
     const argv = (e as { argv: string[] }).argv
     const line = argv.join(' ')
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
+    const tool = opts.tool?.(argv)
+    if (tool) {
+      commands.push(argv)
+      running += 1
+      mostAtOnce = Math.max(mostAtOnce, running)
+      await clock.sleep(0)
+      running -= 1
+      return { value: { ...tool, isStdoutTruncated: false, isStderrTruncated: false } }
+    }
     if (line.includes('eslint')) {
       const checked = argv.filter(a => a.startsWith('src/'))
       runs.push(checked)
@@ -114,7 +139,7 @@ const engine = (
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  return { clock, runs, asked, submitted, change, mostAtOnce: () => mostAtOnce }
+  return { clock, runs, commands, asked, submitted, change, mostAtOnce: () => mostAtOnce }
 }
 
 // ESLint is installed in the repo: the turn check runs node_modules/eslint/bin/eslint.js, which the engine answers.
@@ -345,6 +370,68 @@ test("the turn's ESLint finding on a line a design rule already reports shows an
   expect(await ui.find({ type: 'Text', text: 'L5 no-restricted-syntax: Raw form elements are not allowed.' })).toBeDefined()
   expect(await ui.find({ type: 'Text', text: '2 would fail CI' })).toBeDefined()
   await ui.unmount()
+})
+
+test("a pack's own commands run once a turn ends: their findings in Code › Rules and the next typed prompt, one run line per check in pack order, with what a tool found elsewhere counted", async ($, on) => {
+  const files: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: TOOL_PACK, ...ESLINT_INSTALLED }
+  const log = JSON.stringify({
+    version: '2.1.0',
+    runs: [{ results: ['svc/Api/Program.cs', 'svc/Other.cs'].map(f => ({ ruleId: 'CS0103', level: 'error', message: { text: "The name 'conect' does not exist" }, locations: [{ physicalLocation: { artifactLocation: { uri: 'file:///repo/' + f }, region: { startLine: 30, startColumn: 9 } } }] })) }],
+  })
+  const { clock, commands, submitted } = engine(on, files, {
+    tool: argv => {
+      // cc: exit 1 with only a warning in its output, so the run is an error that names it. dotnet: the log into {output}.
+      if (argv[0] === 'cc') return { exitCode: 1, stdout: '', stderr: 'native/b.c:1:1: warning: w\n' }
+      if (argv[0] === 'dotnet') {
+        files[argv[2]!.slice('-p:ErrorLog='.length).split('%2C')[0]!] = log
+        return { exitCode: 1, stdout: 'Build FAILED.', stderr: '' }
+      }
+      if (argv[0] === 'make') return { exitCode: 0, stdout: '', stderr: '' }
+      return undefined
+    },
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/app.ts', content: lines(2) })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/native/a.c', content: 'int x;\n' })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/svc/Api/Program.cs', content: 'class A {}\n' })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+  expect(commands.map(c => c.slice(0, 2))).toEqual([['cc', '-fsyntax-only'], ['dotnet', 'build'], ['make', 'lint']])
+  expect(commands[0]).toEqual(['cc', '-fsyntax-only', 'native/a.c'])
+  expect(commands[1]![2]).toMatch(/^-p:ErrorLog=\/home\/test\/\.claude\/ccinformer\/output\/dotnet-[0-9a-f]{8}\.sarif%2Cversion=2\.1$/)
+  // The log is emptied once read.
+  expect(files[commands[1]![2]!.slice('-p:ErrorLog='.length).split('%2C')[0]!]).toBe('')
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'rules' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const runLines = (await ui.findAll({ type: 'Text' })).map(t => t.text).filter(t => /^(ESLint on|cc: |dotnet build on|make lint on)/.test(t))
+  expect(runLines.map(t => t.replace(/ · \d+(\.\d+)? ?(ms|s)/, ' · T'))).toEqual([
+    'ESLint on 1 file · T',
+    'cc: native/b.c:1:1: warning: w',
+    'dotnet build on 1 file · T · 1 elsewhere',
+    'make lint on 1 file · T',
+  ])
+  expect(await ui.find({ type: 'Text', text: /L30 CS0103: The name 'conect' does not exist/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '1 would fail CI' })).toBeDefined()
+  await ui.unmount()
+
+  await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
+  expect(submitted.at(-1)!.context.join('\n')).toContain("- svc/Api/Program.cs:30 CS0103: The name 'conect' does not exist [CI will fail]")
+})
+
+test('with overlapping globs the 41st file runs in a second pass for the check that takes files, the whole-project check runs once, and a node flag first in bin runs rather than skipping', async ($, on) => {
+  const files: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: TOOL_PACK, ...ESLINT_INSTALLED }
+  const { clock, commands } = engine(on, files, { tool: argv => (argv[0] === 'cc' || argv[0] === 'make' || (argv[0] === 'node' && argv[1]!.startsWith('--')) ? { exitCode: 0, stdout: '', stderr: '' } : undefined) })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  for (let i = 0; i < 41; i++) await $.tool.call({ tool: 'Write', file_path: `/repo/native/f${i}.c`, content: 'int x;\n' })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/tools/x.js', content: 'x\n' })
+  await $.turn.complete(turnEnd())
+  await clock.settle()
+  expect(commands.filter(c => c[0] === 'cc').map(c => c.length - 2)).toEqual([40, 1])
+  expect(commands.filter(c => c[0] === 'make')).toEqual([['make', 'lint']])
+  expect(commands.filter(c => c[0] === 'node')).toEqual([['node', '--max-old-space-size=64', 'tools/lint.js', 'tools/x.js']])
 })
 
 test('a repo without ESLint installed skips the turn check quietly: no run, no error, no trust question', async ($, on) => {
