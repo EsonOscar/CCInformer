@@ -316,6 +316,20 @@ export const register: Register = on => {
     // The processes the pack knows on this machine, and the free memory: one query for both, through the light
     // lane. A toast says so once when memory runs low, and again only after it recovered.
     const platform: Platform = (await $.env.get('OS')) === 'Windows_NT' ? 'windows' : 'posix'
+    // macOS has no /proc/meminfo, and the environment doesn't tell it from Linux: uname does, once per session, on
+    // the first memory read (so only from the reads below, never at start). A failed uname is asked again next time.
+    let memoryPlatformRead: Promise<Platform> | null = null
+    const memoryPlatform = (): Promise<Platform> =>
+      (memoryPlatformRead ??=
+        platform === 'windows'
+          ? Promise.resolve(platform)
+          : exec(['uname', '-s']).then(
+              (run): Platform => (run.exitCode === 0 && run.stdout.trim() === 'Darwin' ? 'macos' : 'posix'),
+              (): Platform => {
+                memoryPlatformRead = null
+                return 'posix'
+              },
+            ))
     let isMemoryLow = false
     const noteMemory = async (memory: MemoryReading | null) => {
       if (!memory) return
@@ -327,20 +341,22 @@ export const register: Register = on => {
       solo('processes', async () => {
         const pack = packResolved ?? (await reloadPack(), packResolved)
         if (!pack) return
+        const os = await memoryPlatform()
         const started = await $.clock.now()
         const runs = []
-        for (const argv of processQuery(pack, platform)) runs.push(await exec(argv).catch(() => null))
+        for (const argv of processQuery(pack, os)) runs.push(await exec(argv).catch(() => null))
         const now = await $.clock.now()
         const isFailed = !runs[0] || runs[0].exitCode !== 0
-        const parsed = parseProcesses(pack, platform, runs.map(r => (r?.exitCode === 0 ? r.stdout : '')), now, now - started)
+        const parsed = parseProcesses(pack, os, runs.map(r => (r?.exitCode === 0 ? r.stdout : '')), now, now - started)
         const processes = isFailed ? { list: [], at: now, ms: now - started, error: 'the process list could not be read' } : parsed.processes
         await update($, processesAtom, () => processes)
         await noteMemory(parsed.memory)
       })
     const probeMemory = () =>
       solo('memory', async () => {
-        const run = await exec(memoryQuery(platform)).catch(() => null)
-        await noteMemory(run?.exitCode === 0 ? parseMemory(platform, run.stdout, await $.clock.now()) : null)
+        const os = await memoryPlatform()
+        const run = await exec(memoryQuery(os)).catch(() => null)
+        await noteMemory(run?.exitCode === 0 ? parseMemory(os, run.stdout, await $.clock.now()) : null)
       })
     // The pack's checks (checks/run.ts); the findings and the latest run are written here, where their atoms are.
     const checks = createChecks($, {

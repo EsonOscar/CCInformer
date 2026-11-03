@@ -39,13 +39,15 @@ jobs:
         with:
           persist-credentials: false
 
-      # macOS's memory readouts, for the free-memory parser's test fixtures and to spot a changed format.
-      - name: Print macOS memory readouts
+      # macOS's readouts for Now › Env, to spot a changed format: the memory the free-memory parser reads, and the
+      # process list's query (BSD ps, where -e lists every process as on Linux, not the environment as on FreeBSD).
+      - name: Print macOS memory and process readouts
         if: runner.os == 'macOS'
         run: |
           sw_vers
           sysctl hw.memsize hw.pagesize
           vm_stat
+          ps -eo pid=,rss=,args= | head -5
 
       - name: Install Claude Code
         if: runner.os != 'Windows'

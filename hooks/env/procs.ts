@@ -2,7 +2,8 @@ import type { MachineProcess, MemoryReading, ProcessList } from '../../types'
 import type { EnvRule, ResolvedPack } from '../packs/types'
 import { strictestEnv } from './classify'
 
-export type Platform = 'windows' | 'posix'
+// 'posix' is Linux and any other posix system with /proc/meminfo; 'macos' has none, so it reads vm_stat instead.
+export type Platform = 'windows' | 'posix' | 'macos'
 
 // The runtimes whose processes are worth matching. Filtering by name inside the query keeps it cheap: the
 // unfiltered list costs twice the time and a hundred times the bytes.
@@ -21,11 +22,15 @@ const reading = (freeMb: number, totalMb: number, at: number): MemoryReading => 
 const quote = (text: string) => "'" + text.replace(/'/g, "''") + "'"
 export const powershell = (script: string): string[] => ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script]
 
+// macOS: the machine's size and its page counts, in one call.
+const MACOS_MEMORY = ['sh', '-c', 'sysctl hw.memsize && vm_stat']
+const posixMemory = (platform: Platform): string[] => (platform === 'macos' ? MACOS_MEMORY : ['cat', '/proc/meminfo'])
+
 // Windows: one PowerShell call lists the runtimes' processes, matches each command line against the pack's regexes
 // there, and sends back only ids, pids and working sets, with the machine's free memory. Command lines never leave
 // PowerShell.
 export const processQuery = (pack: ResolvedPack, platform: Platform): string[][] => {
-  if (platform !== 'windows') return [['ps', '-eo', 'pid=,rss=,args='], ['cat', '/proc/meminfo']]
+  if (platform !== 'windows') return [['ps', '-eo', 'pid=,rss=,args='], posixMemory(platform)]
   const filter = RUNTIMES.map(n => `Name LIKE '${n.includes('.') ? n : n + '%'}'`).join(' OR ')
   const table = (rows: { id: string; pattern: string }[]) => rows.map(r => `@{i=${quote(r.id)};r=${quote(r.pattern)}}`).join(',')
   const matchers = table(pack.processes.map(p => ({ id: p.id, pattern: p.match })))
@@ -49,7 +54,7 @@ export const processQuery = (pack: ResolvedPack, platform: Platform): string[][]
 export const memoryQuery = (platform: Platform): string[] =>
   platform === 'windows'
     ? powershell('Get-CimInstance Win32_OperatingSystem|Select-Object FreePhysicalMemory,TotalVisibleMemorySize|ConvertTo-Json -Compress')
-    : ['cat', '/proc/meminfo']
+    : posixMemory(platform)
 
 // PowerShell writes a one-element array as the element itself.
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : v === undefined || v === null ? [] : [v])
@@ -77,8 +82,21 @@ export const parseMeminfo = (text: string, at: number): MemoryReading | null => 
   return Number.isFinite(free) && Number.isFinite(total) ? reading(Math.round(free / KB_PER_MB), Math.round(total / KB_PER_MB), at) : null
 }
 
+// macOS: hw.memsize in bytes, and vm_stat's page counts. Free is the free, inactive and speculative pages (vm_stat
+// counts speculative ones apart from free; inactive ones are reclaimed when needed), times vm_stat's own page size,
+// which is 16 KiB on Apple silicon and 4 KiB on Intel.
+export const parseVmStat = (text: string, at: number): MemoryReading | null => {
+  const num = (pattern: RegExp) => Number(pattern.exec(text)?.[1] ?? NaN)
+  const pages = (name: string) => num(new RegExp('^Pages ' + name + ':\\s+(\\d+)', 'm'))
+  const total = num(/^hw\.memsize:\s*(\d+)/m)
+  const free = (pages('free') + pages('inactive') + pages('speculative')) * num(/page size of (\d+) bytes/)
+  return Number.isFinite(free) && Number.isFinite(total) ? reading(Math.round(free / BYTES_PER_MB), Math.round(total / BYTES_PER_MB), at) : null
+}
+
+const parsePosixMemory = (platform: Platform, text: string, at: number) => (platform === 'macos' ? parseVmStat(text, at) : parseMeminfo(text, at))
+
 export const parseMemory = (platform: Platform, stdout: string, at: number): MemoryReading | null => {
-  if (platform !== 'windows') return parseMeminfo(stdout, at)
+  if (platform !== 'windows') return parsePosixMemory(platform, stdout, at)
   try {
     const o = JSON.parse(stdout) as { FreePhysicalMemory?: number; TotalVisibleMemorySize?: number }
     return typeof o.FreePhysicalMemory === 'number' && typeof o.TotalVisibleMemorySize === 'number'
@@ -109,7 +127,7 @@ export const parseProcesses = (
       const proc = machineProcess(pack, matcherIds, envIds, Number(m[1]), Math.round(Number(m[2]) / KB_PER_MB))
       return proc ? [proc] : []
     })
-    return { processes: { list: found, at, ms, error: '' }, memory: parseMeminfo(second, at) }
+    return { processes: { list: found, at, ms, error: '' }, memory: parsePosixMemory(platform, second, at) }
   }
   try {
     const o = JSON.parse(first) as { procs?: unknown; freeKb?: number; totalKb?: number }
