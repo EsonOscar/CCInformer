@@ -47,7 +47,9 @@ export const StatsView = (k: Kit, summaries: RunSummary[], picked: string, width
             <Text color={ACCENT}>{bar(p.share, 1, SHARE_BAR)}</Text>
           </Box>
           <Box flexGrow={1} />
-          <Text dimColor>{`${duration(p.ms)} · ${Math.round(p.share * 100)}%`}</Text>
+          <Text dimColor mono>
+            {`${duration(p.ms)} · ${Math.round(p.share * 100)}%`}
+          </Text>
         </Box>
       ))}
       {Section(k, 'Models per phase', 'per agent')}

@@ -64,7 +64,9 @@ const Process = (k: Kit, p: MachineProcess): JSX.Element => {
         toneGlyph(p.tone),
         <Box flexDirection="row" columnGap={1}>
           <Text wrap="truncate-end">{p.label}</Text>
-          <Text dimColor>{'pid ' + p.pid}</Text>
+          <Text dimColor mono>
+            {'pid ' + p.pid}
+          </Text>
         </Box>,
         <Box flexDirection="row" columnGap={1}>
           {p.envLabel && <Text color={TONE_COLORS[p.tone]}>{p.envLabel}</Text>}

@@ -93,12 +93,12 @@ const Branch = (k: Kit, git: GitSnapshot, now: number, isPaused: boolean, nav: G
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" columnGap={1}>
-        <Box flexShrink={1}>
+        <Box flexShrink={1} minWidth={0}>
           <Text color={ACCENT} weight="semibold" wrap="truncate-end">
             {'⎇ ' + git.branch}
           </Text>
         </Box>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text dimColor wrap="truncate-end">
             {git.upstream ? '→ ' + git.upstream : 'no upstream'}
           </Text>
@@ -199,13 +199,13 @@ const CiMode = (k: Kit, nav: GitNav): JSX.Element => {
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" columnGap={1}>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text dimColor wrap="truncate-end">
             {'  ' + (isActive ? (nav.isHandoffOn ? CI_TEXTS.viewActive : CI_TEXTS.viewActiveOff) : nav.isCiToastOn ? CI_TEXTS.viewPassive : CI_TEXTS.viewPassiveQuiet)}
           </Text>
         </Box>
         <Button key="ci-mode" plain hotkey={ACTIONS.code.ciMode} onPress={nav.toggleCiMode}>
-          <Text dimColor>{`${ACTIONS.code.ciMode} ${isActive ? 'passive' : 'active'}`}</Text>
+          <Text dimColor>{isActive ? 'passive' : 'active'}</Text>
         </Button>
       </Box>
       {state}
@@ -330,7 +330,7 @@ const FileRow = (k: Kit, f: FileChange, group: string, nav: GitNav): JSX.Element
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" columnGap={1} marginLeft={1}>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={`file-${group}-${f.path}`} plain onPress={() => nav.openDiff(f)}>
             <Text color={CODE_COLORS[code[0] ?? ''] ?? 'text'}>{(isOpen ? '▾' : '▸') + ' ' + code.padEnd(2) + ' '}</Text>
             <Text color={isOpen ? ACCENT : 'text'} wrap="truncate-start">
@@ -354,13 +354,15 @@ const CommitRow = (k: Kit, c: Commit): JSX.Element => {
   const { Box, Text } = k
   return (
     <Box flexDirection="row" columnGap={1}>
-      <Text color={ACCENT} dimColor>
+      <Text color={ACCENT} dimColor mono>
         {c.sha}
       </Text>
-      <Box flexGrow={1} flexShrink={1}>
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
         <Text wrap="truncate-end">{c.subject}</Text>
       </Box>
-      <Text dimColor>{c.age}</Text>
+      <Text dimColor mono>
+        {c.age}
+      </Text>
     </Box>
   )
 }

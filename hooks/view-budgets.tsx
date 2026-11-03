@@ -27,7 +27,7 @@ export const BudgetsView = (k: Kit, budgets: BudgetState | null, hasBudgets: boo
       {hasBudgets && (
         <Box marginTop={1}>
           <Button key="budgets-measure" plain hotkey={ACTIONS.code.measure} onPress={measure}>
-            <Text dimColor>{`${ACTIONS.code.measure} measure now (builds first)`}</Text>
+            <Text dimColor>measure now (builds first)</Text>
           </Button>
         </Box>
       )}
@@ -47,7 +47,7 @@ const Reading = (k: Kit, r: BudgetReading): JSX.Element => {
       {Line(k, glyph, r.label, <Text color={over ? 'error' : 'text'}>{value}</Text>)}
       <Box flexDirection="row" columnGap={1} marginLeft={2}>
         {r.value !== null && r.limit !== null && <Text color={over ? 'error' : ACCENT}>{bar(r.value, r.limit, BAR_CELLS).padEnd(BAR_CELLS)}</Text>}
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text dimColor wrap="wrap">
             {details}
           </Text>

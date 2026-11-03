@@ -52,7 +52,7 @@ const Plan = (k: Kit, plan: PlanFile, merged: ReadonlySet<number>, archiveDir: s
     <Box key={'plan-' + plan.path} flexDirection="column">
       {/* A section header as Section draws it, its title a button (a Button holds only text). */}
       <Box flexDirection="row" marginTop={1}>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={'plan-pick-' + plan.path} plain onPress={() => nav.pick(plan.path)}>
             <Text color={ACCENT} weight="semibold" wrap="truncate-end">
               {'▍' + (isSelected ? '› ' : '') + lastSegment(plan.path).toUpperCase()}
@@ -87,7 +87,8 @@ const Plan = (k: Kit, plan: PlanFile, merged: ReadonlySet<number>, archiveDir: s
       {plan.checkpoints.map(c => {
         const prsMerged = mergedPrs(c, merged)
         return (
-          <Box key={'checkpoint-' + plan.path + '-' + c.id}>
+          // A column, so the row inside takes the pane's width (on a laid-out page a row box takes its content's).
+          <Box key={'checkpoint-' + plan.path + '-' + c.id} flexDirection="column">
             {Line(
               k,
               STATUS_LOOK[c.status],

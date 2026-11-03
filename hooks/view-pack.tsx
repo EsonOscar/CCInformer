@@ -65,7 +65,7 @@ const Layer = (k: Kit, l: PackLayerRow): JSX.Element => {
         LAYER_LOOK[l.state],
         <Box flexDirection="row" columnGap={1}>
           <Text weight="semibold">{LAYER_NAMES[l.layer]}</Text>
-          <Box flexShrink={1}>
+          <Box flexShrink={1} minWidth={0}>
             <Text dimColor wrap="truncate-end">
               {what}
             </Text>
@@ -98,7 +98,7 @@ const Trust = (k: Kit, report: PackReport, now: number, nav: PackNav): JSX.Eleme
   return (
     <Box flexDirection="row" columnGap={1} marginTop={1}>
       <Text color={trust.isTrusted ? 'success' : 'warning'}>{trust.isTrusted ? '✓' : '◌'}</Text>
-      <Box flexGrow={1} flexShrink={1}>
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
         <Text wrap="wrap">{text}</Text>
       </Box>
       {trust.by !== 'user pack' && (

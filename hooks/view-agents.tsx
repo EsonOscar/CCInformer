@@ -81,7 +81,9 @@ const Run = (k: Kit, run: WorkflowRun, agents: AgentRow[], now: number, width: n
   const glyph = runGlyph(totals, now)
   const note = (
     <Box flexDirection="row" columnGap={1}>
-      <Text color={glyph.color}>{glyph.char + ' ' + duration(runElapsed(run, totals, now))}</Text>
+      <Text color={glyph.color} mono>
+        {glyph.char + ' ' + duration(runElapsed(run, totals, now))}
+      </Text>
       {nav.run && (
         <Button key="run-close" plain hotkey={ACTIONS.work.closeRun} onPress={() => nav.pickRun('')}>
           <Text dimColor>×</Text>
@@ -122,7 +124,7 @@ const PhaseBrowser = (k: Kit, run: WorkflowRun, phases: Phase[], now: number, wi
           <Text color={index > 0 ? ACCENT : 'inactive'}>‹</Text>
         </Button>
         <Text color={glyph.color}>{glyph.char}</Text>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Text weight="semibold" wrap="truncate-end">
             {`${shown.title} · ${index + 1}/${phases.length}`}
           </Text>
@@ -213,7 +215,7 @@ const RunRow = (k: Kit, run: WorkflowRun, agents: AgentRow[], now: number, isSho
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" columnGap={1}>
-        <Box flexGrow={1} flexShrink={1}>
+        <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={'run-' + run.toolUseId} plain onPress={() => nav.pickRun(isShown ? '' : run.toolUseId)}>
             <Text color={glyph.color}>{glyph.char + ' '}</Text>
             <Text color={isShown ? ACCENT : 'text'} weight={isShown ? 'semibold' : 'regular'}>
@@ -221,7 +223,9 @@ const RunRow = (k: Kit, run: WorkflowRun, agents: AgentRow[], now: number, isSho
             </Text>
           </Button>
         </Box>
-        <Text color={totals.state === 'running' ? ACCENT : 'inactive'}>{duration(runElapsed(run, totals, now))}</Text>
+        <Text color={totals.state === 'running' ? ACCENT : 'inactive'} mono>
+          {duration(runElapsed(run, totals, now))}
+        </Text>
       </Box>
       <Text dimColor wrap="truncate-end">
         {'    ' + [costLine({ ...totals, tools: 0 }), ago(now - run.startedAt), where(run)].filter(Boolean).join(' · ')}
@@ -240,9 +244,9 @@ const Agent = (k: Kit, a: AgentRow, now: number, kind: string): JSX.Element => {
     .join(' · ')
   return (
     <Box flexDirection="column" marginLeft={1}>
-      {Line(k, agentGlyph(a.status, now), a.description || a.type, <Text color={isLive(a) ? ACCENT : 'inactive'}>{duration(elapsed(a, now))}</Text>)}
+      {Line(k, agentGlyph(a.status, now), a.description || a.type, <Text color={isLive(a) ? ACCENT : 'inactive'} mono>{duration(elapsed(a, now))}</Text>)}
       <Box flexDirection="row">
-        <Box flexShrink={1}>
+        <Box flexShrink={1} minWidth={0}>
           <Text dimColor wrap="truncate-end">
             {'  ' + facts}
           </Text>

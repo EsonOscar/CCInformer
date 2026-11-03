@@ -52,7 +52,7 @@ export const RulesView = (
                   <Text color={look.color} dimColor={look.dim}>
                     {look.char}
                   </Text>
-                  <Box flexGrow={1} flexShrink={1}>
+                  <Box flexGrow={1} flexShrink={1} minWidth={0}>
                     <Button key={'finding-press-' + f.id} plain onPress={() => nav.pick(isSelected ? '' : f.id)}>
                       <Text color={isSelected ? ACCENT : 'text'} wrap="truncate-end">
                         {(f.line ? 'L' + f.line + ' ' : '') + f.rule + ': ' + f.message}

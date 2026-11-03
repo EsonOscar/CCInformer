@@ -44,12 +44,18 @@ export const Section = (k: Kit, title: string, note?: JSX.Element | string | fal
   const { Box, Text } = k
   return (
     <Box flexDirection="row" marginTop={1}>
-      <Box flexGrow={1} flexShrink={1}>
-        <Text color={ACCENT} weight="semibold" wrap="truncate-end">
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
+        <Text color={ACCENT} weight="semibold" size="heading" wrap="truncate-end">
           {'▍' + title.toUpperCase()}
         </Text>
       </Box>
-      {typeof note === 'string' ? <Text dimColor>{note}</Text> : note}
+      {typeof note === 'string' ? (
+        <Text dimColor size="footnote">
+          {note}
+        </Text>
+      ) : (
+        note
+      )}
     </Box>
   )
 }
@@ -70,10 +76,16 @@ export const Line = (
           {glyph.char}
         </Text>
       )}
-      <Box flexGrow={1} flexShrink={1}>
+      <Box flexGrow={1} flexShrink={1} minWidth={0}>
         {typeof left === 'string' ? <Text wrap={truncate}>{left}</Text> : left}
       </Box>
-      {typeof right === 'string' ? <Text dimColor>{right}</Text> : right}
+      {typeof right === 'string' ? (
+        <Text dimColor mono>
+          {right}
+        </Text>
+      ) : (
+        right
+      )}
     </Box>
   )
 }
@@ -98,12 +110,14 @@ export const bar = (value: number, max: number, width: number): string => {
 
 export type Badge = { char: string; color: Color }
 
-// The areas across the top, each with its badge (its worst item), and refresh at the right. Only built areas show. One
-// row always, as the pane's header has a fixed height.
-export const AreaBar = (k: Kit, area: Area, badges: Record<Area, Badge | null>, pick: (id: Area) => void, refresh: () => void): JSX.Element => {
+// The areas across the top, each with its badge (its worst item), and refresh at the right. Only built areas show. In
+// the terminal one row always, as the pane's header has a fixed height. Off the terminal the pane has no name line, so
+// the `version` is drawn dim before refresh; there the surface draws each hotkey as a chip, wider than the terminal's
+// `1:`, so the gaps are narrower and a narrow pane wraps the row rather than hiding refresh under its scrollbar.
+export const AreaBar = (k: Kit, area: Area, badges: Record<Area, Badge | null>, pick: (id: Area) => void, refresh: () => void, version = ''): JSX.Element => {
   const { Box, Button, Text } = k
   return (
-    <Box flexDirection="row" columnGap={2}>
+    <Box flexDirection="row" columnGap={version ? 'xs' : 2} flexWrap={version ? 'wrap' : 'nowrap'}>
       {AREAS.filter(isBuilt).map(a => {
         const badge = badges[a.id]
         return (
@@ -116,6 +130,7 @@ export const AreaBar = (k: Kit, area: Area, badges: Record<Area, Badge | null>, 
         )
       })}
       <Box flexGrow={1} />
+      {version ? <Text dimColor>{`v${version}`}</Text> : null}
       <Button key="refresh" plain hotkey={REFRESH_KEY} onPress={refresh}>
         <Text dimColor>⟳</Text>
       </Button>
@@ -123,11 +138,12 @@ export const AreaBar = (k: Kit, area: Area, badges: Record<Area, Badge | null>, 
   )
 }
 
-// An area's sub-views, drawn when it has more than one, each with an optional count after its label.
-export const ViewBar = (k: Kit, views: KeyDef[], view: string, pick: (id: string) => void, counts: Record<string, string> = {}): JSX.Element => {
+// An area's sub-views, drawn when it has more than one, each with an optional count after its label. With `wrap`, views
+// that don't fit move to a second row (the terminal's header has a fixed height, so it never wraps there).
+export const ViewBar = (k: Kit, views: KeyDef[], view: string, pick: (id: string) => void, counts: Record<string, string> = {}, wrap = false): JSX.Element => {
   const { Box, Button, Text } = k
   return (
-    <Box flexDirection="row" columnGap={2} marginTop={1}>
+    <Box flexDirection="row" columnGap={wrap ? 'sm' : 2} marginTop={1} flexWrap={wrap ? 'wrap' : 'nowrap'}>
       {views.map(v => (
         <Button key={'view-' + v.id} plain hotkey={v.key} onPress={() => pick(v.id)}>
           <Text color={view === v.id ? ACCENT : 'text'} weight={view === v.id ? 'semibold' : 'regular'} dimColor={view !== v.id}>
