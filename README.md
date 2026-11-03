@@ -35,6 +35,7 @@ The rest is optional; without it, only the parts that use it stay empty:
 | Node | the install script's auto-update step; a repo's own tools | the script leaves auto-update off, and says how to switch it on |
 | Windows PowerShell (Windows) / `ps`, `/proc/meminfo`, `rm` (elsewhere) | Now › Env's processes and memory; removing a plan's original when it's archived | Env says the process list could not be read; an archive keeps the original |
 | bash (Git Bash on Windows) | the build waves of `/ccinformer:plan-feature` | build that plan in the main session instead |
+| Python 3 (standard library only) | applying the changes of `/ccinformer:audit-docs` | the audit runs, but its changes can't be checked or applied |
 
 ## Install
 
@@ -61,6 +62,8 @@ Or install by hand, without auto-update. At the prompt of a terminal session:
 ```
 
 Answer `y` to add the marketplace, then pick the user scope. From a shell: `claude plugin install ccinformer --marketplace EsonOscar/CCInformer`. In the desktop app, where `/plugin` doesn't run: + next to the prompt box → Plugins → Add marketplace `EsonOscar/CCInformer` → Add plugin.
+
+One install covers both: installed at the user scope, from the script or a terminal, the mod also loads in the desktop app's Code tab.
 
 ## Use
 

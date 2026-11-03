@@ -55,7 +55,7 @@ One change per PR, in English.
 - Against `main`, titled as above.
 - The body follows [the PR template](.github/PULL_REQUEST_TEMPLATE.md). Add `Closes #<issue>` when there is one. The body stays on the PR. The squash commit gets the PR title as its subject and the PR's commit messages as its body, so write commit messages that explain the change.
 - **Titles, bodies and commit messages stand on their own.** A reader has only the tracked files and the PR, so never cite private planning: no checkpoint or step ids (`CP2`, `C4`, `A12`, "phase 0"), no plan file names, no notes kept outside the repo. Say what changed and why in plain words, and point at tracked files where it helps.
-- Before pushing, run what CI runs: `claude plugin validate --strict .` and `claude plugin test .` (the pre-push hook does this for you).
+- Before pushing, run what CI runs: `claude plugin validate --strict .` and `claude plugin test .` (the pre-push hook does this for you). Neither typechecks, so a type error passes both: a test has to reach the code. A change under `skills/audit-docs/` also runs that skill's tests, which the pre-push hook doesn't: `python3 -B -m unittest discover -s skills/audit-docs/tests` and `node skills/audit-docs/tests/test_fanout.mjs`.
 - Before `gh pr create`, run the [leak guard](#leak-guard) on the title and the body file.
 - A red check means fix the cause; nothing in CI has a bypass.
 
@@ -134,7 +134,7 @@ Commands run in two lanes. Quick reads (git, gh) share the light lane, up to 4 a
 
 | Check | Workflow | What fails it |
 |---|---|---|
-| `plugin` | `ci.yml` | A command run outside the exec lanes ([`.githooks/check-exec.sh`](.githooks/check-exec.sh)), something the mod does by itself without its Settings gate ([`.githooks/check-permissions.sh`](.githooks/check-permissions.sh)), or `claude plugin validate --strict .` or `claude plugin test .`, on the latest Claude Code |
+| `plugin` | `ci.yml` | A command run outside the exec lanes ([`.githooks/check-exec.sh`](.githooks/check-exec.sh)), something the mod does by itself without its Settings gate ([`.githooks/check-permissions.sh`](.githooks/check-permissions.sh)), or `claude plugin validate --strict .` or `claude plugin test .`, on the latest Claude Code; or the audit-docs skill's own tests (Python and Node) |
 | `secret-scan` | `ci.yml` | gitleaks finds a secret in any commit of the PR or in the tree ([`.gitleaks.toml`](.gitleaks.toml)). The repo is public, so this one matters even solo |
 | `pr-title` | `pr-gates.yml` | The PR title isn't `type(scope): subject` |
 | `version-bump` | `pr-gates.yml` | Shipped files changed and `plugin.json`'s version didn't go up |
