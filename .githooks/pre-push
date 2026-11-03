@@ -2,7 +2,7 @@
 # Runs before anything leaves this machine. First the leak guard over every commit the push sends (see
 # check-text.sh); then the plugin job from CI: the exec check (check-exec.sh), the Settings gates
 # (check-permissions.sh), validate the manifest and hooks module, then run the mod's tests, skipped with a notice
-# if Claude Code can't be started.
+# if Claude Code can't be started; last the typecheck, which CI can't run (below).
 #
 # Set CLAUDE_BIN when the first `claude` on PATH isn't a working one (e.g. a broken shim), in your
 # shell profile: export CLAUDE_BIN="$HOME/.local/bin/claude.exe"
@@ -42,3 +42,19 @@ fi
   exit 1
 }
 "$claude" plugin test "$root" || exit 1
+
+# Neither plugin check typechecks, and CI can't: the mod API's typings, which tsconfig.json extends, are written
+# into .claude-plugin/types/ only when Claude Code loads the mod in a session (claude --plugin-dir), which
+# needs a login. So the typecheck runs here, where a clone that has loaded the mod has them.
+if [ ! -f "$root/.claude-plugin/types/tsconfig.json" ]; then
+  echo "pre-push: no .claude-plugin/types/ yet, so the typecheck is skipped. Load the mod once: claude --plugin-dir ." >&2
+  exit 0
+fi
+if ! command -v npx > /dev/null 2>&1; then
+  echo "pre-push: npx isn't on PATH, so the typecheck is skipped." >&2
+  exit 0
+fi
+npx -y -p typescript@5 tsc -p "$root" --noEmit || {
+  echo "pre-push: the typecheck failed (above). Run: npx -p typescript@5 tsc -p . --noEmit" >&2
+  exit 1
+}
