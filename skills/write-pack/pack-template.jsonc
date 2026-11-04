@@ -1,0 +1,145 @@
+// A CCInformer user pack with every setting there is, each with what it does. A reference, not a starting point: a
+// pack holds only what its repo has, and every value here is invented. User packs live outside the repo, in
+// ~/.claude/ccinformer/packs/<name>.pack.jsonc. Written in JSONC: comments and trailing commas are fine, and every
+// backslash in a regex is written twice ("\\d", "\\b"; a single "\b" is a backspace). The mod's validator checks this
+// file in its tests, so it stays valid as the schema changes.
+{
+  // Always 1: the pack format this mod reads.
+  "schema": 1,
+  // A short name for the pack, shown in Debug › Pack; the file is usually <id>.pack.jsonc.
+  "id": "acme-shop",
+  // The pack's own version: raise it when you change the pack.
+  "version": "1",
+
+  // Which repos it is for: globs over the origin remote's host/owner/repo, case aside. The first valid user pack that
+  // matches a repo is the one it uses.
+  "match": { "remote": ["github.com/<owner>/<repo>"] },
+
+  // Built-ins only, never in a user pack: the marker files that pick a built-in for a repo with no user pack, e.g.
+  // "detect": [{ "file": "package.json", "contains": "\"vite\"", "weight": 2, "required": true }]
+
+  // The built-in this pack builds on (the first one known is used). Its entries come first; an entry here with the
+  // same id changes only the fields it names.
+  "extends": ["node-vite"],
+
+  // Long-running commands Claude may start, recognised in Now › Env and the band.
+  "processes": [
+    {
+      "id": "web",
+      "label": "Web dev server",
+      // A regex over the command line, after package scripts are resolved through package.json. Also runs in .NET on
+      // Windows, so no escapes .NET lacks (\_, \q) and no [] or [^].
+      "match": "\\bweb-server\\b",
+      // One of dev, test, worker, db, editor, game, build, batch.
+      "kind": "dev",
+      // A heavy process arms the free-memory probe while it runs.
+      "heavy": false,
+      // Which environment it points at: argRegex's first group fills {mode} in envFile, whose hosts are read
+      // (key names only, values never kept); envKey reads one key.
+      "envFrom": { "argRegex": "--mode[= ](\\S+)", "envFile": ".env.{mode}", "envKey": "API_URL" },
+      // Warn when it uses more memory than this.
+      "ramWarnMb": 2048,
+    },
+  ],
+
+  // Where a process points: local, shared (staging, preview) or prod. Shared and prod show in the band above the
+  // prompt; prod also on the status line.
+  "environments": [
+    {
+      "id": "staging",
+      "label": "staging",
+      "tone": "shared",
+      // Hosts that mean this environment, as globs.
+      "hostPatterns": ["*.staging.example.test"],
+      // A regex over the command line that means this environment.
+      "argRegex": "--mode[= ]staging\\b",
+      // Writes to it are gated once approval gates are built.
+      "readOnly": true,
+      // Approval rules: schema only for now, nothing acts on them yet; leave them out.
+      "approvals": [
+        { "id": "migrations", "tool": "Bash", "commandRegex": "\\bmigrate\\b", "inputRegex": "staging", "pathGlob": "db/**", "label": "staging migration", "mode": "ask", "scope": "once" },
+      ],
+    },
+  ],
+
+  // Checks on the files Claude writes. "class": "ci" when the repo's CI fails on the rule (pushing would fail), else
+  // "advise" (a rule the project states). "cost": "edit" runs as each file is written, "turn" once a turn that wrote
+  // files ends. Checks with a command run only in a trusted repo (a matching user pack is trusted).
+  "checks": [
+    // A file over options.max lines; honours the repo's ESLint suppressions for the rules named.
+    { "id": "max-lines", "label": "File length", "on": ["src/**/*.{ts,tsx}"], "ignore": ["**/*.test.{ts,tsx}"],
+      "analyzer": "size-lines", "cost": "edit", "class": "ci", "rules": ["max-lines"], "options": { "max": 500 },
+      "suppressions": "eslint-suppressions.json" },
+    // Each line matching options.pattern, with options.message as what to do instead.
+    { "id": "raw-button", "label": "Raw <button>", "on": ["src/**/*.tsx"], "ignore": ["src/components/ui/**"],
+      "analyzer": "regex-lines", "cost": "edit", "class": "advise",
+      "options": { "pattern": "<button\\b", "message": "use <Button> from the design system" } },
+    // Translation tables (flat JSON, one file per language in a folder) with the same keys in every language.
+    { "id": "i18n", "label": "Translation keys", "on": ["src/i18n/*.json"],
+      "analyzer": "i18n-keysets", "cost": "turn", "class": "ci", "options": { "languages": ["da", "en"] } },
+    // The repo's own ESLint, over the files written in the turn; bin is the program, the mod adds the rest.
+    { "id": "eslint-strict", "label": "ESLint", "on": ["src/**/*.{ts,tsx}"],
+      "analyzer": "eslint-json", "cost": "turn", "class": "ci", "timeoutMs": 120000,
+      "bin": ["node", "node_modules/eslint/bin/eslint.js"] },
+    // Any tool that writes SARIF 2.1.0; {files} is replaced by the files to check, {output} by the mod's own file.
+    { "id": "ruff", "label": "ruff", "on": ["**/*.py"],
+      "analyzer": "sarif", "cost": "turn", "class": "ci", "timeoutMs": 60000,
+      "bin": ["ruff", "check", "--output-format", "sarif", "{files}"] },
+    // Any tool with one diagnostic per output line: options.pattern names the groups file, line, message (column,
+    // severity, code optional); options.severity is used when it has no severity group.
+    { "id": "gcc", "label": "gcc", "on": ["native/**/*.c"],
+      "analyzer": "problem-matcher", "cost": "turn", "class": "ci", "timeoutMs": 120000,
+      "bin": ["gcc", "-fsyntax-only", "{files}"],
+      "options": { "pattern": "^(?<file>[^:]+):(?<line>\\d+):(?:(?<column>\\d+):)?\\s+(?<severity>error|warning|note):\\s+(?<message>.*)$", "severity": "error" } },
+  ],
+
+  // A number kept under (or over) a limit: a fixed one, or a share of a baseline. Sources are tried in order and the
+  // first fresh value shows. A command source runs the repo's own report (repo trust needed); parse's first group,
+  // times scale, is the value.
+  "budgets": [
+    {
+      "id": "start-bundle",
+      "label": "Start-up bundle",
+      // One of bytes, ms, fps, mb, count, lines.
+      "unit": "bytes",
+      // max: keep under the limit; min: keep over it.
+      "direction": "max",
+      // 5 % over the baseline read from a JSON file.
+      "limit": { "relative": 1.05, "baseline": { "kind": "json", "path": "perf/baseline.json", "pointer": "/start" } },
+      "sources": [
+        { "kind": "command", "argv": ["node", "tools/report.mjs"], "parse": "start: ([0-9.]+) KB", "scale": 1024,
+          "freshAfter": "dist/index.html", "build": ["npm", "run", "build"] },
+        { "kind": "ci-log", "job": "checks", "step": "Bundle budget", "parse": "start: ([0-9.]+) KB", "scale": 1024 },
+        { "kind": "json", "path": "perf/latest.json", "pointer": "/start" },
+        { "kind": "dir-size", "path": "dist" },
+        // stat: p95, max or count.
+        { "kind": "file-lines", "path": "perf/frames.log", "parse": "frame (\\d+) ms", "stat": "p95" },
+        // stat: p95, min, max or last.
+        { "kind": "telemetry", "metric": "fps", "stat": "min" },
+      ],
+      // cheap: read when Code › Budgets opens; demand: only when asked (m).
+      "cost": "cheap",
+    },
+  ],
+
+  // Files a tool writes (generated) or an editor rewrites (editor-rewrite; normalize: regexes removed before
+  // comparing old and new lines).
+  "noise": [
+    { "id": "generated", "glob": "gen/**", "kind": "generated" },
+    { "id": "scenes", "glob": "**/*.scene", "kind": "editor-rewrite", "normalize": ["uid=\"[^\"]*\""] },
+  ],
+
+  // Plan files outside .local/plans/ (which the board always reads), and how their checkpoints read. The patterns
+  // are optional: the board has its own.
+  "plans": {
+    "globs": ["docs/plans/*.md"],
+    "archiveDir": "docs/plans/archive",
+    "checkpoint": "(?:CP|C|R)\\d+[a-z]?",
+    "done": ["merged as #\\d+", "\\bdone\\b"],
+    "prRef": "#(\\d+)",
+    "results": { "glob": "perf/results/*.json", "index": "perf/index.json" },
+  },
+
+  // Ids from the built-in to switch off here, e.g. a check whose tool the repo doesn't install.
+  "disable": ["playwright"],
+}

@@ -55,6 +55,7 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
     submits: [] as string[],
     contexts: [] as string[],
     writes: [] as string[],
+    tools: [] as string[],
   }
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.env(on, { HOME: '/home/test' })
@@ -145,6 +146,11 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
   on('turn.start', (_, e) => ({ turnId: e.turnId }) as never)
   on('turn.complete', () => ({ text: '' }) as never)
   on('command.register', (_, e) => ({ value: { command: e.name } }))
+  on('tool.register', (_, e) => {
+    const name = (e as unknown as { name: string }).name
+    seen.tools.push(name)
+    return { value: { tool: 'mcp__ccinformer__' + name } } as never
+  })
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   return { clock, ci, seen, store, files }
 }
@@ -275,6 +281,11 @@ test('with Deny all, a working session runs nothing in the background, says noth
   await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
   await env.clock.settle()
   expect(env.seen.commands.slice(before).some(c => c.startsWith('git status'))).toBe(true)
+
+  // So does the pack-checking tool: Claude calls it and it writes nothing, so no switch gates it (CONTRIBUTING).
+  expect(env.seen.tools).toEqual(['check_pack'])
+  const checked = await $.tool.call({ tool: 'mcp__ccinformer__check_pack' } as never)
+  expect((JSON.parse(String((checked as { result: unknown }).result)) as { packsDir: string }).packsDir).toBe(PACKS)
 })
 
 test('CI finished notification off: the toast still comes, the desktop notification does not', CLOCK_HEAVY, async ($, on) => {

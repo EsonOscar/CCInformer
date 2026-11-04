@@ -435,7 +435,7 @@ describe('the shape of each entry', () => {
       'detect rule 1: "weight" must be a number above 0',
       'detect rule 1: "file" must be a path inside the repo, such as "package.json"',
     ])
-    expect(reasons({ ...FULL, extends: ['rails'] })).toEqual(['extends "rails", which isn\'t a built-in (the built-ins: node-vite)'])
+    expect(reasons({ ...FULL, extends: ['rails'] })).toEqual([`extends "rails", which isn't a built-in (the built-ins: ${BUILTINS.map(b => b.id).join(', ')})`])
   })
 
   test('an entry that extends a built-in\'s entry names only what it changes, and keeps that entry\'s label', async () => {
