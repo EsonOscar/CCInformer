@@ -2,11 +2,15 @@
 // the comments and trailing commas are blanked out (strings left alone) and the rest goes to JSON.parse.
 export type Parsed = { value: unknown; error?: undefined } | { value?: undefined; error: string }
 
+// Added to every parse error: the engine's message rarely says how to fix it, and the commonest slip in a pack is a
+// regex backslash written once ("\d" is no JSON escape).
+export const PARSE_HINT = '; in JSONC write every regex backslash twice ("\\\\d", "\\\\b") and check commas and quotes'
+
 export const parseJsonc = (text: string): Parsed => {
   try {
     return { value: JSON.parse(stripTrailingCommas(stripComments(text))) }
   } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) }
+    return { error: (err instanceof Error ? err.message : String(err)) + PARSE_HINT }
   }
 }
 

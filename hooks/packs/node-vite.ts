@@ -44,6 +44,3 @@ export const NODE_VITE: PackManifest = {
     { id: 'coverage', glob: 'coverage/**', kind: 'generated' },
   ],
 }
-
-// Every built-in, in the order detection tries them.
-export const BUILTINS: PackManifest[] = [NODE_VITE]

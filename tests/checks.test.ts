@@ -520,6 +520,15 @@ describe('regex-lines', () => {
     expect(note).toContain('- src/page.tsx:3 no-restricted-syntax: matches /<input\\b/ [CI will fail]')
   })
 
+  test('a long line is tested on its first characters, in a script and in any other file', async () => {
+    const minified = 'x'.repeat(MAX_LINE_CHARS) + '<button>'
+    const early = '<button>' + 'x'.repeat(MAX_LINE_CHARS)
+    for (const file of ['src/app.min.js', 'src/page.html']) {
+      const check = { ...RAW_BUTTON, on: ['src/**'] }
+      expect(regexFindings(check, file, [minified, early].join('\n'), {}).map(f => f.line)).toEqual([2])
+    }
+  })
+
   test("the repo's suppressions for the rule it stands for: matches it covers read as information", async () => {
     const covered = regexFindings(RAW_INPUT, 'src/page.tsx', PAGE, { 'src/page.tsx': { 'no-restricted-syntax': { count: 2 } } })
     expect(covered.map(f => [f.severity, f.ciWouldFail, f.message])).toEqual([['info', false, "matches /<input\\b/ (suppressed: don't add more)"]])

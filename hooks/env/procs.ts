@@ -35,7 +35,8 @@ export const processQuery = (pack: ResolvedPack, platform: Platform): string[][]
   const table = (rows: { id: string; pattern: string }[]) => rows.map(r => `@{i=${quote(r.id)};r=${quote(r.pattern)}}`).join(',')
   const matchers = table(pack.processes.map(p => ({ id: p.id, pattern: p.match })))
   const envs = table(pack.environments.flatMap(e => (e.argRegex ? [{ id: e.id, pattern: e.argRegex }] : [])))
-  const hits = (list: string) => `@(${list}|Where-Object{[regex]::IsMatch($c,$_.r)}|ForEach-Object{$_.i})`
+  // Each pattern in its own try, so one that .NET can't read fails only itself, not the query (it stops on errors).
+  const hits = (list: string) => `@(${list}|Where-Object{try{[regex]::IsMatch($c,$_.r)}catch{$false}}|ForEach-Object{$_.i})`
   return [
     powershell(
       [
