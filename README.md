@@ -68,7 +68,7 @@ One install covers both: installed at the user scope, from the script or a termi
 ## Use
 
 - `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/ccinformer settings` opens the switches. `/side` is a short alias.
-- Ctrl+X Tab gives the pane the keyboard: `1`-`5` switch areas, the letters shown switch views and run actions, `r` refreshes, Esc gives the keyboard back. Clicking works without it.
+- Ctrl+X Tab gives the pane the keyboard: `1`-`5` switch areas, the letters shown switch views and run actions, `r` refreshes and scrolls back to the top, Esc gives the keyboard back. Clicking works without it.
 - In the desktop app `/ccinformer` works the same, and a click in the pane gives it the keyboard. There the pane scrolls as one page: the areas sit at its top and the usage line at its bottom, rather than staying put as they do in the terminal.
 
 ## Skills

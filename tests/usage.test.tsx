@@ -127,6 +127,77 @@ test("the pane's own scroll: rows down from where it is, never above the top, ne
   expect(scrolledTop(0, 5, 30, 40)).toBe(0)
 })
 
+test('content that got shorter while scrolled: the next scroll, either way, brings the last row back above the footer', async () => {
+  // Scrolled 60, the content then lost rows: the tree as drawn is 10 rows in a 40-row window, so its end is 30 rows up.
+  expect(scrolledTop(60, 1, 10, 40)).toBe(30)
+  expect(scrolledTop(60, -1, 10, 40)).toBe(30)
+  // Scrolled past every row (the tree is only the footer's padding): a long way back on the first tick.
+  expect(scrolledTop(200, -1, 2, 40)).toBe(162)
+})
+
+// What an earlier drawing left in the pane's scroll position (the content moved 60 rows up), kept through a reload:
+// state reads 60 until the mod writes the position itself.
+const seedScrolled = (on: Parameters<TestBody>[1]) => {
+  let isSeeded = true
+  on('state.get', async (_, e, next) => {
+    const result = await next(e)
+    return e.key === 'paneTop' && isSeeded && result.value ? { value: { ...result.value, value: 60 } } : result
+  })
+  on('state.set', (_, e, next) => {
+    if (e.key === 'paneTop') isSeeded = false
+    return next(e)
+  })
+}
+
+test('the terminal tree is no taller than its content, so a scroll reads where the content ends', async ($, on) => {
+  const { clock } = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: '' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  const root = await ui.find({ type: 'Box' })
+  expect([root?.props.paddingBottom, root?.props.minHeight]).toEqual([2, undefined])
+  await ui.unmount()
+})
+
+test('a reload keeps the scroll position, and switching areas still brings it back to the top', async ($, on) => {
+  const { clock } = engine(on)
+  seedScrolled(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'content' }))?.props.marginTop).toBe(-60)
+  await ui.press({ key: 'area-work' })
+  expect((await ui.find({ key: 'content' }))?.props.marginTop).toBe(0)
+  await ui.unmount()
+})
+
+test('`r` brings a scrolled pane back to the top', async ($, on) => {
+  const { clock } = engine(on)
+  seedScrolled(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'content' }))?.props.marginTop).toBe(-60)
+  await ui.press({ key: 'refresh' })
+  expect((await ui.find({ key: 'content' }))?.props.marginTop).toBe(0)
+  await ui.unmount()
+})
+
+test('a pane opened again starts at the top', async ($, on) => {
+  const { clock } = engine(on)
+  seedScrolled(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.find({ key: 'content' }))?.props.marginTop).toBe(-60)
+  await ui.unmount()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: '' })
+  const opened = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await opened.find({ key: 'content' }))?.props.marginTop).toBe(0)
+  await opened.unmount()
+})
+
 // The scroll itself can't be driven here (the test host lays nothing out), so scrolledTop's own test covers the moves;
 // this holds the layout they act on: the content in a box of its own, the footer apart from it.
 test('the content sits in a box of its own, unscrolled at first, with the footer drawn apart from it', async ($, on) => {

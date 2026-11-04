@@ -158,7 +158,8 @@ let shownStatus: string | undefined
 // When Claude last wrote a file: a build older than that no longer measures the tree.
 let lastWriteAt = 0
 // The pane's own scroll position, kept here as well as in state: scroll events that arrive together each move it from
-// here, so none undoes another.
+// here, so none undoes another. A reload starts this module over while state keeps its value, so session.start reads
+// it back; otherwise a write equal to this 0 would be skipped and the pane would stay where state left it.
 let paneTop = 0
 // The surface the pane was last drawn for. A scroll event names none, so the scroll hook reads it here: only the
 // terminal's pane scrolls its own content; any other surface scrolls the pane itself.
@@ -303,6 +304,7 @@ export const register: Register = on => {
     // Decided before anything else, /ccinformer included: a later session.start (as after /reload-plugins) isn't awaited,
     // and a /ccinformer typed then writes isOpen and columns, which would make a new store look like an older install's.
     const starting = await readStartingChoices($)
+    paneTop = await read($, paneTopAtom)
     await $.command.register({
       name: COMMAND,
       description: 'Toggle the CCInformer pane: sessions, git and CI, workflows, debug',
@@ -741,8 +743,9 @@ export const register: Register = on => {
     const isFirstOpen = !arg && (await $.store.get(STORE_SETTINGS_FIRST).catch(() => undefined)) === true
     // The area is set before the pane opens, so its first drawing is the right one.
     if (target) await update($, areaAtom, () => target.area)
+    // A pane opened again starts at the top: what it showed may have got shorter while it was closed.
+    await setPaneTop($, 0)
     if (isFirstOpen) {
-      await setPaneTop($, 0)
       await update($, areaAtom, () => 'debug')
       await update($, debugViewAtom, () => 'settings')
     }
@@ -1017,7 +1020,11 @@ export const register: Register = on => {
         if (area === 'debug') void update($, debugViewAtom, () => view as DebugView).then(() => live?.refresh('debug'))
         if (area === 'debug' && view === 'settings') void markSettingsShown($).catch(() => undefined)
       },
-      refresh: () => void live?.refresh(area),
+      // A refresh also scrolls back to the top, so `r` brings back a pane scrolled past its content's end.
+      refresh: () => {
+        void setPaneTop($, 0)
+        void live?.refresh(area)
+      },
       toggleAllFiles: () => void update($, showAllFilesAtom, v => !v),
       // Active CI mode on or off for this repo; a toast says which.
       toggleCiMode: () => void live?.ci.setMode(ciState.mode === 'active' ? 'passive' : 'active').then(text => $.ui.toast(text)), // asked
