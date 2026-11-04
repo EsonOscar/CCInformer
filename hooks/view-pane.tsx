@@ -82,7 +82,9 @@ const FOOTER_ROWS = 2
 
 // The pane scrolls its own content, so the footer drawn over it never moves: a scroll of `by` rows moves the content
 // from `top`, clamped so its last row still clears the footer. `contentRows` is the tree's height as drawn now, which
-// is the content's own height less the `top` rows already scrolled away.
+// is the content's own height less the `top` rows already scrolled away. Content that got shorter while scrolled (a
+// list emptied, a run ended) leaves `top` past its end; the tree is then shorter than the window, and the next scroll,
+// either way, brings `top` back to where the last row clears the footer.
 export const scrolledTop = (top: number, by: number, contentRows: number, bodyRows: number): number =>
   Math.min(Math.max(0, contentRows + top - bodyRows), Math.max(0, top + by))
 
@@ -221,8 +223,9 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const headerRows = 1 + areaPlace.rows.length + 1 + (viewPlace ? 1 + viewPlace.rows.length : 0)
   return (
     // The padding leaves room for the header above the content and the footer below it, so a long view scrolls clear
-    // of both.
-    <Box flexDirection="column" paddingX={1} paddingBottom={FOOTER_ROWS} minHeight={d.rows}>
+    // of both. No minimum height: the tree's height is what a scroll's clamp reads, and one padded to the window's
+    // would hide content scrolled past its end, leaving the pane blank with no scroll that brings it back.
+    <Box flexDirection="column" paddingX={1} paddingBottom={FOOTER_ROWS}>
       {/* The content, moved up by the rows the pane has scrolled itself; the header and footer stay where they are. */}
       <Box key="content" flexDirection="column" paddingTop={headerRows} marginTop={d.contentTop ? -d.contentTop : 0}>
         {view}
