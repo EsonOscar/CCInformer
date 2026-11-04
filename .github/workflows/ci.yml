@@ -58,6 +58,10 @@ jobs:
           python3 -B -m unittest discover -s skills/audit-docs/tests
           node skills/audit-docs/tests/test_fanout.mjs
 
+      # plan-feature-small's review script, run with a stub critic (no model calls).
+      - name: Run the plan-feature-small skill's tests
+        run: node skills/plan-feature-small/tests/test_review.mjs
+
       # The write-pack skill's template must stay a valid pack naming every key; the mod's own validator decides, run
       # under tsx, as the plugin test kit loads only code files.
       - name: The pack template is valid
