@@ -12,7 +12,7 @@ A built-in pack ships with the mod. It is picked for any repo of its stack by it
 
 Stop and say which one fails, unless all three hold:
 - this is a CCInformer clone: `skills/write-pack/SKILL.md` and `hooks/packs/builtins.ts` exist;
-- the branch isn't `main` (`git branch --show-current`); say which branch to create rather than creating it;
+- you aren't on `main`: `git branch --show-current` prints another branch, or nothing (a detached HEAD, as in a throwaway worktree, passes); on `main`, say which branch to create rather than creating it;
 - the `plugin-authoring` skill is loaded (load it now if not).
 
 ## Steps

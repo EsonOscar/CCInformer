@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
+import { BUILTINS } from '../hooks/packs/builtins'
 import type { PackToolReport } from '../hooks/packs/check'
 
 const TOOL = 'mcp__ccinformer__check_pack'
@@ -99,7 +100,9 @@ test('with no text: the repo, the packs folder and every pack in it, a refused o
   expect(report.packs[0]!.reasons[0]).toBe('process web needs "label", the name the pane shows')
   // No pack's text before a draft exists, so the draft is made from the repo, not from the old pack.
   expect(report.packs.every(p => p.text === undefined)).toBe(true)
-  expect(report.builtins.map(b => [b.id, b.detected, b.pack.id])).toEqual([['node-vite', true, 'node-vite']])
+  // Every built-in, with its whole pack; only node-vite's stack is in this repo.
+  expect(report.builtins.map(b => b.id)).toEqual(BUILTINS.map(b => b.id))
+  expect(report.builtins.filter(b => b.detected).map(b => b.pack.id)).toEqual(['node-vite'])
   // The skill's template comes with this first look, from the mod's own folder.
   expect(report.template).toBe(TEMPLATE)
   expect(report.draft).toBeUndefined()
