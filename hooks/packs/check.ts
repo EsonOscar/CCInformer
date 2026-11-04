@@ -12,9 +12,10 @@ import { checkPack } from './validate'
 export const PACK_TOOL = 'check_pack'
 export const PACK_TOOL_TEXT =
   'Checks a CCInformer user pack (the JSONC text of a <name>.pack.jsonc) with the mod\'s own validator, without writing anything. ' +
-  "Returns JSON: this repo's normalized remote, the absolute packs folder and every pack in it (valid or not, whether it matches this repo, and the text of this repo's own), " +
+  "Returns JSON: this repo's normalized remote, the absolute packs folder and every pack in it (valid or not, and whether it matches this repo), " +
   'the built-in packs, and for the text given every reason it would be refused, each saying how to fix it, whether a file of that name exists ' +
-  'and whose it is, whether another pack loads for this repo first, and the merged entries. Call it with no text to look before drafting.'
+  "and whose it is, whether another pack loads for this repo first, the merged entries, and the text of this repo's existing pack. " +
+  "Call it with no text to look before drafting: that answer also carries the write-pack skill's template."
 export const PACK_TOOL_SCHEMA = {
   type: 'object',
   properties: {
@@ -23,10 +24,14 @@ export const PACK_TOOL_SCHEMA = {
   },
 }
 
+// The write-pack skill's template, inside the mod's folder.
+export const PACK_TEMPLATE = 'skills/write-pack/pack-template.jsonc'
+
 const PACK_FILE = /^[^\\/:]+\.pack\.jsonc$/
 
-// A pack in the folder. `text` only for this repo's own packs (matchesRepo), so an update needs no read of a file
-// outside the repo; another repo's pack never reaches the model.
+// A pack in the folder. `text` only for this repo's own packs (matchesRepo), and only once a draft is checked, so an
+// update needs no read of a file outside the repo, the draft is made from the repo before the old pack is seen, and
+// another repo's pack never reaches the model.
 export type PackFileRow = { file: string; valid: boolean; reasons: string[]; matchesRepo: boolean; text?: string }
 export type DraftReport = {
   file: string
@@ -46,6 +51,9 @@ export type PackToolReport = {
   packsDir: string
   packs: PackFileRow[]
   builtins: { id: string; detected: boolean; pack: PackManifest }[]
+  // The write-pack skill's template, every setting with what it does: in the first look (no draft), so the skill
+  // needs no read of the mod's own folder, which lies outside the repo.
+  template?: string
   draft?: DraftReport
 }
 
@@ -67,11 +75,13 @@ const rowOf = (file: string, text: string, remote: string): PackFileRow => {
 }
 
 // The tool's answer: the repo, the packs folder and its packs, the built-ins, and, given a draft's text, what the
-// validator says of it and how it would resolve here. `input` is what the loader reads, `packsDir` its folder.
-export const checkDraft = (input: PackInput, packsDir: string, draft: { text?: string; file?: string }): PackToolReport => {
+// validator says of it and how it would resolve here. `input` is what the loader reads, `packsDir` its folder,
+// `template` the skill's template text (null when it couldn't be read).
+export const checkDraft = (input: PackInput, packsDir: string, draft: { text?: string; file?: string }, template: string | null = null): PackToolReport => {
+  const hasDraft = typeof draft.text === 'string'
   const packs = input.userPacks.map(p => {
     const row = rowOf(nameOf(p.path), p.text, input.remote)
-    return row.matchesRepo ? { ...row, text: p.text } : row
+    return hasDraft && row.matchesRepo ? { ...row, text: p.text } : row
   })
   const detected = detect(BUILTINS, input.markers)?.id
   const report: PackToolReport = {
@@ -80,7 +90,7 @@ export const checkDraft = (input: PackInput, packsDir: string, draft: { text?: s
     packs,
     builtins: BUILTINS.map(b => ({ id: b.id, detected: b.id === detected, pack: b })),
   }
-  if (typeof draft.text !== 'string') return report
+  if (typeof draft.text !== 'string') return template === null ? report : { ...report, template }
 
   const parsed = parseJsonc(draft.text)
   const id = parsed.error === undefined && typeof (parsed.value as { id?: unknown })?.id === 'string' ? (parsed.value as { id: string }).id : ''

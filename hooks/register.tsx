@@ -25,7 +25,7 @@ import { manifestVersion, paneTitle } from './format'
 import { readUsage } from './usage'
 import { createGit } from './git/run'
 import { parseWorkflowMeta } from './parse'
-import { PACK_TOOL, PACK_TOOL_SCHEMA, PACK_TOOL_TEXT, checkDraft } from './packs/check'
+import { PACK_TEMPLATE, PACK_TOOL, PACK_TOOL_SCHEMA, PACK_TOOL_TEXT, checkDraft } from './packs/check'
 import type { PackToolReport } from './packs/check'
 import { askTrust, forgetTrust, loadPack, packSignature, readPackInput, userPackDir } from './packs/load'
 import type { ResolvedPack } from './packs/types'
@@ -654,8 +654,15 @@ export const register: Register = on => {
       checkPack: async () => {
         if (packReport && (await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
       },
-      // A user pack draft, checked against this repo and the packs folder as they are now; nothing is written.
-      checkDraft: async draft => checkDraft(await readPackInput($, exec, cwd, configDir), userPackDir(configDir), draft),
+      // A user pack draft, checked against this repo and the packs folder as they are now; nothing is written. The
+      // first look (no draft) also carries the skill's template, read from the mod's own folder.
+      checkDraft: async draft =>
+        checkDraft(
+          await readPackInput($, exec, cwd, configDir),
+          userPackDir(configDir),
+          draft,
+          draft.text === undefined ? (await readText($, $.plugin.root + '/' + PACK_TEMPLATE)) || null : null,
+        ),
       // The resolved pack, waiting for the first read when a call comes right after the session started.
       pack: async () => packResolved ?? (await reloadPack(), packResolved),
       // Lets the repo's own tools run (asking first) or stops them; says how it went.

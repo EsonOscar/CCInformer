@@ -6,14 +6,14 @@ argument-hint: <optional focus, e.g. "only the checks">
 
 Write a pack. Focus, if any: $ARGUMENTS
 
-A user pack tells CCInformer about one repo: which commands are dev servers and which environment they point at, which checks to run on the files Claude writes (and whether CI enforces them), which numbers to keep under a limit, and where the plan files are. It lives outside the repo, in the person's packs folder, and only matches repos by their remote. README.md's "Packs" section is the reference; `${CLAUDE_SKILL_DIR}/pack-template.jsonc` has every setting with what it does.
+A user pack tells CCInformer about one repo: which commands are dev servers and which environment they point at, which checks to run on the files Claude writes (and whether CI enforces them), which numbers to keep under a limit, and where the plan files are. It lives outside the repo, in the person's packs folder, and only matches repos by their remote. README.md's "Packs" section is the reference, and the template every setting with what it does (**Shared: the template**).
 
 The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads the repo and the packs folder, validates the text you give it with the same rules the mod loads packs by, and writes nothing.
 
 ## Steps
 
 1. **The tool.** If `mcp__ccinformer__check_pack` isn't among your tools, load it with ToolSearch `select:mcp__ccinformer__check_pack`. If neither works, say that CCInformer isn't loaded in this session (it needs 0.30.0 or later) and stop: never write a pack the mod hasn't checked.
-2. **Look first.** Call the tool with no arguments. Its JSON gives `repo.remote` (the repo as `host/owner/repo`), `packsDir` (the absolute packs folder), `packs` (every pack there, valid or not, each with `matchesRepo`, and the `text` of this repo's own, so you never read that folder yourself) and `builtins` (each built-in pack, `detected` for the one whose stack this repo has, and its full entries).
+2. **Look first.** Call the tool with no arguments. Its JSON gives `repo.remote` (the repo as `host/owner/repo`), `packsDir` (the absolute packs folder), `packs` (every pack there, valid or not, each with `matchesRepo`), `builtins` (each built-in pack, `detected` for the one whose stack this repo has, and its full entries) and `template` (**Shared: the template**). It gives no pack's text yet: you draft from the repo first, and the tool hands you this repo's existing pack with your first draft check (step 5), so you never read the packs folder yourself.
    - If `repo.remote` is empty, say: "User packs are matched by the repo's remote, and this repo has none. Add one (`git remote add origin <url>`) and run /ccinformer:write-pack again." Then stop.
    - A pack in `packs` with `matchesRepo` is this repo's pack, even a refused one: it is what you update (step 8), never a second file.
 3. Read the repo as **Shared: reading the repo** says, decide each finding as **Shared: ci or advise** says, map it as **Shared: from the repo to the pack** says, and write regexes as **Shared: regexes in JSONC** says.
@@ -39,7 +39,7 @@ The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads
    The packs folder is outside the repo, so Claude Code may also ask to allow the write itself; that is expected.
 
    In plan mode, put the draft and the paths in the plan instead: the plan's approval is the yes, and the write follows once plan mode ends. If the question can't be asked (no AskUserQuestion, as in a headless run), is dismissed or gets no clear yes, show the text only and write nothing.
-8. **An existing pack for this repo** (step 2 or 5): its text is in the tool's `packs`. Show the diff between it and the fresh draft, and propose Edits to it that bring in what the repo now says and keep the person's own entries and comments. Remove an entry of theirs only when its source is gone from the repo, and say so. On yes, write a copy first, `<path>.<YYYYMMDD>.bak` (today's date; add `-2`, `-3` if that name exists; the name never ends in `.pack.jsonc`, so the mod never loads it), then make the Edits.
+8. **An existing pack for this repo** (step 2 or 5): its text is in `packs` in the tool's answer to your draft. Show the diff between it and the fresh draft, and propose Edits to it that bring in what the repo now says and keep the person's own entries and comments. Remove an entry of theirs only when its source is gone from the repo, and say so. On yes, write a copy first, `<path>.<YYYYMMDD>.bak` (today's date; add `-2`, `-3` if that name exists; the name never ends in `.pack.jsonc`, so the mod never loads it), then make the Edits.
 9. **After writing**, call the tool with the written file's text and name: `draft.valid` true and `draft.shadowedBy` empty. Then point the person to `/ccinformer pack` (Debug › Pack), where it shows once the next turn starts.
 10. **Never in a pack:** secrets, tokens, passwords, env values, credentials in URLs, personal paths, and `approvals` (nothing acts on them yet).
 
@@ -51,8 +51,8 @@ The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads
 - **CI:** `.github/workflows/*.yml`, `.gitlab-ci.yml`, `azure-pipelines.yml`, `.circleci/`, `bitbucket-pipelines.yml`, `Jenkinsfile`. Note which jobs run on pull requests or the default branch, and each step's command.
 - **Tests that act as rules:** a test that holds translation files to the same keys, import boundaries between folders, a banned pattern.
 - **Deploy configs:** `render.yaml`, `fly.toml`, `vercel.json`, `netlify.toml`, workflow `environment:` keys. Take only names, branches and `--mode` arguments from them; never a value from an `env`, `envVars` or `secrets` block.
-- **Env files:** by name only, with Glob (`.env.staging` says there is a staging mode). Never Read one, and pass `!**/.env*` to every Grep, together with `!**/*.pem`, `!**/*.key` and `!**/secrets/**`.
-- **Plans:** Markdown plans outside `.local/plans/` (which CCInformer always reads), such as `docs/plans/`.
+- **Env files:** by name only, with Glob (`.env.staging` says there is a staging mode). Never Read one or `cat` one, and give every Grep that isn't limited to named source files (a `glob` such as `*.test.ts`, or a single file) the exclusions `!**/.env*`, `!**/*.pem`, `!**/*.key` and `!**/secrets/**`.
+- **Plans:** Markdown plans with checkpoint ids (`### CP1: ...`, a table row `| C7 | ...`) anywhere but `.local/plans/`, which CCInformer always reads: loose in `.local/`, in `docs/`, `plans/`. Glob for `**/*.md` outside `node_modules` and grep them for such ids; an archive folder next to them is `plans.archiveDir`.
 
 ## Shared: ci or advise
 
@@ -84,4 +84,4 @@ Write the regex as the engine sees it, then double every backslash: `\bvite\b` i
 
 ## Shared: the template
 
-`${CLAUDE_SKILL_DIR}/pack-template.jsonc` holds every setting a pack has, with what it does. Read it to know what a field means and what it takes; never copy an entry or a value from it, since a pack that matches a repo is trusted, and a sample check left in would run its command there.
+The template holds every setting a pack has, with what it does. The tool's first answer (step 2) carries it as `template`; it is also `${CLAUDE_SKILL_DIR}/pack-template.jsonc`, but that folder is outside the repo, so take it from the tool. Use it to know what a field means and what it takes; never copy an entry or a value from it, since a pack that matches a repo is trusted, and a sample check left in would run its command there.

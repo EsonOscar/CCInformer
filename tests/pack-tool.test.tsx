@@ -17,6 +17,8 @@ const SHOP = `{
 const OLD = `{ "schema": 1, "id": "acme-old", "version": "1", "match": { "remote": ["github.com/acme/shop"] },
   "processes": [{ "id": "web", "match": "web", "kind": "dev" }] }`
 const OTHER = `{ "schema": 1, "id": "other", "version": "1", "match": { "remote": ["github.com/other/*"] } }`
+// What the mod's own copy of the skill's template reads as here.
+const TEMPLATE = '// every pack setting, with what it does\n{ "schema": 1 }\n'
 
 const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 
@@ -33,7 +35,7 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>) => {
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('agent.list', () => ({ value: [] }))
   on('fs.exists', (_, e) => ({ value: posix(e.path) in files }))
-  on('fs.read', (_, e) => ({ value: files[posix(e.path)] ?? null }) as never)
+  on('fs.read', (_, e) => ({ value: posix(e.path).endsWith('/skills/write-pack/pack-template.jsonc') ? TEMPLATE : (files[posix(e.path)] ?? null) }) as never)
   on('fs.stat', (_, e) => ({ value: posix(e.path) in files ? { kind: 'file', size: 1, mtimeMs: 1 } : null }) as never)
   on('fs.list', (_, e) => {
     const dir = posix(e.path) + '/'
@@ -95,14 +97,25 @@ test('with no text: the repo, the packs folder and every pack in it, a refused o
     ['shop.pack.jsonc', true, true],
   ])
   expect(report.packs[0]!.reasons[0]).toBe('process web needs "label", the name the pane shows')
-  // This repo's packs come with their text, so an update needs no read outside the repo; another repo's never does.
+  // No pack's text before a draft exists, so the draft is made from the repo, not from the old pack.
+  expect(report.packs.every(p => p.text === undefined)).toBe(true)
+  expect(report.builtins.map(b => [b.id, b.detected, b.pack.id])).toEqual([['node-vite', true, 'node-vite']])
+  // The skill's template comes with this first look, from the mod's own folder.
+  expect(report.template).toBe(TEMPLATE)
+  expect(report.draft).toBeUndefined()
+})
+
+test("once a draft is checked: the text of this repo's own packs, never another repo's, and no template", async ($, on) => {
+  const { clock } = engine(on, { ...FILES })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const report = await ask($, { text: draft({}), file: 'zz.pack.jsonc' })
   expect(report.packs.map(p => [p.file, p.text === undefined ? 'no text' : p.text])).toEqual([
     ['acme-old.pack.jsonc', OLD],
     ['other.pack.jsonc', 'no text'],
     ['shop.pack.jsonc', SHOP],
   ])
-  expect(report.builtins.map(b => [b.id, b.detected, b.pack.id])).toEqual([['node-vite', true, 'node-vite']])
-  expect(report.draft).toBeUndefined()
+  expect(report.template).toBeUndefined()
 })
 
 test('a valid draft: no reasons, the file it would replace, and the entries it resolves to', async ($, on) => {
