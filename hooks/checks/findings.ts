@@ -1,6 +1,7 @@
 import type { Finding } from '../../types'
 import type { CheckSpec } from '../packs/types'
 import { matchesGlob, repoPath } from './glob'
+import { MAX_LINE_CHARS } from './matcher'
 import { isScript, scriptSource } from './source'
 import { suppress } from './suppressions'
 import type { Suppressions } from './suppressions'
@@ -83,9 +84,10 @@ export const regexFindings = (check: CheckSpec, file: string, text: string, supp
   )
 }
 
-// The lines with a match, in order.
+// The lines with a match, in order. Each line is tested on its first MAX_LINE_CHARS characters, as a problem matcher's
+// output is, so a minified file can't keep a slow pattern busy.
 const plainLines = (re: RegExp, text: string): number[] =>
-  text.split(/\r\n|\r|\n/).flatMap((line, i) => (re.test(line) ? [i + 1] : []))
+  text.split(/\r\n|\r|\n/).flatMap((line, i) => (re.test(line.slice(0, MAX_LINE_CHARS)) ? [i + 1] : []))
 
 // The lines a script's matches are reported on, each once, in order: every match in the comment-free text, on the line
 // `scriptSource` places it.
@@ -95,7 +97,8 @@ const scriptLines = (re: RegExp, text: string): number[] => {
   let offset = 0
   for (const line of code.split('\n')) {
     re.lastIndex = 0
-    for (let m = re.exec(line); m; m = re.exec(line)) {
+    const tested = line.slice(0, MAX_LINE_CHARS)
+    for (let m = re.exec(tested); m; m = re.exec(tested)) {
       lines.add(lineOf[offset + m.index] ?? 1)
       if (m[0] === '') re.lastIndex += 1
     }

@@ -29,7 +29,24 @@ export const PACK_KEYS = ['schema', 'id', 'version', 'match', 'detect', 'extends
 
 export type DetectRule = { file: string; contains?: string; weight: number; required?: boolean }
 
-export type ProcessKind = 'dev' | 'test' | 'worker' | 'db' | 'editor' | 'game' | 'build' | 'batch'
+// The values a field may take, as lists the validator reads; each type below is made from its list, so the two can't
+// drift apart.
+export const PROCESS_KINDS = ['dev', 'test', 'worker', 'db', 'editor', 'game', 'build', 'batch'] as const
+export const TONES = ['local', 'shared', 'prod'] as const
+export const APPROVAL_MODES = ['ask', 'log'] as const
+export const APPROVAL_SCOPES = ['once', 'session'] as const
+export const ANALYZERS = ['regex-lines', 'size-lines', 'i18n-keysets', 'eslint-json', 'sarif', 'problem-matcher', 'tscn-connections', 'tscn-nodepaths'] as const
+export const CHECK_COSTS = ['edit', 'turn', 'demand'] as const
+export const CLASSES = ['ci', 'advise'] as const
+export const SOURCE_KINDS = ['json', 'command', 'ci-log', 'telemetry', 'dir-size', 'file-lines'] as const
+export const TELEMETRY_STATS = ['p95', 'min', 'max', 'last'] as const
+export const FILE_LINES_STATS = ['p95', 'max', 'count'] as const
+export const UNITS = ['bytes', 'ms', 'fps', 'mb', 'count', 'lines'] as const
+export const DIRECTIONS = ['max', 'min'] as const
+export const BUDGET_COSTS = ['cheap', 'demand'] as const
+export const NOISE_KINDS = ['generated', 'editor-rewrite'] as const
+
+export type ProcessKind = (typeof PROCESS_KINDS)[number]
 export type ProcessMatcher = {
   id: string
   label: string
@@ -42,7 +59,7 @@ export type ProcessMatcher = {
   ramWarnMb?: number
 }
 
-export type Tone = 'local' | 'shared' | 'prod'
+export type Tone = (typeof TONES)[number]
 export type EnvRule = { id: string; label: string; tone: Tone; hostPatterns?: string[]; argRegex?: string; readOnly?: boolean; approvals?: ApprovalRule[] }
 export type ApprovalRule = {
   id: string
@@ -51,20 +68,12 @@ export type ApprovalRule = {
   inputRegex?: string
   pathGlob?: string
   label: string
-  mode?: 'ask' | 'log'
-  scope: 'once' | 'session'
+  mode?: (typeof APPROVAL_MODES)[number]
+  scope: (typeof APPROVAL_SCOPES)[number]
 }
 
-export type AnalyzerId =
-  | 'regex-lines'
-  | 'size-lines'
-  | 'i18n-keysets'
-  | 'eslint-json'
-  | 'sarif'
-  | 'problem-matcher'
-  | 'tscn-connections'
-  | 'tscn-nodepaths'
-export type CheckCost = 'edit' | 'turn' | 'demand'
+export type AnalyzerId = (typeof ANALYZERS)[number]
+export type CheckCost = (typeof CHECK_COSTS)[number]
 // A sarif or problem-matcher check runs the command its pack names (`bin`, the whole argv) once a turn ends; these
 // placeholders in it are replaced by the engine. `{files}`, a list item on its own, at most once: the run's files
 // (repo-relative, forward slashes, at most 40 a run); without it the command runs once over the whole project.
@@ -85,7 +94,7 @@ export type CheckSpec = {
   on: string[]
   analyzer: AnalyzerId
   cost: CheckCost
-  class: 'ci' | 'advise'
+  class: (typeof CLASSES)[number]
   ignore?: string[]
   suppressions?: string
   timeoutMs?: number
@@ -100,20 +109,20 @@ export type Source =
   // the output measures the tree as it is now.
   | { kind: 'command'; argv: string[]; parse: string; scale?: number; freshAfter?: string; build?: string[] }
   | { kind: 'ci-log'; job: string; step: string; parse: string; scale?: number }
-  | { kind: 'telemetry'; metric: string; stat: 'p95' | 'min' | 'max' | 'last' }
+  | { kind: 'telemetry'; metric: string; stat: (typeof TELEMETRY_STATS)[number] }
   | { kind: 'dir-size'; path: string }
-  | { kind: 'file-lines'; path: string; parse: string; stat: 'p95' | 'max' | 'count' }
+  | { kind: 'file-lines'; path: string; parse: string; stat: (typeof FILE_LINES_STATS)[number] }
 export type BudgetSpec = {
   id: string
   label: string
-  unit: 'bytes' | 'ms' | 'fps' | 'mb' | 'count' | 'lines'
-  direction: 'max' | 'min'
+  unit: (typeof UNITS)[number]
+  direction: (typeof DIRECTIONS)[number]
   limit: number | { relative: number; baseline: Source }
   sources: Source[]
-  cost: 'cheap' | 'demand'
+  cost: (typeof BUDGET_COSTS)[number]
 }
 
-export type NoiseRule = { id: string; glob: string; kind: 'generated' | 'editor-rewrite'; normalize?: string[] }
+export type NoiseRule = { id: string; glob: string; kind: (typeof NOISE_KINDS)[number]; normalize?: string[] }
 
 // The patterns are optional here: a pack names only where its plans are, and the plan reader brings defaults.
 export type PlanSpec = { globs: string[]; archiveDir?: string; checkpoint?: string; done?: string[]; prRef?: string; results?: { glob: string; index?: string } }

@@ -31,6 +31,8 @@ describe('the process query', () => {
     // Each pattern is a PowerShell literal: a quote inside it is doubled.
     expect(script).toContain("@{i='worker';r='worker\\.js|it''s'}")
     expect(script).toContain("@{i='staging';r='--mode[= ]staging\\b'}")
+    // A pattern .NET can't read fails only its own match: the script stops on any other error.
+    expect(script).toContain('Where-Object{try{[regex]::IsMatch($c,$_.r)}catch{$false}}')
     // What comes back: ids, pids and working sets, never the command line.
     expect(script).toMatch(/@\{pid=\$x\.ProcessId;ws=\$x\.WorkingSetSize;m=\$m;e=/)
     expect(script).not.toMatch(/CommandLine[^;]*ConvertTo-Json/)

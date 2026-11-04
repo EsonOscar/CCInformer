@@ -3,7 +3,7 @@ import { detect, remoteMatches } from './detect'
 import { parseJsonc } from './jsonc'
 import { mergeLayers } from './merge'
 import type { LayerInput } from './merge'
-import { BUILTINS } from './node-vite'
+import { BUILTINS } from './builtins'
 import { needsTrust, trustOf } from './trust'
 import type { StoredTrust } from './trust'
 import type { PackManifest, ResolvedPack } from './types'
@@ -63,9 +63,8 @@ const pickUserPack = (input: PackInput): { user: PackManifest | null; userRows: 
     }
     const checked = checkPack(parsed.value, 'user')
     const pack = checked.value
-    const reasons = pack ? (pack.extends ?? []).filter(id => !BUILTINS.some(b => b.id === id)).map(id => `extends "${id}", which isn't a built-in`) : checked.reasons
-    if (!pack || reasons.length) {
-      userRows.push({ layer: 'user', source: file.path, state: 'refused', note: '', reasons })
+    if (!pack) {
+      userRows.push({ layer: 'user', source: file.path, state: 'refused', note: '', reasons: checked.reasons })
       continue
     }
     if (!input.remote || !(pack.match?.remote ?? []).some(p => remoteMatches(p, input.remote))) continue

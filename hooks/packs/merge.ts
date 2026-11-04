@@ -21,8 +21,9 @@ export const mergeLayers = (layers: LayerInput[]): { pack: ResolvedPack; entries
   const key = (section: string, id: string) => section + '\u0000' + id
   const set = (section: string, item: Item, layer: Layer) => {
     const old = entries.get(key(section, item.id))
+    // An entry that changes only some fields of an earlier one keeps that one's label unless it names its own.
     entries.set(key(section, item.id), old && !old.removedBy
-      ? { ...old, label: labelOf(item), changedBy: [...old.changedBy, layer] }
+      ? { ...old, label: item.label ?? old.label, changedBy: [...old.changedBy, layer] }
       : { section, id: item.id, label: labelOf(item), layer, changedBy: [] })
   }
 
