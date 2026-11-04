@@ -1,39 +1,42 @@
 ---
 name: plan-feature-small
-description: Planning without a workflow, for smaller tasks or a tighter token budget, then the build. In plan mode you scout the code yourself (at most two Explore helpers for ground too big to read), write down the requirements, review your own plan against the code through three lenses (correctness, fit, gaps), ask the user only the real decisions, and write the same plan as plan-feature (checkpoints CCInformer's board shows); once approved, save it to .local/plans/ and build it yourself, checkpoint by checkpoint. Use when the user asks for a quick or light plan, or runs /ccinformer:plan-feature-small; for a large or risky change, suggest /ccinformer:plan-feature instead.
+description: Fast planning for smaller tasks or a tighter token budget, then the build. In plan mode you scout the code yourself (at most two Explore helpers for ground too big to read), write down the requirements and draft the plan, then one critic agent (Opus, medium effort) reviews it against the code in a short workflow, with a second round only after a blocker; you check its findings, ask the user only the real decisions, and write the same plan as plan-feature (checkpoints CCInformer's board shows); once approved, save it to .local/plans/ and build it yourself, checkpoint by checkpoint. Use when the user asks for a quick or light plan, or runs /ccinformer:plan-feature-small; for a large or risky change, suggest /ccinformer:plan-feature instead.
 argument-hint: <task to plan>
 ---
 
 Plan (small): $ARGUMENTS
 
-"You" below is the main session. This is plan-feature without the agent fan-out: you do the scouting and the review yourself, so it costs a fraction of the tokens. If the task turns out to span several subsystems or carry real risk (data migrations, access rules, a shared environment), say so in one line and suggest `/ccinformer:plan-feature` before going on.
+"You" below is the main session. This is plan-feature without the fan-out: you do the scouting and the planning yourself, and one critic agent reviews the plan, so it stays fast and costs a fraction of the tokens. If the task turns out to span several subsystems or carry real risk (data migrations, access rules, a shared environment), say so in one line and suggest `/ccinformer:plan-feature` before going on.
 
 1. Plan mode must be on. If it isn't, stop and ask the user to switch to it (Shift+Tab until the bottom of the screen says plan mode), then run the command again.
 2. Read what the task needs, and only that:
-   - the project CLAUDE.md and its **planning settings**: a committed Planning section (a `## Planning` heading in CLAUDE.md, or `.claude/planning.md`), then the private `.local/ccinformer-planning.md`, which adds to it or overrides it. They give the project's checks, which actions need approval, the commit, PR and docs rules, and where plans go. With neither, use the defaults here, and note what this run learns for step 7's finish;
+   - the project CLAUDE.md and its **planning settings**: a committed Planning section (a `## Planning` heading in CLAUDE.md, or `.claude/planning.md`), then the private `.local/ccinformer-planning.md`, which adds to it or overrides it. They give the project's checks, the extra critic lenses, which actions need approval, the commit, PR and docs rules, and where plans go. With neither, use the defaults here, and note what this run learns for step 9's finish;
    - the files the task touches, and the code they call or are called by, read in full where a decision rests on them;
    - the recent git log on those files.
 
-   For ground too big to read in one go, you may run **at most two** Explore agents (`model: 'sonnet'`, read-only), each with one narrow question and a word limit. Check anything you build on against the code yourself.
+   For ground too big to read in one go, you may run **at most two** Explore agents (`model: 'sonnet'`, read-only), each with one narrow question and a word limit. Check anything you build on against the code yourself. Keep a list of the files the plan touches: the critic reads those first.
 3. Write the **requirements** down, a few lines each: the goal and who it is for, measurable success criteria, and what is out of scope. What the user hasn't confirmed is marked as open.
-4. Draft the plan, then **review it yourself against the code**, once per lens, as an adversarial critic would:
-   - correctness: every signature and behaviour the plan assumes, read in the code; edge cases; tests that could pass wrongly;
-   - fit: the project's rules and naming, the existing code it must agree with, the docs that must change;
-   - gaps: what the requirements ask that no checkpoint covers, and whether everything still builds and passes after each checkpoint.
-
-   Fix what you find. If a finding needs a decision, it goes to step 5.
-5. Ask the real decisions with AskUserQuestion, the recommended option first; take defaults for the rest and list them in the plan. When an option adds scope, its description gives its size (small, medium, large, and why).
-6. Write the plan file, with:
-   - **Context**: why, what was asked, "planned without a workflow", and what the review changed (one line each).
-   - **Requirements and success criteria**, as confirmed.
+4. Draft the whole plan into the plan file, so the critic reviews the real plan:
+   - **Context**: why, what was asked, "reviewed by one critic (plan-review.js)", and what the review changed (filled in at step 8).
+   - **Requirements and success criteria.**
    - **Decisions**: the user's, and the defaults taken.
    - **The contract**: the exact public names and signatures, the data shapes and the user-facing texts the change adds or changes.
    - **Checkpoints**, in build order, each with a measurable "done when". Define each where CCInformer's plan board (Work › Plans) finds it: its id at the start of a heading (`### CP1: title`), of a table row (`| CP1 | title | done when |`) or of a bold label (`- **CP1, title:**`), followed by punctuation. Ids look like `CP1`, `C1`, `R1` or `PR 1`. Its status goes on that same line, and nowhere else: nothing while open, `done` once its "done when" holds, `merged as #N` once its PR merges, `dropped` if abandoned.
    - **Approval gates**: every action that writes to a shared environment, a database, a service or git, marked "⚠ needs the user's OK", at the checkpoint where it happens.
    - **Verification**: the project's checks and the tests that encode the change's rules.
+5. **Review, round 1.** Read `plan-review.js` (next to this file) and run the Workflow tool with its whole content as `script` (a `scriptPath` only works for files inside the working directory, so passing it inline works from any project), and args:
+   `{ context, requirements, plan, files, round: 1, lenses? }`
+   - `context`: a map of the project (paths), the task as decided so far, and rules specific to this task (not CLAUDE.md's rules: the critic gets CLAUDE.md itself);
+   - `requirements`: step 3's text;
+   - `plan`: the plan file's absolute path;
+   - `files`: the files the plan touches, 1 to 30;
+   - `lenses`: the planning settings' extra critic lenses as `[{key, focus}]`, at most 3, lowercase keys other than `correctness`, `fit` and `gaps`.
 
-   Read it through once as its builder (cross-references right, no placeholder left), then call ExitPlanMode.
-7. Once the plan is approved, build it yourself, checkpoint by checkpoint, in the main session: the code, the tests and the docs.
+   The critic runs on Opus at medium effort, reads the plan and those files, and returns a section per lens with the files it checked and its findings. While it runs, carry on with anything the review won't change.
+6. **Check the review yourself.** Don't trust it blindly: check every blocker and should-fix against the code, fold the real ones into the plan file, and drop the wrong ones. If the result says `needsRound2` (round 1 found a blocker), run the same script once more with `round: 2` and `previous: { findings, changes }`: round 1's findings and what you changed. There is never a third round: what round 2 finds is folded in, or listed in the plan as open. If the result has an `error`, run that round again once.
+7. Ask the real decisions with AskUserQuestion, the recommended option first; take defaults for the rest and list them in the plan. When an option adds scope, its description gives its size (small, medium, large, and why). A change you make after the last round is named in Context as made after the review.
+8. Finish the plan file: in Context, "reviewed by one critic (plan-review.js), N rounds", then each blocker and should-fix in one line, kept (and what changed) or dropped (and why). Read it through once as its builder (cross-references right, no placeholder left), then call ExitPlanMode.
+9. Once the plan is approved, build it yourself, checkpoint by checkpoint, in the main session: the code, the tests and the docs.
    - **Plan files switch:** read `~/.claude/ccinformer/skills.json` (under `$CLAUDE_CONFIG_DIR` instead of `~/.claude` when that variable is set). `"planFiles": false` means the user switched plan files off in CCInformer's Debug › Settings: skip the copy below and the planning-settings offer at the end, build from Claude Code's own plan file (the one you wrote in plan mode) and keep its checkpoint lines current there, and tell the user in one line that plan files are off, so Work › Plans won't show this plan. A missing file means on.
    - **Save the plan where the user can follow it:** copy the approved plan file to `.local/plans/<YYYY-MM-DD>-<slug>.md` from the project root (or the plans folder the planning settings name), where CCInformer's Work › Plans shows its checkpoints. First check that git ignores that path (`git check-ignore -q <path>`); if it doesn't, ask the user where to keep the plan instead. From here on that copy is the plan you build from.
    - **Keep each checkpoint's line current** as you go (`done`, `merged as #N`, `dropped`). A status written anywhere else doesn't reach the board.
