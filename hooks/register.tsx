@@ -25,7 +25,9 @@ import { manifestVersion, paneTitle } from './format'
 import { readUsage } from './usage'
 import { createGit } from './git/run'
 import { parseWorkflowMeta } from './parse'
-import { askTrust, forgetTrust, loadPack, packSignature } from './packs/load'
+import { PACK_TOOL, PACK_TOOL_SCHEMA, PACK_TOOL_TEXT, checkDraft } from './packs/check'
+import type { PackToolReport } from './packs/check'
+import { askTrust, forgetTrust, loadPack, packSignature, readPackInput, userPackDir } from './packs/load'
 import type { ResolvedPack } from './packs/types'
 import { readText } from './read-records'
 import { readBeats, readBranch } from './read-sessions'
@@ -284,6 +286,7 @@ type Live = {
   openDiff: (file: FileChange) => Promise<void>
   fetch: () => Promise<void>
   checkPack: () => Promise<void>
+  checkDraft: (draft: { text?: string; file?: string }) => Promise<PackToolReport>
   pack: () => Promise<ResolvedPack | null>
   setTrust: (isAllowed: boolean) => Promise<string>
   checkFile: (path: string) => Promise<string>
@@ -298,6 +301,18 @@ type Live = {
   explain: () => Promise<void>
 }
 let live: Live | null = null
+// The full name of the pack-checking tool as the engine registered it ('' until it has, or if it couldn't).
+let packTool = ''
+
+// The pack-checking tool's answer: the report as JSON, or why there is none, as text Claude can act on.
+async function answerPackTool(input: Record<string, unknown>): Promise<{ result: string }> {
+  if (!live) return { result: 'check_pack: CCInformer is still starting in this session; call it again in a moment.' }
+  const draft = { text: typeof input.text === 'string' ? input.text : undefined, file: typeof input.file === 'string' ? input.file : undefined }
+  return live
+    .checkDraft(draft)
+    .then(report => ({ result: JSON.stringify(report, null, 2) }))
+    .catch((err: unknown) => ({ result: 'check_pack failed: ' + (err instanceof Error ? err.message : String(err)) }))
+}
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -317,6 +332,13 @@ export const register: Register = on => {
       argumentHint: ARGUMENT_HINT,
       immediate: true,
     })
+    // The tool the write-pack skill checks a draft with. Claude calls it and it writes nothing, so no Settings switch
+    // gates it (CONTRIBUTING); registered, it only lists its name behind ToolSearch. A host that refuses it leaves the
+    // pane as it is.
+    packTool = await $.tool
+      .register({ name: PACK_TOOL, description: PACK_TOOL_TEXT, inputSchema: PACK_TOOL_SCHEMA, isDeferred: true })
+      .then(r => r.tool)
+      .catch(() => '')
     const stored = (await $.store.get(STORE_AREA)) ?? (await $.store.get(STORE_OLD_TAB))
     const restored = typeof stored === 'string' ? areaFor(stored) : null
     if (restored) await update($, areaAtom, () => restored.area)
@@ -632,6 +654,8 @@ export const register: Register = on => {
       checkPack: async () => {
         if (packReport && (await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
       },
+      // A user pack draft, checked against this repo and the packs folder as they are now; nothing is written.
+      checkDraft: async draft => checkDraft(await readPackInput($, exec, cwd, configDir), userPackDir(configDir), draft),
       // The resolved pack, waiting for the first read when a call comes right after the session started.
       pack: async () => packResolved ?? (await reloadPack(), packResolved),
       // Lets the repo's own tools run (asking first) or stops them; says how it went.
@@ -872,7 +896,12 @@ export const register: Register = on => {
       await update($, selectedAtom, s => ({ ...s, work: '' }))
     }
 
-    const result = isReadOnlyTurn ? ({ deny: CI_TEXTS.guardDeny } as Awaited<ReturnType<typeof next>>) : await next(e)
+    // The pack-checking tool is the mod's own: answered here, so it is logged and guarded like any other call.
+    const result = isReadOnlyTurn
+      ? ({ deny: CI_TEXTS.guardDeny } as Awaited<ReturnType<typeof next>>)
+      : packTool && tool === packTool
+        ? ((await answerPackTool(input)) as Awaited<ReturnType<typeof next>>)
+        : await next(e)
 
     // From the call to its result, so a wait for the person's approval counts too. Claude Code's PostToolUse event has
     // the tool's own time, but a team-org account's built-in security plugin skips other plugins' classic hooks.

@@ -25,6 +25,8 @@ export type PackManifest = {
 }
 
 // Every top-level key a pack may hold: any other key refuses the pack, so a typo or a removed field says so.
+// skills/write-pack/pack-template.jsonc names every one, with what it does; CI holds it to the validator, so a schema
+// change updates it too.
 export const PACK_KEYS = ['schema', 'id', 'version', 'match', 'detect', 'extends', 'processes', 'environments', 'checks', 'budgets', 'noise', 'plans', 'disable'] as const
 
 export type DetectRule = { file: string; contains?: string; weight: number; required?: boolean }

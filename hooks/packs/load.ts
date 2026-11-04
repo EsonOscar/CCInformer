@@ -5,6 +5,7 @@ import type { Exec } from '../collect'
 import { cleanRemote, markerFiles } from './detect'
 import { BUILTINS } from './builtins'
 import { resolvePack } from './resolve'
+import type { PackInput } from './resolve'
 import { isStoredTrust } from './trust'
 import type { ResolvedPack } from './types'
 
@@ -41,6 +42,11 @@ export async function loadPack(
   cwd: string,
   configDir: string,
 ): Promise<{ pack: ResolvedPack; report: PackReport }> {
+  return resolvePack(await readPackInput($, exec, cwd, configDir))
+}
+
+// Everything the pack comes from: the repo's root, remote and marker files, every user pack, the stored trust.
+export async function readPackInput($: EngineInterface, exec: Exec, cwd: string, configDir: string): Promise<PackInput> {
   const { root, remote, repoKey } = await repoFacts(exec, cwd)
   const markers: Record<string, string | null> = {}
   for (const file of markerFiles(BUILTINS)) markers[file] = await readText($, `${root}/${file}`)
@@ -52,7 +58,7 @@ export async function loadPack(
     if (text !== null) userPacks.push({ path: `${dir}/${f.name}`, text })
   }
   const stored = await $.store.get(STORE_TRUST + repoKey)
-  return resolvePack({
+  return {
     root,
     remote,
     repoKey,
@@ -60,7 +66,7 @@ export async function loadPack(
     userPacks,
     storedTrust: isStoredTrust(stored) ? stored : null,
     now: await $.clock.now(),
-  })
+  }
 }
 
 // When any file the pack comes from last changed, as one string: a different string means read it all again.

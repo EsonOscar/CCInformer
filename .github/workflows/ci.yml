@@ -58,6 +58,11 @@ jobs:
           python3 -B -m unittest discover -s skills/audit-docs/tests
           node skills/audit-docs/tests/test_fanout.mjs
 
+      # The write-pack skill's template must stay a valid pack naming every key; the mod's own validator decides, run
+      # under tsx, as the plugin test kit loads only code files.
+      - name: The pack template is valid
+        run: npx -y tsx@4 skills/write-pack/tests/check_template.mjs
+
   secret-scan:
     # Fails on a secret (API keys, tokens, private keys...). Scans every commit of the PR, so a secret
     # added and removed again inside the PR is still caught, then the checked-out tree.

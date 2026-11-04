@@ -32,6 +32,14 @@ done
 sh "$root/.githooks/check-exec.sh" || exit 1
 sh "$root/.githooks/check-permissions.sh" || exit 1
 
+# The write-pack skill's template stays a valid pack naming every key (CI runs it too). Before the plugin checks,
+# whose early exits would skip it.
+if command -v npx > /dev/null 2>&1; then
+  npx -y tsx@4 "$root/skills/write-pack/tests/check_template.mjs" > /dev/null || exit 1
+else
+  echo "pre-push: npx isn't on PATH, so the pack template check is skipped." >&2
+fi
+
 if ! "$claude" --version > /dev/null 2>&1; then
   echo "pre-push: '$claude' doesn't run, so the plugin checks are skipped. Set CLAUDE_BIN to a working binary." >&2
   exit 0
