@@ -1,5 +1,6 @@
 import type { Finding } from '../../types'
 import type { Ran } from '../collect'
+import type { Platform } from '../env/procs'
 import type { CheckSpec } from '../packs/types'
 import { FILES_SLOT, OUTPUT_SLOT } from '../packs/types'
 import { ESLINT_BIN, eslintFindings, toolFindings } from './findings'
@@ -28,9 +29,44 @@ export const toolArgv = (check: CheckSpec, files: string[], outputPath: string, 
   return bin.flatMap(a => (a === FILES_SLOT ? files : [a.split(OUTPUT_SLOT).join(outputPath)]))
 }
 
-// A `node <repo script>` command is skipped quietly when the script isn't in the repo (ESLint not installed): the
-// second item has to look like a repo path, so `node --flag` or `node {files}` runs and shows its error instead.
-export const isQuietSkip = (bin: string[]): boolean => bin[0] === 'node' && !!bin[1] && !/^[-{]/.test(bin[1])
+// Where a check's program would be, looked for before its run (and before the trust question), so a tool this machine
+// doesn't have skips the check instead of failing every turn. `repo`: a `node <script>` script (its second item has
+// to look like a repo path, so `node --flag` or `node {files}` looks for node itself) or a relative command,
+// under the repo; `abs`: an absolute command; `path`: a bare name, in each PATH folder (with each PATHEXT extension on
+// Windows). Folders written relative or empty are left out, as the lookup can't tell which folder they mean. Null:
+// nothing to look for, so the check runs as before.
+export type ProgramLookup = { kind: 'path' | 'repo' | 'abs'; program: string; paths: string[] }
+
+const DEFAULT_PATHEXT = '.COM;.EXE;.BAT;.CMD'
+
+export const programCandidates = (
+  bin: string[],
+  root: string,
+  env: { path: string; pathext: string },
+  platform: Platform,
+): ProgramLookup | null => {
+  const [first, second] = bin
+  if (!first) return null
+  if (first === 'node' && second && !/^[-{]/.test(second)) return { kind: 'repo', program: second, paths: [`${root}/${second}`] }
+  const isWindows = platform === 'windows'
+  const exts = isWindows ? (env.pathext || DEFAULT_PATHEXT).split(';').map(e => e.trim()).filter(Boolean) : []
+  // On Windows a name without an extension is found with any of PATHEXT's.
+  const forms = (path: string) => (isWindows && !/\.[^\\/.]+$/.test(path) ? [path, ...exts.map(e => path + e.toLowerCase())] : [path])
+  const isAbsolute = (p: string) => (isWindows ? /^([a-z]:)?[\\/]/i : /^\//).test(p)
+  if (/[\\/]/.test(first)) {
+    const isAbs = isAbsolute(first)
+    return { kind: isAbs ? 'abs' : 'repo', program: first, paths: forms(isAbs ? first : `${root}/${first.replace(/^\.[\\/]/, '')}`) }
+  }
+  const dirs = env.path
+    .split(isWindows ? ';' : ':')
+    .map(d => d.trim().replace(/^"(.*)"$/, '$1').replace(/[\\/]+$/, ''))
+    .filter(d => d && isAbsolute(d))
+  return { kind: 'path', program: first, paths: dirs.flatMap(d => forms(`${d}/${first}`)) }
+}
+
+// What the run line says after "skipped, ".
+export const skipReason = (lookup: ProgramLookup): string =>
+  lookup.kind === 'repo' ? `${lookup.program} isn't in this repo` : `${lookup.program} isn't installed`
 
 // FNV-1a over the text, as 8 hex characters.
 export const hash8 = (text: string): string => {

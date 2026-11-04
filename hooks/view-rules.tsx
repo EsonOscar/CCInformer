@@ -88,6 +88,7 @@ export const RulesView = (
 const Run = (k: Kit, run: CheckRun, now: number): JSX.Element => {
   const { Text } = k
   if (run.isRunning) return Line(k, { char: spinner(now), color: ACCENT }, `${run.label} on ${run.files} file${run.files === 1 ? '' : 's'}…`)
+  if (run.skipped) return Line(k, { char: '–', color: 'inactive', dim: true }, `${run.label}: skipped, ${run.skipped}`, ago(now - run.at))
   if (run.waitsForTrust)
     return Line(k, { char: '◌', color: 'warning' }, `${run.label} waits until this repo's own tools may run (Debug › Pack, a)`)
   if (run.error) return Line(k, { char: '✗', color: 'error' }, `${run.label}: ${run.error}`, <Text dimColor>{ago(now - run.at)}</Text>)

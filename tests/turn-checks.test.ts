@@ -22,7 +22,8 @@ const ERROR_LINE = 'src/a.c:1:1: error: boom\n'
 type Ran = { exitCode: number; stdout: string; stderr: string }
 type Script = (argv: string[]) => Ran
 
-const engine = (files: Record<string, string>, opts: { isTrusted?: boolean; failWrite?: string } = {}) => {
+// `missing`: the programs this machine lacks, by name, with the reason the lookup gives.
+const engine = (files: Record<string, string>, opts: { isTrusted?: boolean; failWrite?: string; missing?: Record<string, string> } = {}) => {
   const writes: [string, string][] = []
   let now = 1000
   const $ = {
@@ -50,6 +51,7 @@ const engine = (files: Record<string, string>, opts: { isTrusted?: boolean; fail
   const report = () => ({ root: ROOT, trust: { isTrusted, by: isTrusted ? 'you' : '', at: 0 } }) as unknown as PackReport
   const deps: CheckDeps = {
     cwd: ROOT,
+    hasProgram: async bin => opts.missing?.[bin[0] ?? ''] ?? '',
     emptySuppressions: CFG + '/empty-suppressions.json',
     outputDir: CFG + '/output',
     sessionId: 's1',
@@ -91,6 +93,20 @@ test("without trust and with the question off nothing runs and the run waits; on
   expect(e.lastRun('gcc')).toMatchObject({ check: 'gcc', files: 1, error: '', elsewhere: 0, isRunning: false, waitsForTrust: false })
   // The finding reaches the model with the next typed prompt.
   expect(await e.checks.turnNote()).toContain('src/a.c:1 gcc: boom [CI will fail]')
+})
+
+test("a program this machine lacks skips its check: no run, no wait for trust, nothing for the model, and the run line says why", async () => {
+  const e = engine({ '/repo/src/a.c': 'int x;' }, { missing: { gcc: "gcc isn't installed" } })
+  e.pack.checks.push(GCC)
+  await e.checks.checkFile('/repo/src/a.c')
+  await e.checks.runChecks()
+  expect(e.commands).toEqual([])
+  expect(e.runs.map(r => [r.check, r.skipped, r.waitsForTrust, r.isRunning])).toEqual([['gcc', "gcc isn't installed", false, false]])
+  expect(await e.checks.turnNote()).toBe('')
+  // Nothing is kept waiting: once trusted, a later turn with no new writes runs nothing.
+  e.trust(true)
+  await e.checks.runChecks()
+  expect(e.commands).toEqual([])
 })
 
 test('a whole-project run clears a file it flagged before once the tool no longer reports it, and counts the rest', async () => {

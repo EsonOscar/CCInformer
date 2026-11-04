@@ -4,7 +4,7 @@ import { countLines, covers, eslintFindings, noteFor, ownedRules, regexFindings,
 import { matchesGlob, repoPath, toRepoFile } from '../hooks/checks/glob'
 import { MAX_LINE_CHARS, TOO_MANY_LINES, matcherResults } from '../hooks/checks/matcher'
 import { sarifResults } from '../hooks/checks/sarif'
-import { NO_SARIF_FILE, SARIF_FILE_TOO_BIG, TRUNCATED, hash8, isQuietSkip, outputFile, readRun, takesFiles, toolArgv } from '../hooks/checks/tools'
+import { NO_SARIF_FILE, SARIF_FILE_TOO_BIG, TRUNCATED, hash8, outputFile, programCandidates, readRun, skipReason, takesFiles, toolArgv } from '../hooks/checks/tools'
 import { parseSuppressions, suppress } from '../hooks/checks/suppressions'
 import type { CheckSpec } from '../hooks/packs/types'
 
@@ -414,7 +414,57 @@ describe('tool runs', () => {
     expect(toolArgv(RUFF, ['src/a.py', 'src/b.py'], '', '/cfg/empty.json')).toEqual(['ruff', 'check', '--output-format', 'sarif', 'src/a.py', 'src/b.py'])
     expect(toolArgv(DOTNET, [], '/cfg/output/dotnet-abc.sarif', '/cfg/empty.json')).toEqual(['dotnet', 'build', '-p:ErrorLog=/cfg/output/dotnet-abc.sarif%2Cversion=2.1'])
     expect([takesFiles(ESLINT), takesFiles(RUFF), takesFiles(DOTNET)]).toEqual([true, true, false])
-    expect([isQuietSkip(['node', 'node_modules/eslint/bin/eslint.js']), isQuietSkip(['node', '--max-old-space-size=4096', 'x.js']), isQuietSkip(['node', '{files}']), isQuietSkip(['gcc', 'src/a.c'])]).toEqual([true, false, false, false])
+  })
+
+  test("where a check's program is looked for: the repo script, a repo or absolute path, or each PATH folder", async () => {
+    const posixEnv = { path: '/usr/local/bin::relative/bin:/usr/bin/', pathext: '' }
+    expect(programCandidates(['node', 'node_modules/eslint/bin/eslint.js'], '/repo', posixEnv, 'posix')).toEqual({
+      kind: 'repo', program: 'node_modules/eslint/bin/eslint.js', paths: ['/repo/node_modules/eslint/bin/eslint.js'],
+    })
+    // Any other node command looks for node itself; empty and relative PATH folders are left out.
+    for (const bin of [['node', '--max-old-space-size=4096', 'x.js'], ['node', '{files}']])
+      expect(programCandidates(bin, '/repo', posixEnv, 'posix')).toEqual({ kind: 'path', program: 'node', paths: ['/usr/local/bin/node', '/usr/bin/node'] })
+    expect(programCandidates(['dotnet', 'build'], '/repo', posixEnv, 'macos')?.paths).toEqual(['/usr/local/bin/dotnet', '/usr/bin/dotnet'])
+    expect(programCandidates(['./gradlew', 'check'], '/repo', posixEnv, 'posix')).toEqual({ kind: 'repo', program: './gradlew', paths: ['/repo/gradlew'] })
+    expect(programCandidates(['/opt/tool/bin/lint'], '/repo', posixEnv, 'posix')).toEqual({ kind: 'abs', program: '/opt/tool/bin/lint', paths: ['/opt/tool/bin/lint'] })
+    expect(programCandidates([], '/repo', posixEnv, 'posix')).toBe(null)
+  })
+
+  test('on Windows: PATH split on semicolons, quotes taken off, each PATHEXT extension tried unless the name has one', async () => {
+    const env = { path: 'C:\\Program Files\\dotnet\\;"C:\\Tools Dir";;bin', pathext: '.EXE;.CMD' }
+    expect(programCandidates(['dotnet', 'build'], 'C:/repo', env, 'windows')).toEqual({
+      kind: 'path',
+      program: 'dotnet',
+      paths: [
+        'C:\\Program Files\\dotnet/dotnet',
+        'C:\\Program Files\\dotnet/dotnet.exe',
+        'C:\\Program Files\\dotnet/dotnet.cmd',
+        'C:\\Tools Dir/dotnet',
+        'C:\\Tools Dir/dotnet.exe',
+        'C:\\Tools Dir/dotnet.cmd',
+      ],
+    })
+    expect(programCandidates(['ruff.exe', 'check'], 'C:/repo', env, 'windows')?.paths).toEqual(['C:\\Program Files\\dotnet/ruff.exe', 'C:\\Tools Dir/ruff.exe'])
+    // With no PATHEXT, Windows' own default.
+    expect(programCandidates(['cc'], 'C:/repo', { path: 'C:\\tools', pathext: '' }, 'windows')?.paths).toEqual([
+      'C:\\tools/cc',
+      'C:\\tools/cc.com',
+      'C:\\tools/cc.exe',
+      'C:\\tools/cc.bat',
+      'C:\\tools/cc.cmd',
+    ])
+    expect(programCandidates(['tools\\lint'], 'C:/repo', env, 'windows')).toEqual({
+      kind: 'repo',
+      program: 'tools\\lint',
+      paths: ['C:/repo/tools\\lint', 'C:/repo/tools\\lint.exe', 'C:/repo/tools\\lint.cmd'],
+    })
+    expect(programCandidates(['D:\\sdk\\lint.exe'], 'C:/repo', env, 'windows')).toEqual({ kind: 'abs', program: 'D:\\sdk\\lint.exe', paths: ['D:\\sdk\\lint.exe'] })
+  })
+
+  test('what a skipped run says: in this repo, or installed', async () => {
+    expect(skipReason({ kind: 'repo', program: 'node_modules/eslint/bin/eslint.js', paths: [] })).toBe("node_modules/eslint/bin/eslint.js isn't in this repo")
+    expect(skipReason({ kind: 'path', program: 'dotnet', paths: [] })).toBe("dotnet isn't installed")
+    expect(skipReason({ kind: 'abs', program: '/opt/tool/bin/lint', paths: [] })).toBe("/opt/tool/bin/lint isn't installed")
   })
 
   test('the output file: one per check, repo and session, the id sanitised so it stays in the folder', async () => {
