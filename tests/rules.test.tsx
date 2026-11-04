@@ -49,12 +49,16 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 // `lint`'s messages for each file it was given, after `lintMs` on the mocked clock; `runs` holds the files of each
 // run, and `mostAtOnce` how many ran together. A pack's own command is answered by `tool` (undefined for one it
 // doesn't know), and `commands` holds every argv it answered. `submitted` is each prompt as it entered, with its context.
+// PATH is /usr/bin, where the programs the tests run are (`env` replaces the environment), and `stats` holds every
+// path the mod looked at.
 const engine = (
   on: Parameters<TestBody>[1],
   files: Record<string, string>,
-  opts: { lint?: (file: string) => object[]; lintMs?: number; answer?: string; store?: Record<string, unknown>; tool?: (argv: string[]) => Ran | undefined } = {},
+  opts: { lint?: (file: string) => object[]; lintMs?: number; answer?: string; store?: Record<string, unknown>; tool?: (argv: string[]) => Ran | undefined; env?: Record<string, string> } = {},
 ) => {
+  for (const program of PROGRAMS) files[`/usr/bin/${program}`] ??= ''
   const mtimes: Record<string, number> = Object.fromEntries(Object.keys(files).map(p => [p, 1]))
+  const stats: string[] = []
   const runs: string[][] = []
   const commands: string[][] = []
   const asked: string[] = []
@@ -67,7 +71,7 @@ const engine = (
     mtimes[path] = (mtimes[path] ?? 1) + 1
   }
   mock.store(on, opts.store ?? { permissions: { base: 'defaults', set: {} } })
-  mock.env(on, { HOME: '/home/test' })
+  mock.env(on, opts.env ?? { HOME: '/home/test', PATH: '/usr/bin' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
@@ -80,6 +84,7 @@ const engine = (
   })
   on('fs.stat', (_, e) => {
     const path = posix(e.path)
+    stats.push(path)
     return { value: path in files ? { kind: 'file', size: files[path]!.length, mtimeMs: mtimes[path] ?? 1 } : null } as never
   })
   on('fs.list', (_, e) => {
@@ -139,8 +144,11 @@ const engine = (
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  return { clock, runs, commands, asked, submitted, change, mostAtOnce: () => mostAtOnce }
+  return { clock, runs, commands, asked, submitted, change, stats, mostAtOnce: () => mostAtOnce }
 }
+
+// The programs the tests' pack commands name, on the engine's PATH.
+const PROGRAMS = ['cc', 'make', 'node', 'gcc', 'dotnet']
 
 // ESLint is installed in the repo: the turn check runs node_modules/eslint/bin/eslint.js, which the engine answers.
 const ESLINT_INSTALLED = { '/repo/node_modules/eslint/bin/eslint.js': '' }
@@ -434,7 +442,7 @@ test('with overlapping globs the 41st file runs in a second pass for the check t
   expect(commands.filter(c => c[0] === 'node')).toEqual([['node', '--max-old-space-size=64', 'tools/lint.js', 'tools/x.js']])
 })
 
-test('a repo without ESLint installed skips the turn check quietly: no run, no error, no trust question', async ($, on) => {
+test('a repo without ESLint installed skips the turn check: no run, no error, no trust question, and its run line says why', async ($, on) => {
   // No user pack (so trust would be asked) and no node_modules/eslint: node-vite's ESLint check has nothing to run.
   const { clock, runs, asked } = engine(on, { '/repo/package.json': VITE_PKG })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
@@ -448,7 +456,61 @@ test('a repo without ESLint installed skips the turn check quietly: no run, no e
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
   expect(await ui.find({ type: 'Text', text: /could not be read|ESLint on/ })).toBeUndefined()
   expect(await ui.find({ type: 'Text', text: /Nothing found in the files changed so far/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: "ESLint: skipped, node_modules/eslint/bin/eslint.js isn't in this repo" })).toBeDefined()
   await ui.unmount()
+})
+
+// A machine whose PATH (/opt/bin) has cc and make but not dotnet; the tools answer with no findings.
+const quietTools = (argv: string[]) => (['cc', 'make', 'dotnet'].includes(argv[0]!) ? { exitCode: 0, stdout: '', stderr: '' } : undefined)
+const writeAll = async ($: Parameters<TestBody>[0]) => {
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/app.ts', content: lines(2) })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/native/a.c', content: 'int x;\n' })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/svc/Api/Program.cs', content: 'class A {}\n' })
+  await $.turn.complete(turnEnd())
+}
+
+test("a pack command whose program isn't installed is skipped: never run, a dim line in Code › Rules, nothing for the model; the others run", async ($, on) => {
+  const files: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: TOOL_PACK, ...ESLINT_INSTALLED, '/opt/bin/cc': '', '/opt/bin/make': '' }
+  const { clock, commands, submitted } = engine(on, files, { tool: quietTools, env: { HOME: '/home/test', PATH: '/opt/bin' } })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await writeAll($)
+  await clock.settle()
+  expect(commands.map(c => c[0])).toEqual(['cc', 'make'])
+
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'rules' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: "dotnet build: skipped, dotnet isn't installed" })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /^dotnet build on|^dotnet build: (?!skipped)/ })).toBeUndefined()
+  await ui.unmount()
+  await $.prompt.submit({ text: 'go on', origin: { kind: 'composer' }, wait: false })
+  expect(submitted.at(-1)!.context.join('\n')).not.toContain('dotnet')
+})
+
+test("a program's place on PATH is looked up once a session, found or not; a repo script is looked at again each turn", async ($, on) => {
+  const files: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: TOOL_PACK, ...ESLINT_INSTALLED, '/opt/bin/cc': '', '/opt/bin/make': '' }
+  const { clock, stats } = engine(on, files, { tool: quietTools, env: { HOME: '/home/test', PATH: '/opt/bin' } })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await writeAll($)
+  await clock.settle()
+  const count = (path: string) => stats.filter(p => p === path).length
+  const scriptAfterOne = count('/repo/node_modules/eslint/bin/eslint.js')
+  expect([count('/opt/bin/dotnet'), count('/opt/bin/cc')]).toEqual([1, 1])
+  await writeAll($)
+  await clock.settle()
+  expect([count('/opt/bin/dotnet'), count('/opt/bin/cc')]).toEqual([1, 1])
+  expect(count('/repo/node_modules/eslint/bin/eslint.js')).toBeGreaterThan(scriptAfterOne)
+})
+
+test('with no PATH to read, a bare program counts as found and runs, as before', async ($, on) => {
+  const files: Record<string, string> = { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: TOOL_PACK, ...ESLINT_INSTALLED }
+  const { clock, commands } = engine(on, files, { tool: quietTools, env: { HOME: '/home/test' } })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  await writeAll($)
+  await clock.settle()
+  expect(commands.map(c => c[0])).toEqual(['cc', 'dotnet', 'make'])
 })
 
 test("the explain prompt never carries the turn's findings; the next typed message still does", async ($, on) => {

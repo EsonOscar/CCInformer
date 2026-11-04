@@ -13,7 +13,7 @@ import { keysetFindings, languagesOf, tableOf } from './i18n'
 import type { TableFile } from './i18n'
 import { parseSuppressions } from './suppressions'
 import type { Suppressions } from './suppressions'
-import { MAX_OUTPUT_BYTES, OUTPUT_NOT_WRITTEN, SARIF_FILE_TOO_BIG, binOf, hasOutputFile, isQuietSkip, isToolCheck, outputFile, readRun, takesFiles, toolArgv } from './tools'
+import { MAX_OUTPUT_BYTES, OUTPUT_NOT_WRITTEN, SARIF_FILE_TOO_BIG, binOf, hasOutputFile, isToolCheck, outputFile, readRun, takesFiles, toolArgv } from './tools'
 import type { OutputRead } from './tools'
 
 // The most files one run takes when the command takes files (ESLint's JSON carries each file's source, and a run's
@@ -27,6 +27,9 @@ const MAX_TABLE_DEPTH = 6
 // and read (the atoms live in the hooks module).
 export type CheckDeps = {
   cwd: string
+  // Why a check's program isn't on this machine ("dotnet isn't installed"), or '' when it is: looked up before the
+  // trust question, by reading files only.
+  hasProgram: (bin: string[], root: string) => Promise<string>
   emptySuppressions: string
   outputDir: string
   sessionId: string
@@ -151,12 +154,16 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       const covered: string[] = []
       for (const f of new Set([...queued, ...written.filter(f => covers(check, f))])) if (await stampOf(`${report.root}/${f}`)) covered.push(f)
       if (!covered.length) continue
-      // A repo without the script (ESLint not installed) has nothing to run: skipped quietly, without asking for trust.
-      const bin = binOf(check)
-      if (isQuietSkip(bin) && !(await $.fs.exists(`${report.root}/${bin[1]}`))) continue
       const isWhole = !takesFiles(check)
       const files = isWhole ? covered : covered.slice(0, MAX_CHECKED_FILES)
       const run: CheckRun = { check: check.id, label: check.label, at: await $.clock.now(), ms: 0, files: files.length, isRunning: false, waitsForTrust: false, error: '', elsewhere: 0 }
+      // A program this machine doesn't have (dotnet not installed, ESLint not in the repo) skips the check: nothing
+      // runs, trust isn't asked, and its run line says why. Its files aren't kept waiting.
+      const skipped = await deps.hasProgram(binOf(check), report.root)
+      if (skipped) {
+        await deps.saveRun({ ...run, skipped })
+        continue
+      }
       if (!(await mayRunRepoTools())) {
         // They run after the next main turn, once trust is given.
         pending.set(check.id, new Set(covered))

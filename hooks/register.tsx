@@ -8,6 +8,7 @@ import type {
 import { areaFor, areaNames } from './areas'
 import { createBudgets } from './budgets/run'
 import { createChecks } from './checks/run'
+import { programCandidates, skipReason } from './checks/tools'
 import { createPlans } from './plans/run'
 import { CI_IDLE, CI_TEXTS, isGuardedTurn, isReadOnlyTool } from './ci/investigate'
 import { createCiActive } from './ci/run'
@@ -441,9 +442,36 @@ export const register: Register = on => {
         const run = await exec(memoryQuery(os)).catch(() => null)
         await noteMemory(run?.exitCode === 0 ? parseMemory(os, run.stdout, await $.clock.now()) : null)
       })
+    // Whether a check's program is on this machine, by reading files only: PATH read once (Windows may spell it Path;
+    // with none, a bare name counts as found, as before), a bare name's answer kept for the session (PATH is fixed
+    // for this process), a repo or absolute path looked at each time. A folder never counts as the program.
+    let pathEnv: Promise<{ path: string; pathext: string } | null> | null = null
+    const programsSeen = new Map<string, boolean>()
+    const hasProgram = async (bin: string[], root: string): Promise<string> => {
+      const env = await (pathEnv ??= (async () => {
+        const path = (await $.env.get('PATH')) ?? (await $.env.get('Path'))
+        return path ? { path, pathext: (await $.env.get('PATHEXT')) ?? '' } : null
+      })())
+      const lookup = programCandidates(bin, root, env ?? { path: '', pathext: '' }, platform)
+      if (!lookup || (lookup.kind === 'path' && !env)) return ''
+      let isFound = lookup.kind === 'path' ? programsSeen.get(lookup.program) : undefined
+      if (isFound === undefined) {
+        isFound = false
+        for (const path of lookup.paths) {
+          const stat = await $.fs.stat(path).catch(() => null)
+          if (stat && stat.kind !== 'dir') {
+            isFound = true
+            break
+          }
+        }
+        if (lookup.kind === 'path') programsSeen.set(lookup.program, isFound)
+      }
+      return isFound ? '' : skipReason(lookup)
+    }
     // The pack's checks (checks/run.ts); the findings and the latest runs are written here, where their atoms are.
     const checks = createChecks($, {
       cwd,
+      hasProgram,
       emptySuppressions: configDir + '/ccinformer/empty-suppressions.json',
       outputDir: configDir + '/ccinformer/output',
       sessionId: selfId,
