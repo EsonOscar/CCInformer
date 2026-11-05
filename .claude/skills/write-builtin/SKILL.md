@@ -25,6 +25,7 @@ Stop and say which one fails, unless all three hold:
    - Environments: `local` only (localhost and its kin). No `budgets` unless the stack has a standard report, no `approvals`, no `plans`.
    - Commands as the stack's tools are installed in a repo, preferring `node <script>` to a shim (`npm`, `npx`), which is slower to start on Windows.
    - The analyzers the mod has for the stack itself (the `tscn` pair for Godot), with root-agnostic globs (`**/*.tscn`, `**/*.cs`).
+   - The stack's own `noise`: its generated folders and the files its editor rewrites on save, with the engine's renumbered parts as `normalize`.
    - The `id` is a short lowercase name for the stack, not one already in `BUILTINS`.
 3. **Draft** `hooks/packs/<id>.ts` like `node-vite.ts`: a comment naming the stack and saying it holds generic defaults only, then `export const <ID>: PackManifest = { ... }`. In TS strings, as in JSONC, every regex backslash is written twice.
 4. **Draft its test**, `tests/pack-<id>.test.ts`, in the style of `tests/packs.test.ts`, with invented fixtures:

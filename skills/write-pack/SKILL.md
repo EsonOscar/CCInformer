@@ -75,6 +75,7 @@ The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads
 | a long-running script the built-in doesn't recognise | a `processes` entry |
 | env file and deploy names | `environments`: production names get `"tone": "prod"`, staging and preview `"shared"`; `argRegex` from the scripts (`--mode staging`); `hostPatterns` only as the person answers "Which hosts mean `<env>`? I don't read env files." (options: "Leave hostPatterns out (Recommended)", or their own answer) |
 | generated output | `noise` with `"kind": "generated"` |
+| files an editor rewrites on save (ids, counters it renumbers) | `noise` with `"kind": "editor-rewrite"` and the renumbered parts as `normalize` regexes |
 | plan files outside `.local/plans/` | `plans.globs` |
 
 An entry with the id of one in the built-in the pack `extends` (as `builtins` shows it) is read merged over that entry: write only the fields you change.
