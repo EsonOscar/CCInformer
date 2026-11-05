@@ -44,6 +44,60 @@ export const expandCommand = (command: string, scripts: Record<string, string>):
   return { text, label }
 }
 
+// The approval gates' view of a line: every command in it, split more widely than above (a single `&`, PowerShell's
+// call operator included, and newlines), each as written, then, for a package runner, a normalised `npm run <name>`
+// line and the script's own commands, depth first. Every line carries the label of the command it came from, so a
+// matched script body still names the script that ran it.
+const GATE_SEPARATOR = /\s*(?:&&|\|\||;|\||&|\r?\n)\s*/
+const WRAPPER = /^(?:(?:env|time|nohup|\.)\s+|npx\s+dotenv(?:-cli)?\s+.*?\s--\s+)/
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=\S*\s+/
+const GATE_RUNNER = /^(npm|pnpm|yarn|bun)(?:\.cmd|\.exe)?$/i
+// Runner flags that take the next word as their value.
+const VALUE_FLAGS = ['--prefix', '-C', '--cwd', '--dir', '--workspace', '-w', '--filter', '-F']
+
+const unwrap = (part: string): string => {
+  let text = part.trim()
+  for (let before = ''; before !== text; ) {
+    before = text
+    text = text.replace(WRAPPER, '').replace(ASSIGNMENT, '').trim()
+  }
+  return text
+}
+
+// The script a runner names, flags skipped: `npm.cmd --prefix api run -s db:migrate` is npm's `db:migrate`.
+const runnerScript = (part: string, scripts: Record<string, string>): { runner: string; name: string } | null => {
+  const words = unwrap(part).split(/\s+/)
+  const runner = GATE_RUNNER.exec(words[0] ?? '')?.[1]?.toLowerCase()
+  if (!runner) return null
+  let i = 1
+  let hasRun = false
+  for (; i < words.length; i++) {
+    const word = words[i]!
+    if (VALUE_FLAGS.includes(word)) i++
+    else if (word === 'run' || word === 'run-script') hasRun = true
+    else if (!word.startsWith('-')) break
+  }
+  const name = words[i] ?? ''
+  if (!name) return null
+  const isScript = hasRun || (name in scripts && (runner !== 'npm' || NPM_BARE.includes(name)))
+  return isScript ? { runner, name } : null
+}
+
+const gateLines = (part: string, scripts: Record<string, string>, label: string, depth: number): { text: string; label: string }[] => {
+  const text = part.trim()
+  if (!text || /^cd\s/.test(text)) return []
+  const script = runnerScript(text, scripts)
+  if (!script) return [{ text, label }]
+  const own = label || `${script.runner} run ${script.name}`
+  const lines = [{ text, label: own }, { text: `${script.runner} run ${script.name}`, label: own }]
+  const body = scripts[script.name]
+  if (body === undefined || depth >= MAX_DEPTH) return lines
+  return [...lines, ...body.split(GATE_SEPARATOR).flatMap(p => gateLines(p, scripts, own, depth + 1))]
+}
+
+export const expandParts = (command: string, scripts: Record<string, string>): { text: string; label: string }[] =>
+  command.split(GATE_SEPARATOR).flatMap(p => gateLines(p, scripts, '', 0))
+
 const tests = (pattern: string, text: string): boolean => {
   try {
     return new RegExp(pattern, 'm').test(text)

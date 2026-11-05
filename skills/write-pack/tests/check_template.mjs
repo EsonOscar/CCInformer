@@ -11,13 +11,28 @@ const load = path => import(pathToFileURL(join(root, path)).href)
 const { parseJsonc } = await load('hooks/packs/jsonc.ts')
 const { checkPack } = await load('hooks/packs/validate.ts')
 const { PACK_KEYS } = await load('hooks/packs/types.ts')
+const { gateCall, ruleMatches } = await load('hooks/gates/match.ts')
+
+// A call each approval example must name, so the template's examples read the call the way the gates do.
+const SAMPLES = {
+  migrate: ['Bash', { command: 'npm run build && npm run db:migrate:staging' }],
+  'db-check': ['PowerShell', { command: 'npm run db:check:staging' }],
+  sql: ['mcp__acmedb__execute_sql', { project_id: '<staging-ref>', query: 'select 1' }],
+  'migration-files': ['Edit', { file_path: '/repo/db/migrations/001.sql' }],
+}
 
 const text = readFileSync(join(root, 'skills/write-pack/pack-template.jsonc'), 'utf8')
 const parsed = parseJsonc(text)
 const problems = parsed.error !== undefined ? [parsed.error] : checkPack(parsed.value, 'user').reasons
 for (const key of PACK_KEYS) if (!text.includes(`"${key}"`)) problems.push(`doesn't name "${key}"`)
+for (const env of parsed.value?.environments ?? [])
+  for (const rule of env.approvals ?? []) {
+    const sample = SAMPLES[rule.id]
+    if (!sample) problems.push(`approval ${rule.id} has no sample call in check_template.mjs`)
+    else if (!ruleMatches(rule, gateCall(sample[0], sample[1], {}, '/repo'))) problems.push(`approval ${rule.id} doesn't name its sample call (${sample[0]})`)
+  }
 if (problems.length) {
   console.error('skills/write-pack/pack-template.jsonc:\n' + problems.map(p => '  - ' + p).join('\n'))
   process.exit(1)
 }
-console.log('skills/write-pack/pack-template.jsonc is a valid pack naming every key')
+console.log('skills/write-pack/pack-template.jsonc is a valid pack naming every key, its approval examples naming their sample calls')

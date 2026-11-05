@@ -53,11 +53,24 @@
       "hostPatterns": ["*.staging.example.test"],
       // A regex over the command line that means this environment.
       "argRegex": "--mode[= ]staging\\b",
-      // Writes to it are gated once approval gates are built.
+      // No effect yet: the approval rules below decide what is gated.
       "readOnly": true,
-      // Approval rules: schema only for now, nothing acts on them yet; leave them out.
+      // Approval rules. A tool call a rule names is asked first (Deny, Approve once, and Approve for this session
+      // when "scope" is "session"), or, with "mode": "log", runs with no prompt; either way it is logged under
+      // ~/.claude/ccinformer/approvals/. A rule names a call when its "tool" glob does (one shell tool names them
+      // all: Bash, PowerShell, Monitor) and every field it sets matches:
+      //   "commandRegex": each command of a shell line, plus "npm run <name>" and the script's own commands as lines
+      //                   of their own. Anchor it ("^npm run ..."), and match what the script targets as well.
+      //   "inputRegex":   an MCP call's arguments as key=value lines ("^project_id=<ref>$"). An MCP tool that takes no
+      //                   such key needs a rule on its name alone. Write MCP tools as "mcp__*__<tool>".
+      //   "pathGlob":     the repo path an Edit, Write or NotebookEdit writes.
+      // "log" suits reads, "ask" writes. "log" or "session" on a prod environment come only from your own pack, and
+      // Debug › Pack shows them in amber.
       "approvals": [
-        { "id": "migrations", "tool": "Bash", "commandRegex": "\\bmigrate\\b", "inputRegex": "staging", "pathGlob": "db/**", "label": "staging migration", "mode": "ask", "scope": "once" },
+        { "id": "migrate", "tool": "Bash", "commandRegex": "^npm run db:migrate:staging\\b", "label": "staging migration", "scope": "once" },
+        { "id": "db-check", "tool": "Bash", "commandRegex": "^npm run db:check:staging\\b", "label": "staging check (reads)", "mode": "log", "scope": "once" },
+        { "id": "sql", "tool": "mcp__*__execute_sql", "inputRegex": "^project_id=<staging-ref>$", "label": "staging SQL", "scope": "once" },
+        { "id": "migration-files", "tool": "Edit", "pathGlob": "db/migrations/**", "label": "migration files", "scope": "once" },
       ],
     },
   ],

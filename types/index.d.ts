@@ -187,7 +187,13 @@ export type PackEntryRow = {
   changedBy: PackLayer[]
   removedBy?: PackLayer
   needsTrust: boolean
+  // An approval rule's environment, and what the gate does with a live one. A report kept by an older version has
+  // neither.
+  env?: string
+  approval?: PackApprovalRow
 }
+// A loosened rule is a prod one that only logs or asks once a session: only a person's own pack can make it so.
+export type PackApprovalRow = { tone: EnvTone; envLabel: string; tool: string; mode: 'ask' | 'log'; scope: 'once' | 'session'; isLoosened: boolean }
 export type PackTrust = { isTrusted: boolean; by: 'user pack' | 'you' | ''; at: number }
 export type PackReport = {
   id: string
@@ -294,6 +300,21 @@ export type SessionBeat = {
   updatedAt: number
 }
 
+// An approval rule as the gate keeps it in state (hooks/packs/types.ts ApprovalRule, which tsc holds this to), with
+// the environment it belongs to. Written on every pack resolve, so a hot reload gates at once.
+export type GateApproval = {
+  id: string
+  tool: string
+  commandRegex?: string
+  inputRegex?: string
+  pathGlob?: string
+  label: string
+  mode?: 'ask' | 'log'
+  scope: 'once' | 'session'
+}
+export type GateRule = { env: string; envLabel: string; tone: EnvTone; rule: GateApproval }
+export type GateRules = { root: string; ledgerDir: string; rules: GateRule[] }
+
 declare module 'claude-code' {
   interface PluginState {
     ccinformer: {
@@ -306,6 +327,10 @@ declare module 'claude-code' {
       // The workflow phase Work shows; '' follows the live one.
       phase: string
       pack: PackReport | null
+      // The approval rules the gate reads (null until the pack is first read), and the rules approved for this
+      // session (hooks/gates/match.ts sessionKey).
+      gateRules: GateRules | null
+      sessionApprovals: string[]
       // The processes this session started that target an environment; the band shows the shared and prod ones.
       envTasks: EnvTask[]
       nowView: NowView

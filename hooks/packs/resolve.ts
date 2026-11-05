@@ -2,7 +2,7 @@ import type { PackEntryRow, PackLayerRow, PackReport } from '../../types'
 import { detect, remoteMatches } from './detect'
 import { parseJsonc } from './jsonc'
 import { mergeLayers } from './merge'
-import type { LayerInput } from './merge'
+import type { Entry, LayerInput } from './merge'
 import { BUILTINS } from './builtins'
 import { needsTrust, trustOf } from './trust'
 import type { StoredTrust } from './trust'
@@ -39,15 +39,28 @@ export const resolvePack = (input: PackInput): { pack: ResolvedPack; report: Pac
 
   const { pack, entries } = mergeLayers(layers)
   const trust = trustOf(!!user, input.storedTrust)
-  const checks = new Map(pack.checks.map(c => [c.id, c]))
-  const entryRows: PackEntryRow[] = entries.map(e => {
-    const check = e.section === 'checks' ? checks.get(e.id) : undefined
-    return { ...e, needsTrust: !!check && needsTrust(check) }
-  })
   return {
     pack,
-    report: { id: pack.id, root: input.root, remote: input.remote, repoKey: input.repoKey, layers: rows, entries: entryRows, trust, at: input.now },
+    report: { id: pack.id, root: input.root, remote: input.remote, repoKey: input.repoKey, layers: rows, entries: entryRows(pack, entries), trust, at: input.now },
   }
+}
+
+// The report's rows: a check that waits for repo trust says so, and a live approval rule carries what the gate does
+// with it. A rule whose environment was switched off is off with it.
+export const entryRows = (pack: ResolvedPack, entries: Entry[]): PackEntryRow[] => {
+  const checks = new Map(pack.checks.map(c => [c.id, c]))
+  const envOff = new Map(entries.filter(e => e.section === 'environments' && e.removedBy).map(e => [e.id, e.removedBy!]))
+  return entries.map(e => {
+    const check = e.section === 'checks' ? checks.get(e.id) : undefined
+    const row: PackEntryRow = { ...e, needsTrust: !!check && needsTrust(check) }
+    if (e.section !== 'approvals' || !e.env) return row
+    const env = pack.environments.find(x => x.id === e.env)
+    const rule = env?.approvals?.find(a => a.id === e.id)
+    if (!env || !rule) return e.removedBy ? row : { ...row, removedBy: envOff.get(e.env) ?? row.layer }
+    const mode = rule.mode ?? 'ask'
+    const isLoosened = env.tone === 'prod' && (mode === 'log' || rule.scope === 'session')
+    return { ...row, approval: { tone: env.tone, envLabel: env.label, tool: rule.tool, mode, scope: rule.scope, isLoosened } }
+  })
 }
 
 // The first valid user pack whose `match.remote` matches this repo's remote. A broken user pack is listed, since
