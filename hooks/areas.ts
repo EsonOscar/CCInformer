@@ -1,8 +1,9 @@
-import type { Area } from '../types'
+import type { Area, PackReport } from '../types'
 
 // A sub-view or action and the key that reaches it. A key is unique within its area plus the global keys
-// (a test holds this), since two hotkeys on one site clash and the later one wins.
-export type KeyDef = { id: string; label: string; key: string }
+// (a test holds this), since two hotkeys on one site clash and the later one wins. `needs`: the pack data a view shows,
+// without which it isn't drawn.
+export type KeyDef = { id: string; label: string; key: string; needs?: 'checks' | 'budgets' }
 export type AreaDef = { id: Area; digit: string; label: string; views: KeyDef[] }
 
 // The digits switch areas and stay fixed, so Debug is 5 even while Timeline isn't drawn.
@@ -22,8 +23,8 @@ export const AREAS: AreaDef[] = [
     label: 'Code',
     views: [
       { id: 'git', label: 'Git', key: 'g' },
-      { id: 'rules', label: 'Rules', key: 'k' },
-      { id: 'budgets', label: 'Budgets', key: 'b' },
+      { id: 'rules', label: 'Rules', key: 'k', needs: 'checks' },
+      { id: 'budgets', label: 'Budgets', key: 'b', needs: 'budgets' },
     ],
   },
   {
@@ -61,6 +62,19 @@ export const ACTIONS = {
   timeline: {},
   debug: { trust: 'a', approveAll: 'y', denyAll: 'n', explain: 'e', planFiles: 'f' },
 } as const satisfies Record<Area, Record<string, string>>
+
+// The views an area draws for the repo's pack: one that needs pack data only when the pack has some (Rules, also while
+// findings are still shown), and every view while the pack hasn't been read yet, so nothing jumps at start. The digits
+// and keys never move: a view that isn't drawn just has no tab.
+export const viewsFor = (area: AreaDef, pack: PackReport | null, hasFindings: boolean): KeyDef[] => {
+  if (!pack) return area.views
+  const has = (section: string) => pack.entries.some(e => e.section === section && !e.removedBy)
+  return area.views.filter(v => !v.needs || (v.needs === 'checks' ? has('checks') || hasFindings : has('budgets')))
+}
+
+// The view shown: the stored one when it's drawn, else the area's first drawn view. The stored one is kept, so it comes
+// back once the pack has its data.
+export const shownView = (views: KeyDef[], stored: string): string => (views.some(v => v.id === stored) ? stored : (views[0]?.id ?? stored))
 
 // An area is drawn once it has a view to show.
 export const isBuilt = (area: AreaDef): boolean => area.views.length > 0

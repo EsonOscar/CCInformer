@@ -220,12 +220,15 @@ test('the header (title, areas, line, view bar) is drawn at the window top, and 
   await $.command.run({ ...TYPED, command: 'ccinformer', args: '' })
   const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
 
-  // Code has several views, so its header is 5 rows (title, areas, line, a blank row, the views); Debug's too.
+  // Debug has several views, so its header is 5 rows (title, areas, line, a blank row, the views). Code in a repo with
+  // no pack draws Git alone, with no view bar: 3 rows.
+  await ui.press({ key: 'area-debug' })
+  expect((await ui.find({ key: 'content' }))?.props.paddingTop).toBe(5)
   await ui.press({ key: 'area-code' })
   const header = await ui.find({ key: 'header' })
   expect([header?.props.position, header?.props.top]).toEqual(['absolute', 0])
   expect(await ui.find({ key: 'header', text: /Code/ })).toBeDefined()
-  expect((await ui.find({ key: 'content' }))?.props.paddingTop).toBe(5)
+  expect((await ui.find({ key: 'content' }))?.props.paddingTop).toBe(3)
   // The area buttons are in the header, not the content that scrolls.
   expect((await ui.findAll({ key: 'area-code' })).length).toBe(1)
   await ui.unmount()

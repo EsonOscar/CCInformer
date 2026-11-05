@@ -30,7 +30,7 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>) => {
   const mtimes: Record<string, number> = Object.fromEntries(Object.keys(files).map(p => [p, 1]))
   const asked: string[] = []
   const state = { answer: 'Allow' }
-  mock.clock(on, { now: 1_000_000 })
+  const clock = mock.clock(on, { now: 1_000_000 })
   // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
   mock.store(on, { permissions: { base: 'defaults', set: {} } })
   mock.env(on, { HOME: '/home/test' })
@@ -73,7 +73,7 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>) => {
     files[path] = text
     mtimes[path] = (mtimes[path] ?? 1) + 1
   }
-  return { asked, state, change }
+  return { asked, state, change, clock }
 }
 
 test('/ccinformer pack shows both layers and every value with the layer that set it; repo config files are not read', async ($, on) => {
@@ -185,5 +185,53 @@ test("the trust line says Claude is told nothing while the turn checks or their 
   await ui.press({ key: 'perm-claude.turnNotes' })
   await ui.press({ key: 'view-pack' })
   expect(await ui.find({ type: 'Text', text: /Claude is told nothing: Turn checks or Turn check notes is off in Debug › Settings\./ })).toBeDefined()
+  await ui.unmount()
+})
+
+// A user pack with one check and no budgets, and the same pack once the check is taken out.
+const CHECK_PACK = JSON.stringify({
+  schema: 1,
+  id: 'acme-shop',
+  version: '1',
+  match: { remote: ['github.com/acme/*'] },
+  checks: [{ id: 'max-lines', label: 'File length', on: ['src/**/*.ts'], analyzer: 'size-lines', cost: 'edit', class: 'ci', options: { max: 3 } }],
+})
+const NO_CHECK_PACK = JSON.stringify({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] } })
+// The view tabs a mounted pane draws.
+const viewTabs = async (ui: { findAll: (query: { type: 'Button' }) => Promise<{ key?: unknown }[]> }) =>
+  [...new Set((await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('view-')))]
+
+test('Code draws only the views the pack has data for: Git alone with no pack, and no view bar in its header', async ($, on) => {
+  engine(on, {})
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await viewTabs(ui)).toEqual([])
+  expect((await ui.find({ key: 'content' }))?.props.paddingTop).toBe(3)
+  await ui.unmount()
+})
+
+test('a pack with checks and no budgets draws Git and Rules; /ccinformer budgets says why it opens on Git', async ($, on) => {
+  const { clock } = engine(on, { [PACKS + '/shop.pack.jsonc']: CHECK_PACK })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const reply = await $.command.run({ ...TYPED, command: 'ccinformer', args: 'budgets' })
+  expect(reply).toEqual({ text: "This repo's pack has no budgets." })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await viewTabs(ui)).toEqual(['view-git', 'view-rules'])
+  expect(await ui.find({ type: 'Text', text: /CHANGES · 1/ })).toBeDefined()
+  await ui.unmount()
+  await clock.settle()
+})
+
+test("findings stay reachable: Rules is still drawn after the pack's checks are taken out", async ($, on) => {
+  const { change } = engine(on, { [PACKS + '/shop.pack.jsonc']: CHECK_PACK, '/repo/src/app.ts': 'a\nb\nc\nd\ne\n' })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/src/app.ts', content: 'a\nb\nc\nd\ne\n' })
+  change(PACKS + '/shop.pack.jsonc', NO_CHECK_PACK)
+  await $.turn.start({ text: 'go on', turnId: 't2' })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await viewTabs(ui)).toEqual(['view-git', 'view-rules'])
   await ui.unmount()
 })

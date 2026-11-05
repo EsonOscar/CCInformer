@@ -10,27 +10,24 @@ const BAR_CELLS = 16
 
 // The pack's budgets: each one's value against its limit, where the value came from, and whether it still measures
 // the tree as it is. `m` builds first and then reads, which takes minutes and loads the machine.
-export const BudgetsView = (k: Kit, budgets: BudgetState | null, hasBudgets: boolean, now: number, measure: () => void): JSX.Element => {
+export const BudgetsView = (k: Kit, budgets: BudgetState | null, now: number, measure: () => void): JSX.Element => {
   const { Box, Button, Text } = k
   const doing = budgets?.doing
   const note = doing === 'building' ? 'building…' : doing === 'reading' ? 'reading…' : budgets?.at ? 'read ' + ago(now - budgets.at) : ''
   return (
     <Box flexDirection="column">
       {Section(k, 'Budgets', note)}
-      {!hasBudgets && Empty(k, "This repo's pack has no budgets.")}
-      {hasBudgets && !budgets?.readings.length && !doing && Empty(k, 'Not read yet: r reads them, m builds first.')}
+      {!budgets?.readings.length && !doing && Empty(k, 'Not read yet: r reads them, m builds first.')}
       {/* A read over readings already shown says so only in the heading, so nothing below it moves. */}
       {(doing === 'building' || (doing === 'reading' && !budgets?.readings.length)) &&
         Line(k, { char: spinner(now), color: ACCENT }, doing === 'building' ? 'Building, then reading the budgets (a build can take minutes)' : 'Reading the budgets')}
       {budgets?.error ? Line(k, { char: '✗', color: 'error' }, budgets.error) : null}
       {budgets?.readings.map(r => Reading(k, r))}
-      {hasBudgets && (
-        <Box marginTop={1}>
-          <Button key="budgets-measure" plain hotkey={ACTIONS.code.measure} onPress={measure}>
-            <Text dimColor>measure now (builds first)</Text>
-          </Button>
-        </Box>
-      )}
+      <Box marginTop={1}>
+        <Button key="budgets-measure" plain hotkey={ACTIONS.code.measure} onPress={measure}>
+          <Text dimColor>measure now (builds first)</Text>
+        </Button>
+      </Box>
     </Box>
   )
 }

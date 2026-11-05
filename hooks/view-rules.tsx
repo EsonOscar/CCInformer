@@ -27,7 +27,6 @@ export const RulesView = (
   dismissed: string[],
   runs: CheckRun[],
   checkIds: string[],
-  hasChecks: boolean,
   now: number,
   nav: RulesNav,
 ): JSX.Element => {
@@ -46,8 +45,7 @@ export const RulesView = (
           </Box>
         ) : null
       })}
-      {!hasChecks && Empty(k, "This repo's pack has no checks.")}
-      {hasChecks && shown.length === 0 && Empty(k, 'Nothing found in the files changed so far.')}
+      {shown.length === 0 && Empty(k, 'Nothing found in the files changed so far.')}
       {files.map(file => (
         <Box key={'rules-' + file} flexDirection="column">
           {Line(k, null, <Text color={ACCENT} wrap="truncate-start">{file}</Text>)}
