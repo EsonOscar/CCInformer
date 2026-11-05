@@ -1,11 +1,13 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { CiActiveState, CiSnapshot, DiffPreview, FileChange, GitSnapshot } from '../../types'
-import { collectCi, collectDiff, collectGit, collectNoise, newNoiseCache } from '../collect'
+import { collectCi, collectDiff, collectFlaky, collectGit, collectNoise, newNoiseCache } from '../collect'
 import type { Exec } from '../collect'
 import { createSolo } from '../core/lanes'
 import type { May } from '../core/permissions'
 import type { NoiseRule } from '../packs/types'
+import { markFlaky } from './flaky'
+import type { FlakyIndex } from './flaky'
 import { rewriteCandidates } from './noise'
 import { ciOutcome, earlyFailureText, newFailures } from '../insight'
 import { previewDiff, previewNewFile } from '../parse'
@@ -15,6 +17,8 @@ import { readText } from '../read-records'
 // Which commits' CI has been pinged about, in the store every session shares, and how many are kept.
 const STORE_CI_PINGED = 'ciPinged'
 const CI_PINGS_KEPT = 20
+// How long the repo's likely-flaky jobs are kept before they are read again.
+const FLAKY_TTL_MS = 30 * 60_000
 
 // What git and CI take from the session: the light lane, and the snapshots, the open diff and Code's selection as the
 // state holds them (the atoms live in the hooks module, so they're read and written through these).
@@ -51,6 +55,9 @@ export type Git = {
 export function createGit($: EngineInterface, deps: GitDeps): Git {
   const solo = createSolo()
   const noiseCache = newNoiseCache()
+  // The repo's likely-flaky jobs, read at most once per FLAKY_TTL_MS (a failed read too, so an outage isn't retried
+  // on every poll).
+  let flaky: { at: number; index: FlakyIndex } | null = null
 
   // Tells the person once when this commit's checks finish; one session pings for all of them.
   const pingCi = async (prev: CiSnapshot | null, ci: CiSnapshot) => {
@@ -70,7 +77,16 @@ export function createGit($: EngineInterface, deps: GitDeps): Git {
       const git = await deps.git()
       if (!git || git.error) return
       const prev = await deps.ci()
-      const ci = await collectCi(deps.exec, git.branch, git.head, await $.clock.now())
+      const now = await $.clock.now()
+      const collected = await collectCi(deps.exec, git.branch, git.head, now)
+      // A failed PR check is marked when its job lately flaked elsewhere. The repo's reruns are read only when one
+      // fails and the index is missing or old; the row turns red first, marked from the old index if there is one.
+      const hasFailed = collected.source === 'pr' && collected.checks.some(c => c.bucket === 'fail')
+      if (hasFailed && (!flaky || now - flaky.at > FLAKY_TTL_MS)) {
+        await deps.saveCi(markFlaky(collected, flaky?.index ?? {}))
+        flaky = { at: now, index: await collectFlaky(deps.exec, now) }
+      }
+      const ci = flaky ? markFlaky(collected, flaky.index) : collected
       await deps.saveCi(ci)
       await pingCi(prev, ci)
       // A check that failed while others still run is told at once: a toast in passive mode, a look in active mode.

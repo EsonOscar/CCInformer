@@ -85,7 +85,7 @@ export const PERMISSIONS = [
     group: 'background',
     label: 'Watch CI',
     description:
-      "Asks gh every 8 s while checks run and for 3 minutes after a push, pane open or closed. Off: CI is read only while Code is shown or after Claude's edits move the commit.",
+      "Asks gh every 8 s while checks run and for 3 minutes after a push, pane open or closed. Off: CI is read only while Code is shown or after Claude's edits move the commit. On or off, when a PR check fails it also reads the repo's recent reruns (cached 30 min) to mark likely-flaky checks.",
     isOnByDefault: true,
   },
   {

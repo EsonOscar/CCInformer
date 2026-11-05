@@ -276,7 +276,8 @@ const Check = (k: Kit, c: CiCheck, now: number): JSX.Element => {
   const ms = c.completedAt ? Date.parse(c.completedAt) - Date.parse(c.startedAt) : since(now, c.startedAt)
   const label = c.workflow && c.workflow !== c.name ? `${c.workflow} / ${c.name}` : c.name
   const left = c.bucket === 'fail' && c.link ? <Link href={c.link} label={label} /> : label
-  return Line(k, checkGlyph(c.bucket, now), left, c.bucket === 'skipping' ? 'skipped' : duration(ms))
+  const right = c.bucket === 'skipping' ? 'skipped' : duration(ms) + ((c.flaky ?? 0) > 0 ? ' · likely flaky' : '')
+  return Line(k, checkGlyph(c.bucket, now), left, right)
 }
 
 const CODE_COLORS: Record<string, Color> = { M: 'warning', A: 'success', '?': 'success', D: 'error', R: 'suggestion', U: 'error' }

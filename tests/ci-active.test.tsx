@@ -25,6 +25,19 @@ const checksOf = (state: Record<string, Bucket>) =>
   JSON.stringify(
     Object.entries(state).map(([name, bucket]) => ({ name, workflow: 'CI', bucket, startedAt: '', completedAt: '', link: `https://github.com/acme/shop/actions/runs/100/job/${JOBS[name]}` })),
   )
+// The repo's recent runs, for likely-flaky checks: run 500, of another commit an hour before the mocked clock's now,
+// was rerun, and its e2e job failed in attempt 1 and passed in attempt 2.
+const RERUNS = JSON.stringify([
+  { databaseId: 500, attempt: 2, headSha: 'other0', createdAt: new Date(1_000_000 - 3_600_000).toISOString(), url: 'https://github.com/acme/shop/actions/runs/500' },
+])
+const RERUN_JOBS_READ = 'gh api repos/acme/shop/actions/runs/500/jobs?filter=all&per_page=100'
+const RERUN_JOBS = JSON.stringify({
+  total_count: 2,
+  jobs: [
+    { name: 'e2e', workflow_name: 'CI', run_attempt: 1, conclusion: 'failure' },
+    { name: 'e2e', workflow_name: 'CI', run_attempt: 2, conclusion: 'success' },
+  ],
+})
 // A finished job's whole log as the API gives it: a byte-order mark, a timestamp on each line, the clean-up after.
 const rawLog = (job: string) =>
   [
@@ -46,7 +59,17 @@ const rawLog = (job: string) =>
 const PACK_FILE = '/home/test/.claude/ccinformer/packs/shop.pack.jsonc'
 const engine = (
   on: Parameters<TestBody>[1],
-  opts: { mode?: 'active'; submitDrop?: string; permissions?: object; slowLog?: boolean; pack?: string; diff?: string; claims?: object[]; gate?: boolean } = {},
+  opts: {
+    mode?: 'active'
+    submitDrop?: string
+    permissions?: object
+    slowLog?: boolean
+    pack?: string
+    diff?: string
+    claims?: object[]
+    gate?: boolean
+    reruns?: { exitCode: number }
+  } = {},
 ) => {
   const ci = { bucket: 'pending' as 'pending' | 'fail', state: null as Record<string, Bucket> | null }
   const submits: { text: string; origin: { kind: string } }[] = []
@@ -85,6 +108,8 @@ const engine = (
     const buckets = ci.state ? Object.values(ci.state) : []
     if (line.startsWith('gh pr checks') && ci.state) return out(checksOf(ci.state), buckets.includes('pending') ? 8 : buckets.includes('fail') ? 1 : 0)
     if (line.startsWith('gh pr checks')) return out(prChecks(ci.bucket), ci.bucket === 'fail' ? 1 : 8)
+    if (line.startsWith('gh run list --created') && opts.reruns) return out(RERUNS, opts.reruns.exitCode)
+    if (line === RERUN_JOBS_READ) return out(RERUN_JOBS)
     if (line.startsWith('gh run list')) return out('[]')
     if (/^gh run view --job \d+ --log-failed$/.test(line) && buckets.includes('pending'))
       return { value: { exitCode: 1, stdout: '', stderr: 'run 100 is still in progress; logs will be available when it is complete', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -450,4 +475,59 @@ test("asked in an active repo when the ask's own refresh first sees the failure:
   await env.clock.advance(1000)
   await env.clock.settle()
   expect(handoffs(env).length).toBe(1)
+})
+
+// Likely-flaky checks: the fixture's e2e job failed and then passed on a rerun of another commit; lint has no such past.
+const flakyLists = (env: Env) => env.commands.filter(c => c.startsWith('gh run list --created')).length
+const FLAKY_LINE = '(likely flaky: failed, then passed on a rerun, in 1 other run in the last 7 days)'
+
+test('a failed check whose job lately flaked elsewhere is marked in the row, the hand-off and the toast; the reruns are read once', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', reruns: { exitCode: 0 } })
+  await startOn($, env, { lint: 'pending', e2e: 'pending', build: 'pending' })
+  expect(flakyLists(env)).toBe(0)
+  await poll($, env, { lint: 'fail', e2e: 'fail', build: 'pass' })
+  expect(env.toasts).toContain('✗ CI failed on PR #7: lint, e2e (likely flaky)')
+  const text = handoffs(env)[0]!.text
+  expect(text).toContain(`- e2e (CI): https://github.com/acme/shop/actions/runs/100/job/13 ${FLAKY_LINE}`)
+  expect(text).toContain('- lint (CI): https://github.com/acme/shop/actions/runs/100/job/11\n')
+  expect(text).toContain('Say whether this failure looks like that flakiness or like a real break from these changes')
+
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect((await ui.findAll({ type: 'Text', text: /likely flaky/ })).length).toBe(1)
+  await ui.unmount()
+
+  await poll($, env, { lint: 'fail', e2e: 'fail', build: 'pass' })
+  expect(flakyLists(env)).toBe(1)
+})
+
+test('passive: a likely-flaky check that fails while others run is marked in the early toast', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { reruns: { exitCode: 0 } })
+  await startOn($, env, { e2e: 'pending', build: 'pending' })
+  await poll($, env, { e2e: 'fail', build: 'pending' })
+  expect(env.toasts).toContain('✗ CI check failed on PR #7: e2e (likely flaky) (1 still running)')
+})
+
+test('active: a failure that is only a likely-flaky check is still handed over, marked', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', reruns: { exitCode: 0 } })
+  await startOn($, env, { e2e: 'pending', build: 'pending' })
+  await poll($, env, { e2e: 'fail', build: 'pass' })
+  expect(handoffs(env).length).toBe(1)
+  expect(handoffs(env)[0]!.text).toContain(FLAKY_LINE)
+})
+
+test("gh can't list the runs: nothing is marked, and the list isn't asked again on the next poll", CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', reruns: { exitCode: 1 } })
+  await startOn($, env, { lint: 'pending', e2e: 'pending' })
+  await poll($, env, { lint: 'fail', e2e: 'pending' })
+  await poll($, env, { lint: 'fail', e2e: 'fail' })
+  expect(flakyLists(env)).toBe(1)
+  expect(env.toasts.some(t => t.includes('likely flaky'))).toBe(false)
+  expect(handoffs(env).some(h => h.text.includes('likely flaky'))).toBe(false)
+})
+
+test("no failed check: the repo's reruns aren't read", CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', reruns: { exitCode: 0 } })
+  await startOn($, env, { lint: 'pending', e2e: 'pending' })
+  await poll($, env, { lint: 'pass', e2e: 'pass' })
+  expect(flakyLists(env)).toBe(0)
 })

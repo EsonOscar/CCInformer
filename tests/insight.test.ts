@@ -93,6 +93,12 @@ describe('the CI ping', () => {
     const onPr = { ...running, pr: { number: 7 } as CiSnapshot['pr'] }
     expect(earlyFailureText(onPr, running.checks.slice(0, 1))).toBe('CI check failed on PR #7: lint (2 still running)')
   })
+
+  test('a likely-flaky check is named so in both toasts', async () => {
+    const flaky = { ...check('fail', 'e2e'), flaky: 2 }
+    expect(earlyFailureText(ci([flaky, check('pending')]), [flaky])).toBe('CI check failed on feat/x: e2e (likely flaky) (1 still running)')
+    expect(ciOutcome(ci([check('pending')]), ci([flaky, check('fail', 'lint')]))?.text).toBe('CI failed on feat/x: e2e (likely flaky), lint')
+  })
 })
 
 describe('sessions', () => {

@@ -41,7 +41,9 @@ export type GitSnapshot = {
 export type DiffPreview = { path: string; text: string; isLoading: boolean }
 
 export type CheckBucket = 'pass' | 'fail' | 'pending' | 'skipping' | 'cancel'
-export type CiCheck = { name: string; workflow: string; bucket: CheckBucket; startedAt: string; completedAt: string; link: string }
+// `flaky`: how many other runs this check's job failed in and then passed on a rerun lately (a failed PR check only;
+// absent for none). Display only: no comparison between polls reads it.
+export type CiCheck = { name: string; workflow: string; bucket: CheckBucket; startedAt: string; completedAt: string; link: string; flaky?: number }
 export type PullRequest = {
   number: number
   title: string
