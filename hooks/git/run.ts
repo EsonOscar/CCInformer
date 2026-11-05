@@ -1,13 +1,13 @@
 import type { EngineInterface } from 'claude-code'
 
-import type { CiSnapshot, DiffPreview, FileChange, GitSnapshot } from '../../types'
+import type { CiActiveState, CiSnapshot, DiffPreview, FileChange, GitSnapshot } from '../../types'
 import { collectCi, collectDiff, collectGit, collectNoise, newNoiseCache } from '../collect'
 import type { Exec } from '../collect'
 import { createSolo } from '../core/lanes'
 import type { May } from '../core/permissions'
 import type { NoiseRule } from '../packs/types'
 import { rewriteCandidates } from './noise'
-import { ciOutcome } from '../insight'
+import { ciOutcome, earlyFailureText, newFailures } from '../insight'
 import { previewDiff, previewNewFile } from '../parse'
 import { gitFolderFacts } from '../read-git'
 import { readText } from '../read-records'
@@ -29,8 +29,11 @@ export type GitDeps = {
   clearSelection: () => Promise<unknown>
   // The resolved pack's noise rules ([] with none).
   noise: () => Promise<NoiseRule[]>
-  // A commit's checks finished with a failure, in the session that pinged for it (active CI mode decides what follows).
+  // A check failed: early, while others still run (in any session polling the repo), or when the commit's checks
+  // finished (in the session that pinged for it). Active CI mode decides what follows.
   onCiFailed?: (ci: CiSnapshot) => Promise<void>
+  // The repo's CI mode as last read: passive mode toasts a check that fails while others run.
+  mode: () => CiActiveState['mode']
   may: May
 }
 
@@ -70,6 +73,12 @@ export function createGit($: EngineInterface, deps: GitDeps): Git {
       const ci = await collectCi(deps.exec, git.branch, git.head, await $.clock.now())
       await deps.saveCi(ci)
       await pingCi(prev, ci)
+      // A check that failed while others still run is told at once: a toast in passive mode, a look in active mode.
+      const fresh = newFailures(prev, ci)
+      if (fresh.length) {
+        if (deps.mode() !== 'active' && deps.may('notify.ciToast')) $.ui.toast('✗ ' + earlyFailureText(ci, fresh))
+        void deps.onCiFailed?.(ci).catch(() => undefined)
+      }
     })
   const loadDiff = async (file: FileChange, root: string) => {
     const text = file.code === '??' ? previewNewFile(await readText($, `${root}/${file.path}`)) : previewDiff(await collectDiff(deps.exec, file.path))

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { barSpan, ciOutcome, columnChart, compactionMarks, sessionGroups, stepContext } from '../hooks/insight'
+import { barSpan, ciOutcome, columnChart, compactionMarks, earlyFailureText, newFailures, sessionGroups, stepContext } from '../hooks/insight'
 import { mergeRecord, parseHead, projectDirName, runFromRecord, upgradeRun } from '../hooks/records'
 import { pruneAgents, taskOf } from '../hooks/rows'
 import type { AgentRow, CiCheck, CiSnapshot, SessionBeat, StepRow, WorkflowRun } from '../types'
@@ -72,6 +72,26 @@ describe('the CI ping', () => {
     expect(ciOutcome(ci([check('pending')], 'old'), ci([check('pass')]))).toBeNull()
     expect(ciOutcome(ci([check('pass')]), ci([check('pass')]))).toBeNull()
     expect(ciOutcome(null, ci([check('pass')]))).toBeNull()
+  })
+
+  test('a check that fails while others still run is new once, and only while something runs', async () => {
+    const before = ci([check('pending', 'lint'), check('pending')])
+    const lintFailed = ci([check('fail', 'lint'), check('pending')])
+    expect(newFailures(before, lintFailed).map(c => c.name)).toEqual(['lint'])
+    expect(newFailures(lintFailed, lintFailed)).toEqual([])
+    // A check the poll before didn't list yet counts too.
+    expect(newFailures(ci([check('pending')]), lintFailed).map(c => c.name)).toEqual(['lint'])
+    // Nothing runs any more: the end-of-run ping covers it.
+    expect(newFailures(before, ci([check('fail', 'lint'), check('pass')]))).toEqual([])
+    expect(newFailures(ci([check('pending', 'lint'), check('pending')], 'old'), lintFailed)).toEqual([])
+    expect(newFailures(null, lintFailed)).toEqual([])
+  })
+
+  test('the early toast names the failed checks, where, and how many still run', async () => {
+    const running = ci([check('fail', 'lint'), check('fail', 'types'), check('pending'), check('pending', 'e2e')])
+    expect(earlyFailureText(running, running.checks.slice(0, 2))).toBe('CI check failed on feat/x: lint, types (2 still running)')
+    const onPr = { ...running, pr: { number: 7 } as CiSnapshot['pr'] }
+    expect(earlyFailureText(onPr, running.checks.slice(0, 1))).toBe('CI check failed on PR #7: lint (2 still running)')
   })
 })
 
