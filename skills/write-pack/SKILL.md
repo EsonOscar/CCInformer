@@ -69,6 +69,7 @@ The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads
 | ESLint `no-restricted-syntax` with a `Literal` or `TemplateElement` regex, or a `JSXOpeningElement` name | a `regex-lines` check (`cost: "edit"`) per ban, `"rules": ["no-restricted-syntax"]`, its message as `options.message`; other selectors are listed as not covered |
 | ESLint's suppressions file | `"suppressions"` on the checks that mirror ESLint rules |
 | a test holding translation files to the same keys | an `i18n-keysets` check (`cost: "turn"`) with its languages in `options.languages` |
+| Godot scenes (`.tscn`) with C# scripts | a `tscn-connections` and a `tscn-nodepaths` check (`cost: "turn"`, `class: "advise"`, no options), each with `on` covering both, e.g. `["**/*.tscn", "**/*.cs"]` |
 | a tool CI runs per file that writes SARIF, or prints one diagnostic per line | a `sarif` or `problem-matcher` check (`cost: "turn"`) with its `bin` (`{files}` where the files go) and a `timeoutMs` |
 | a report script that prints a number, with a tracked baseline or limit | a budget: a `command` source with `parse` built from the script's print format as read in its source (never run it), a `ci-log` source with the exact job and step names, the baseline as a `json` source |
 | a long-running script the built-in doesn't recognise | a `processes` entry |

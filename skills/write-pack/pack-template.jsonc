@@ -77,6 +77,13 @@
     // Translation tables (flat JSON, one file per language in a folder) with the same keys in every language.
     { "id": "i18n", "label": "Translation keys", "on": ["src/i18n/*.json"],
       "analyzer": "i18n-keysets", "cost": "turn", "class": "ci", "options": { "languages": ["da", "en"] } },
+    // Godot scenes against their C# scripts, compared inside the mod (no trust, no options): a [connection] whose
+    // method the target node's script doesn't declare. "on" covers both the scenes and the scripts.
+    { "id": "scene-connections", "label": "Scene connections", "on": ["**/*.tscn", "**/*.cs"],
+      "analyzer": "tscn-connections", "cost": "turn", "class": "advise" },
+    // A GetNode or %Name string in C# naming a node removed from a scene since the last commit.
+    { "id": "scene-nodepaths", "label": "Scene node paths", "on": ["**/*.tscn", "**/*.cs"],
+      "analyzer": "tscn-nodepaths", "cost": "turn", "class": "advise" },
     // The repo's own ESLint, over the files written in the turn; bin is the program, the mod adds the rest.
     { "id": "eslint-strict", "label": "ESLint", "on": ["src/**/*.{ts,tsx}"],
       "analyzer": "eslint-json", "cost": "turn", "class": "ci", "timeoutMs": 120000,

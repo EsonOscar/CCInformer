@@ -92,7 +92,8 @@ export const PERMISSIONS = [
     id: 'bg.turnChecks',
     group: 'background',
     label: 'Turn checks',
-    description: "Runs the repo's own tools its pack names (ESLint, or a sarif or problem-matcher command; repo trust needed) and the translation-key check once a turn that wrote files ends.",
+    description:
+      "Runs the repo's own tools its pack names (ESLint, or a sarif or problem-matcher command; repo trust needed), and the translation-key and Godot scene checks (read-only git reads, no trust needed), once a turn that wrote files ends.",
     isOnByDefault: true,
   },
   {

@@ -111,6 +111,21 @@ describe('reading pack files', () => {
       'check i18n: an i18n-keysets check runs once a turn ends, so its cost must be "turn"',
     ])
   })
+
+  test('a tscn check runs once a turn ends, inside the mod: no command fields, no options', async () => {
+    const check = (fields: object) => ({ id: 'scenes', label: 'Scene connections', on: ['**/*.tscn', '**/*.cs'], analyzer: 'tscn-connections', cost: 'turn', class: 'advise', ...fields })
+    const pack = (c: object) => ({ schema: 1, id: 'acme-shop', version: '1', match: { remote: ['github.com/acme/*'] }, checks: [c] })
+    expect(checkPack(pack(check({})), 'user').reasons).toEqual([])
+    expect(checkPack(pack(check({ analyzer: 'tscn-nodepaths' })), 'user').reasons).toEqual([])
+    expect(checkPack(pack(check({ cost: 'edit' })), 'user').reasons).toEqual([
+      'check scenes: a tscn-connections check compares scenes and scripts once a turn ends, so its cost must be "turn"',
+    ])
+    expect(checkPack(pack(check({ bin: ['godot'], timeoutMs: 1000 })), 'user').reasons).toEqual([
+      'check scenes: a tscn-connections check compares files inside the mod, so it takes no "bin"',
+      'check scenes: a tscn-connections check compares files inside the mod, so it takes no "timeoutMs"',
+    ])
+    expect(checkPack(pack(check({ options: { depth: 2 } })), 'user').reasons).toEqual(['check scenes: "options" has "depth"; a tscn-connections check takes no options'])
+  })
 })
 
 describe('command checks: sarif and problem-matcher', () => {
@@ -516,6 +531,16 @@ describe('the two layers', () => {
     const resolved = resolvePack(input({ userPacks: [{ path: 'own.pack.jsonc', text: own }] }))
     expect(runnableChecks(resolved.pack, false).map(c => c.id)).toEqual(['i18n'])
     expect(entry(resolved, 'checks', 'i18n')?.needsTrust).toBe(false)
+  })
+
+  test('Godot scenes are compared inside the mod too, so those checks need no trust', async () => {
+    const scenes = `{ "schema": 1, "id": "own", "version": "1", "match": { "remote": ["github.com/acme/*"] },
+      "checks": [{ "id": "links", "label": "Scene connections", "on": ["**/*.tscn", "**/*.cs"], "analyzer": "tscn-connections", "cost": "turn", "class": "advise" },
+        { "id": "paths", "label": "Scene node paths", "on": ["**/*.tscn", "**/*.cs"], "analyzer": "tscn-nodepaths", "cost": "turn", "class": "advise" }] }`
+    const resolved = resolvePack(input({ userPacks: [{ path: 'own.pack.jsonc', text: scenes }] }))
+    // Beside the detected built-in's ESLint, which does need trust.
+    expect(resolved.pack.checks.map(c => c.id)).toEqual(['eslint', 'links', 'paths'])
+    expect([entry(resolved, 'checks', 'links')?.needsTrust, entry(resolved, 'checks', 'paths')?.needsTrust]).toEqual([false, false])
   })
 
   test('a yes holds until it is withdrawn, also one stored by an older version with a config hash', async () => {

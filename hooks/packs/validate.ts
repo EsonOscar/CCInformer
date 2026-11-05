@@ -276,6 +276,7 @@ const checkCheck = (c: Record<string, unknown>): string[] => {
   if (c.analyzer === 'regex-lines') reasons.push(...checkRegexLines(c))
   if (c.analyzer === 'size-lines') reasons.push(...checkSizeLines(c))
   if (c.analyzer === 'i18n-keysets') reasons.push(...checkKeysets(c))
+  if (c.analyzer === 'tscn-connections' || c.analyzer === 'tscn-nodepaths') reasons.push(...checkTscn(c))
   if (c.analyzer === 'sarif' || c.analyzer === 'problem-matcher') reasons.push(...checkCommand(c))
   if (c.analyzer === 'problem-matcher') reasons.push(...checkMatcher(c))
   if (c.analyzer === 'eslint-json') reasons.push(...checkEslintBin(c))
@@ -353,6 +354,18 @@ const checkKeysets = (c: Record<string, unknown>): string[] => {
   if (c.cost !== 'turn') reasons.push(`check ${String(c.id)}: an i18n-keysets check runs once a turn ends, so its cost must be "turn"`)
   if (!isStrings(options.languages) || !options.languages.length || options.languages.some(l => !l))
     reasons.push(`check ${String(c.id)}: needs "options.languages", the languages every table must have (e.g. ["da", "en", "sv"])`)
+  return reasons
+}
+
+// A tscn-connections or tscn-nodepaths check compares a Godot repo's scenes and C# scripts inside the mod once a turn's
+// writes are done: its cost is "turn", and it runs no command, so it takes no command fields.
+const checkTscn = (c: Record<string, unknown>): string[] => {
+  const reasons: string[] = []
+  const id = String(c.id)
+  const analyzer = String(c.analyzer)
+  if (c.cost !== 'turn') reasons.push(`check ${id}: a ${analyzer} check compares scenes and scripts once a turn ends, so its cost must be "turn"`)
+  for (const key of ['bin', 'suppressions', 'timeoutMs'])
+    if (c[key] !== undefined) reasons.push(`check ${id}: a ${analyzer} check compares files inside the mod, so it takes no "${key}"`)
   return reasons
 }
 

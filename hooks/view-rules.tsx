@@ -92,6 +92,6 @@ const Run = (k: Kit, run: CheckRun, now: number): JSX.Element => {
   if (run.waitsForTrust)
     return Line(k, { char: '◌', color: 'warning' }, `${run.label} waits until this repo's own tools may run (Debug › Pack, a)`)
   if (run.error) return Line(k, { char: '✗', color: 'error' }, `${run.label}: ${run.error}`, <Text dimColor>{ago(now - run.at)}</Text>)
-  const elsewhere = run.elsewhere > 0 ? ` · ${run.elsewhere} elsewhere` : ''
+  const elsewhere = (run.elsewhere > 0 ? ` · ${run.elsewhere} elsewhere` : '') + (run.note ? ` · ${run.note}` : '')
   return Line(k, { char: '✓', color: 'success', dim: true }, `${run.label} on ${run.files} file${run.files === 1 ? '' : 's'} · ${duration(run.ms)}${elsewhere}`, ago(now - run.at))
 }
