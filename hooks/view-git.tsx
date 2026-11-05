@@ -88,8 +88,11 @@ const repoName = (git: GitSnapshot): string => lastSegment(git.worktrees[0]?.pat
 
 const Branch = (k: Kit, git: GitSnapshot, now: number, isPaused: boolean, nav: GitNav): JSX.Element => {
   const { Box, Button, Text } = k
-  const added = git.files.reduce((n, f) => n + f.added, 0)
-  const removed = git.files.reduce((n, f) => n + f.removed, 0)
+  // The pack's noise (generated output, editor rewrites) is counted apart, not as changes.
+  const real = git.files.filter(f => !f.noise)
+  const noise = git.files.length - real.length
+  const added = real.reduce((n, f) => n + f.added, 0)
+  const removed = real.reduce((n, f) => n + f.removed, 0)
   return (
     <Box flexDirection="column">
       <Box flexDirection="row" columnGap={1}>
@@ -107,7 +110,7 @@ const Branch = (k: Kit, git: GitSnapshot, now: number, isPaused: boolean, nav: G
         <Text color={git.behind ? 'warning' : 'inactive'}>{'↓' + git.behind}</Text>
       </Box>
       <Box flexDirection="row" columnGap={1}>
-        <Text dimColor>{git.files.length ? git.files.length + ' changed' : 'clean'}</Text>
+        <Text dimColor>{(real.length ? real.length + ' changed' : 'clean') + (noise ? ` · ${noise} noise` : '')}</Text>
         {added > 0 && <Text color="diffAdded">{'+' + added}</Text>}
         {removed > 0 && <Text color="diffRemoved">{'−' + removed}</Text>}
         <Box flexGrow={1} />
@@ -278,12 +281,15 @@ const Check = (k: Kit, c: CiCheck, now: number): JSX.Element => {
 
 const CODE_COLORS: Record<string, Color> = { M: 'warning', A: 'success', '?': 'success', D: 'error', R: 'suggestion', U: 'error' }
 
-// Every change, grouped the way git does: conflicts, staged, unstaged, untracked. Compact unless `f` shows all;
-// pressing a file shows its diff under it.
+// Every change, grouped the way git does: conflicts, staged, unstaged, untracked. Compact unless `f` shows all, and
+// without the pack's noise unless `f` shows all; pressing a file shows its diff under it.
 const Changes = (k: Kit, files: FileChange[], nav: GitNav): JSX.Element => {
   const { Box, Button, Text } = k
   if (files.length === 0) return <Box />
-  const groups = groupChanges(files)
+  const real = files.filter(f => !f.noise)
+  const noise = nav.showAll ? 0 : files.length - real.length
+  const listed = nav.showAll ? files : real
+  const groups = groupChanges(listed)
   let room = nav.showAll ? Number.MAX_SAFE_INTEGER : FILES_SHOWN
   const take = (list: FileChange[]) => {
     const shown = list.slice(0, Math.max(0, room))
@@ -298,7 +304,8 @@ const Changes = (k: Kit, files: FileChange[], nav: GitNav): JSX.Element => {
   ]
     .filter(s => s.list.length)
     .map(s => ({ ...s, shown: take(s.list) }))
-  const hidden = files.length - sections.reduce((n, s) => n + s.shown.length, 0)
+  const hidden = listed.length - sections.reduce((n, s) => n + s.shown.length, 0)
+  const footer = [hidden > 0 ? `and ${hidden} more` : '', noise > 0 ? `${noise} noise` : ''].filter(Boolean)
   const note = (
     <Box flexDirection="row" columnGap={1}>
       <Button key="git-all" plain hotkey={ACTIONS.code.allFiles} onPress={nav.toggleAll}>
@@ -311,14 +318,14 @@ const Changes = (k: Kit, files: FileChange[], nav: GitNav): JSX.Element => {
   )
   return (
     <Box flexDirection="column">
-      {Section(k, `Changes · ${files.length}`, note)}
+      {Section(k, `Changes · ${real.length}`, note)}
       {sections.map(s => (
         <Box flexDirection="column">
           {s.shown.length > 0 && <Text color={s.color} dimColor>{`  ${s.title} · ${s.list.length}`}</Text>}
           {s.shown.map(f => FileRow(k, f, s.title, nav))}
         </Box>
       ))}
-      {hidden > 0 && Empty(k, `and ${hidden} more · f shows all`)}
+      {footer.length > 0 && Empty(k, `${footer.join(' · ')} · f shows all`)}
     </Box>
   )
 }
@@ -333,11 +340,12 @@ const FileRow = (k: Kit, f: FileChange, group: string, nav: GitNav): JSX.Element
         <Box flexGrow={1} flexShrink={1} minWidth={0}>
           <Button key={`file-${group}-${f.path}`} plain onPress={() => nav.openDiff(f)}>
             <Text color={CODE_COLORS[code[0] ?? ''] ?? 'text'}>{(isOpen ? '▾' : '▸') + ' ' + code.padEnd(2) + ' '}</Text>
-            <Text color={isOpen ? ACCENT : 'text'} wrap="truncate-start">
+            <Text color={isOpen ? ACCENT : f.noise ? 'inactive' : 'text'} dimColor={!!f.noise && !isOpen} wrap="truncate-start">
               {f.path}
             </Text>
           </Button>
         </Box>
+        {f.noise && <Text dimColor>{f.noise === 'generated' ? 'generated' : 'editor rewrite'}</Text>}
         {f.added > 0 && <Text color="diffAdded">{'+' + f.added}</Text>}
         {f.removed > 0 && <Text color="diffRemoved">{'−' + f.removed}</Text>}
       </Box>

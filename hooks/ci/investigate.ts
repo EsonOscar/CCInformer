@@ -1,4 +1,6 @@
 import type { CiActiveState, CiCheck, CiSnapshot } from '../../types'
+import { diffSections, generatedRule, isRewriteOnly, rewriteRule } from '../git/noise'
+import type { NoiseRule } from '../packs/types'
 
 // Before anything happened: passive, no investigation, no read-only turn.
 export const CI_IDLE: CiActiveState = { mode: 'passive', guardedTurn: '', run: null }
@@ -80,12 +82,32 @@ export const tailOf = (text: string, lines: number, chars: number): { tail: stri
   return { tail, isCut: all.length > lines || last.length > chars }
 }
 
+// The diff the turn gets, without the pack's noise: generated sections (by path, a partial last one too when its header
+// arrived whole) and whole sections that are only an editor's rewrite, then cut at `max`. `left` names what went.
+export const handoffDiff = (diff: string, rules: NoiseRule[], isTruncated: boolean, max: number): { text: string; isCut: boolean; left: string[] } => {
+  const left: string[] = []
+  const kept: string[] = []
+  const firstSection = diff.indexOf('diff --git ')
+  if (firstSection > 0) kept.push(diff.slice(0, firstSection).replace(/\n$/, ''))
+  for (const s of diffSections(diff, isTruncated)) {
+    const rewrite = s.path ? rewriteRule(rules, s.path) : undefined
+    const isNoise = !!s.path && (!!generatedRule(rules, s.path) || (!!rewrite && s.isComplete && isRewriteOnly(s.hunks, rewrite.normalize ?? [])))
+    if (isNoise) left.push(s.path)
+    else kept.push(s.text)
+  }
+  const text = firstSection < 0 ? diff : kept.join('\n')
+  return { text: text.slice(0, max), isCut: text.length > max || isTruncated, left }
+}
+
+// The most file names the hand-off lists as left out; the rest are counted.
+const LEFT_LISTED = 10
+
 // The turn the main session is handed: the marker on its first line (so the mod knows the turn), the failed checks,
 // each job's log tail and the commit's changes, fenced as CI output, and what to do with them.
 export const handoffPrompt = (
   ci: CiSnapshot,
   logs: { check: string; tail: string; isCut: boolean }[],
-  diff: { text: string; isCut: boolean },
+  diff: { text: string; isCut: boolean; left?: string[] },
   n: number,
 ): { text: string; marker: string } => {
   const marker = `ccinformer-ci:${short(ci.head)}-${n}`
@@ -109,6 +131,11 @@ export const handoffPrompt = (
     `----- changes${diff.isCut ? ' (cut; read the files for the rest)' : ''} -----`,
     diff.text || '(no diff could be read)',
     '----- end of changes -----',
+    ...(diff.left?.length
+      ? [
+          `Left out as noise (generated or editor rewrites only): ${diff.left.slice(0, LEFT_LISTED).join(', ')}${diff.left.length > LEFT_LISTED ? ` and ${diff.left.length - LEFT_LISTED} more` : ''}; read them if they matter.`,
+        ]
+      : []),
     '',
     'Read the code the logs and the changes point at until you understand the failure. Stay inside the repository, and never read or quote secrets, credentials, keys or .env files.',
     'Then present, briefly: Cause (what failed and why), Evidence (the log lines and file:line places that show it), Fix idea (what to change, and where), Confidence (how sure you are, and what you could not check) and Size (small, or large: several parts or a design question). If the fix is big, say so and recommend making a proper plan first.',

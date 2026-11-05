@@ -22,8 +22,13 @@ const PR = JSON.stringify({ number: 7, title: 'Cart', url: 'https://github.com/a
 // A repo on feat/cart (commit abc1234...) with PR #7, whose lint check is pending until `ci.bucket` says it failed. gh
 // answers the failed job's log and the PR's diff. Submits, toasts and every command are recorded; a submit is refused
 // when `submitDrop` is set. `mode` seeds the repo's CI mode in the shared store, `permissions` the Settings choices;
-// with `slowLog`, the failed job's log takes 10 s of the mocked clock to read.
-const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop?: string; permissions?: object; slowLog?: boolean } = {}) => {
+// with `slowLog`, the failed job's log takes 10 s of the mocked clock to read. `pack` is a user pack's text for the repo,
+// and `diff` what gh answers for the PR's diff.
+const PACK_FILE = '/home/test/.claude/ccinformer/packs/shop.pack.jsonc'
+const engine = (
+  on: Parameters<TestBody>[1],
+  opts: { mode?: 'active'; submitDrop?: string; permissions?: object; slowLog?: boolean; pack?: string; diff?: string } = {},
+) => {
   const ci = { bucket: 'pending' as 'pending' | 'fail' }
   const submits: { text: string; origin: { kind: string } }[] = []
   const toasts: string[] = []
@@ -35,10 +40,13 @@ const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop
   on('session.cwd', () => ({ value: '/repo' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('agent.list', () => ({ value: [] }))
-  on('fs.exists', () => ({ value: false }))
-  on('fs.read', () => ({ value: null }) as never)
-  on('fs.stat', () => ({ value: null }) as never)
-  on('fs.list', () => ({ value: [] }) as never)
+  const isPack = (path: string) => !!opts.pack && path.replace(/\\/g, '/').replace(/^[a-z]:/i, '') === PACK_FILE
+  on('fs.exists', (_, e) => ({ value: isPack(e.path) }))
+  on('fs.read', (_, e) => ({ value: isPack(e.path) ? opts.pack : null }) as never)
+  on('fs.stat', (_, e) => ({ value: isPack(e.path) ? { kind: 'file', size: opts.pack!.length, mtimeMs: 1 } : null }) as never)
+  on('fs.list', (_, e) =>
+    ({ value: opts.pack && PACK_FILE.startsWith(e.path.replace(/\\/g, '/').replace(/^[a-z]:/i, '') + '/') ? [{ name: 'shop.pack.jsonc', kind: 'file', mtimeMs: 1 }] : [] }) as never,
+  )
   on('process.run', async (_, e) => {
     const line = (e as { argv: string[] }).argv.join(' ')
     commands.push(line)
@@ -52,7 +60,7 @@ const engine = (on: Parameters<TestBody>[1], opts: { mode?: 'active'; submitDrop
     if (line.startsWith('gh pr checks')) return out(prChecks(ci.bucket), ci.bucket === 'fail' ? 1 : 8)
     if (line.startsWith('gh run list')) return out('[]')
     if (line === 'gh run view --job 11 --log-failed') return out('lint\tRun eslint\terror  no-unused-vars: x is unused\n')
-    if (line === 'gh pr diff 7') return out('+const x = 1\n')
+    if (line === 'gh pr diff 7') return out(opts.diff ?? '+const x = 1\n')
     return out('', line.startsWith('git ') ? 0 : 1)
   })
   on('prompt.submit', (_, e) => {
@@ -115,6 +123,19 @@ test('active: the failed job is read, one turn brings its log and the diff to th
   await env.clock.advance(1000)
   await env.clock.settle()
   expect(handoffs(env).length).toBe(1)
+})
+
+test("the hand-off leaves the pack's generated output out of the diff, and names it", CLOCK_HEAVY, async ($, on) => {
+  const pack = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { "remote": ["github.com/acme/*"] },
+    "noise": [{ "id": "dist", "glob": "dist/**", "kind": "generated" }] }`
+  const section = (path: string, line: string) => [`diff --git a/${path} b/${path}`, `--- a/${path}`, `+++ b/${path}`, '@@ -1 +1 @@', '-x', '+' + line].join('\n')
+  const diff = [section('src/cart.ts', 'const x = 1'), section('dist/app.js', 'bundled()'), ''].join('\n')
+  const env = engine(on, { mode: 'active', pack, diff })
+  await failCi($, env)
+  const text = handoffs(env)[0]!.text
+  expect(text).toContain('+const x = 1')
+  expect(text).not.toContain('bundled()')
+  expect(text).toContain('Left out as noise (generated or editor rewrites only): dist/app.js; read them if they matter.')
 })
 
 test('a headless session never hands a failure over', CLOCK_HEAVY, async ($, on) => {

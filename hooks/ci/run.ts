@@ -3,6 +3,7 @@ import type { EngineInterface } from 'claude-code'
 import type { CiActiveState, CiSnapshot, PackReport } from '../../types'
 import type { Lane } from '../core/lanes'
 import type { May } from '../core/permissions'
+import type { NoiseRule } from '../packs/types'
 import {
   CI_TEXTS,
   DIFF_CHARS,
@@ -11,6 +12,7 @@ import {
   LOG_LINES,
   LOGS_CHARS,
   failedChecks,
+  handoffDiff,
   handoffPrompt,
   logCommands,
   tailOf,
@@ -30,6 +32,8 @@ const RUN_HUNG_MS = 5 * 60_000
 // once, written by a change), and how to tell the person something.
 export type CiActiveDeps = {
   light: Lane
+  // The resolved pack's noise rules ([] with none): the hand-off's diff leaves that noise out.
+  noise: () => Promise<NoiseRule[]>
   report: () => Promise<PackReport | null>
   isInteractive: boolean
   selfId: string
@@ -106,10 +110,11 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
       budget -= tail.length
       logs.push({ check, tail, isCut: isCut || ran.stdout.length >= LOG_CAP_CHARS })
     }
-    const diffArgv = ci.pr ? ['gh', 'pr', 'diff', String(ci.pr.number)] : ['git', 'show', '--format=', '--patch', ci.head]
+    const diffArgv = ci.pr ? ['gh', 'pr', 'diff', String(ci.pr.number)] : ['git', 'show', '--format=', '--patch', '--src-prefix=a/', '--dst-prefix=b/', ci.head]
     const diffRan = await run(diffArgv, report.root)
     const diffText = diffRan.exitCode === 0 ? diffRan.stdout : ''
-    const diff = { text: diffText.slice(0, DIFF_CHARS), isCut: diffText.length > DIFF_CHARS }
+    // The pack's noise (generated output, editor rewrites) is left out and named, before the cut.
+    const diff = handoffDiff(diffText, await deps.noise(), 'isStdoutTruncated' in diffRan && !!diffRan.isStdoutTruncated, DIFF_CHARS)
 
     handoffs += 1
     const { text, marker } = handoffPrompt(ci, logs, diff, handoffs)
