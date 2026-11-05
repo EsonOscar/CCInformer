@@ -50,7 +50,7 @@ export const PERMISSIONS = [
     description: "Asks once per repo, the first time a check needs the repo's own tools. Off: those checks wait until you allow them in Debug › Pack.",
     isOnByDefault: true,
   },
-  { id: 'notify.ciToast', group: 'notify', label: 'CI finished toast', description: "A toast when a commit's checks finish.", isOnByDefault: true },
+  { id: 'notify.ciToast', group: 'notify', label: 'CI finished toast', description: "A toast when a commit's checks finish, and in passive CI mode one as each check fails while others still run.", isOnByDefault: true },
   {
     id: 'notify.ciOs',
     group: 'notify',

@@ -18,23 +18,48 @@ const prChecks = (bucket: 'pending' | 'fail') =>
     { name: 'build', workflow: 'CI', bucket: bucket === 'fail' ? 'pass' : 'pending', startedAt: '', completedAt: '', link: 'https://github.com/acme/shop/actions/runs/100/job/12' },
   ])
 const PR = JSON.stringify({ number: 7, title: 'Cart', url: 'https://github.com/acme/shop/pull/7', baseRefName: 'main', isDraft: false, state: 'OPEN' })
+// Per-check CI, for the tests where checks fail one by one while others still run: each check is one job of run 100.
+type Bucket = 'pending' | 'fail' | 'pass'
+const JOBS: Record<string, number> = { lint: 11, build: 12, e2e: 13 }
+const checksOf = (state: Record<string, Bucket>) =>
+  JSON.stringify(
+    Object.entries(state).map(([name, bucket]) => ({ name, workflow: 'CI', bucket, startedAt: '', completedAt: '', link: `https://github.com/acme/shop/actions/runs/100/job/${JOBS[name]}` })),
+  )
+// A finished job's whole log as the API gives it: a byte-order mark, a timestamp on each line, the clean-up after.
+const rawLog = (job: string) =>
+  [
+    '﻿2026-01-02T03:04:05.1234567Z ##[group]Run npm test',
+    `2026-01-02T03:04:06.0000000Z job ${job}: x is unused`,
+    '2026-01-02T03:04:06.5000000Z ##[error]Process completed with exit code 1.',
+    '2026-01-02T03:04:07.0000000Z Post job cleanup.',
+    '',
+  ].join('\n')
 
 // A repo on feat/cart (commit abc1234...) with PR #7, whose lint check is pending until `ci.bucket` says it failed. gh
 // answers the failed job's log and the PR's diff. Submits, toasts and every command are recorded; a submit is refused
 // when `submitDrop` is set. `mode` seeds the repo's CI mode in the shared store, `permissions` the Settings choices;
 // with `slowLog`, the failed job's log takes 10 s of the mocked clock to read. `pack` is a user pack's text for the repo,
-// and `diff` what gh answers for the PR's diff.
+// and `diff` what gh answers for the PR's diff. `ci.state`, once set, gives each check's bucket instead of `ci.bucket`;
+// while a check is pending, gh refuses a job's failed steps (as it does until the whole run ends) and the API gives the
+// job's raw log. `claims` seeds the claims other sessions made; with `gate`, a hand-off's submit resolves only once
+// `release()` is called (its turn has started).
 const PACK_FILE = '/home/test/.claude/ccinformer/packs/shop.pack.jsonc'
 const engine = (
   on: Parameters<TestBody>[1],
-  opts: { mode?: 'active'; submitDrop?: string; permissions?: object; slowLog?: boolean; pack?: string; diff?: string } = {},
+  opts: { mode?: 'active'; submitDrop?: string; permissions?: object; slowLog?: boolean; pack?: string; diff?: string; claims?: object[]; gate?: boolean } = {},
 ) => {
-  const ci = { bucket: 'pending' as 'pending' | 'fail' }
+  const ci = { bucket: 'pending' as 'pending' | 'fail', state: null as Record<string, Bucket> | null }
   const submits: { text: string; origin: { kind: string } }[] = []
   const toasts: string[] = []
   const commands: string[] = []
+  let opened = () => {}
+  const gate = { held: opts.gate ? new Promise<void>(resolve => (opened = resolve)) : Promise.resolve(), release: () => opened() }
   const clock = mock.clock(on, { now: 1_000_000 })
-  mock.store(on, { ...(opts.mode ? { ['ciMode:' + REPO_KEY]: opts.mode } : {}), permissions: opts.permissions ?? { base: 'defaults', set: {} } })
+  mock.store(on, {
+    ...(opts.mode ? { ['ciMode:' + REPO_KEY]: opts.mode } : {}),
+    ...(opts.claims ? { ['ciInvestigated:' + REPO_KEY]: opts.claims } : {}),
+    permissions: opts.permissions ?? { base: 'defaults', set: {} },
+  })
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -57,14 +82,21 @@ const engine = (
     if (line.startsWith('git status')) return out('# branch.oid abc1234def5678\n# branch.head feat/cart\n')
     if (line.startsWith('git rev-parse')) return out('/repo/.git\n/repo\n')
     if (line.startsWith('gh pr view')) return out(PR)
+    const buckets = ci.state ? Object.values(ci.state) : []
+    if (line.startsWith('gh pr checks') && ci.state) return out(checksOf(ci.state), buckets.includes('pending') ? 8 : buckets.includes('fail') ? 1 : 0)
     if (line.startsWith('gh pr checks')) return out(prChecks(ci.bucket), ci.bucket === 'fail' ? 1 : 8)
     if (line.startsWith('gh run list')) return out('[]')
+    if (/^gh run view --job \d+ --log-failed$/.test(line) && buckets.includes('pending'))
+      return { value: { exitCode: 1, stdout: '', stderr: 'run 100 is still in progress; logs will be available when it is complete', isStdoutTruncated: false, isStderrTruncated: false } }
+    const api = /^gh api repos\/acme\/shop\/actions\/jobs\/(\d+)\/logs$/.exec(line)
+    if (api) return out(rawLog(api[1]!))
     if (line === 'gh run view --job 11 --log-failed') return out('lint\tRun eslint\terror  no-unused-vars: x is unused\n')
     if (line === 'gh pr diff 7') return out(opts.diff ?? '+const x = 1\n')
     return out('', line.startsWith('git ') ? 0 : 1)
   })
-  on('prompt.submit', (_, e) => {
+  on('prompt.submit', async (_, e) => {
     submits.push(e as never)
+    if (e.text.startsWith('ccinformer-ci:')) await gate.held
     return (opts.submitDrop ? { drop: opts.submitDrop } : { text: e.text }) as never
   })
   on('ui.toast', (_, e) => {
@@ -78,7 +110,7 @@ const engine = (
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('ui.open', () => ({ value: { isPlaced: true } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  return { clock, ci, submits, toasts, commands }
+  return { clock, ci, submits, toasts, commands, gate }
 }
 
 type Env = ReturnType<typeof engine>
@@ -279,4 +311,143 @@ test('Code > Git says when a Settings switch holds the mode off', CLOCK_HEAVY, a
   expect(env.toasts).toContain('CI passive here: a failed check gives a toast Nothing shows while CI finished toast is off in Debug › Settings.')
   expect(await ui.find({ type: 'Text', text: /on a failed check: nothing \(CI finished toast is off in Debug › Settings\)/ })).toBeDefined()
   await ui.unmount()
+})
+
+// Early hand-offs: checks fail one by one while others still run. `startOn` reads CI once with every check as given,
+// `poll` sets the checks and reads CI again (the claim reads itself back after a second).
+const startOn = async ($: Dollar, env: Env, state: Record<string, Bucket>) => {
+  env.ci.state = state
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await env.clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  await env.clock.settle()
+}
+const poll = async ($: Dollar, env: Env, state: Record<string, Bucket>) => {
+  env.ci.state = state
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'code' })
+  await env.clock.settle()
+  await env.clock.advance(1000)
+  await env.clock.settle()
+}
+const EARLY_TOAST = 'A CI check failed while others still run: Claude looks into it in a turn of its own (read-only)'
+
+test('active: a check that fails while others run is handed over at once, its log read through the API; the end hands nothing more', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active' })
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending' })
+  expect(handoffs(env).length).toBe(1)
+  const text = handoffs(env)[0]!.text
+  expect(env.commands).toContain('gh run view --job 11 --log-failed')
+  expect(env.commands).toContain('gh api repos/acme/shop/actions/jobs/11/logs')
+  expect(text).toContain('##[group]Run npm test\njob 11: x is unused\n##[error]Process completed with exit code 1.')
+  expect(text).not.toContain('2026-01-02T')
+  expect(text).not.toContain('Post job cleanup')
+  expect(text).toContain("Still running: build (not part of this hand-off; CI hasn't finished).")
+  expect(env.toasts).toContain(EARLY_TOAST)
+
+  await poll($, env, { lint: 'fail', build: 'pass' })
+  expect(env.toasts).toContain('✗ CI failed on PR #7: lint')
+  expect(handoffs(env).length).toBe(1)
+})
+
+test('active: a check that fails on a later poll gets a hand-off of its own, naming the one before', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active' })
+  await startOn($, env, { lint: 'pending', build: 'pending', e2e: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending', e2e: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending', e2e: 'fail' })
+  expect(handoffs(env).length).toBe(2)
+  const second = handoffs(env)[1]!.text
+  expect(second).toContain('- e2e (CI):')
+  expect(second).not.toContain('- lint (CI):')
+  expect(second).toContain('job 13: x is unused')
+  expect(second).toContain('Handed over earlier for this commit: lint.')
+
+  await poll($, env, { lint: 'fail', build: 'pass', e2e: 'fail' })
+  expect(handoffs(env).length).toBe(2)
+})
+
+test("one hand-off at a time: the next waits until the turn before it has started, and that turn stays read-only", CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', gate: true })
+  const edit = () => $.tool.call({ tool: 'Edit', file_path: '/repo/src/a.ts', old_string: 'a', new_string: 'b' } as never)
+  await startOn($, env, { lint: 'pending', build: 'pending', e2e: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending', e2e: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending', e2e: 'fail' })
+  // The first hand-off still waits for its turn: the second isn't submitted.
+  expect(handoffs(env).length).toBe(1)
+
+  await $.turn.start({ text: `${MARKER}\nlogs`, turnId: 'first' })
+  env.gate.release()
+  await env.clock.settle()
+  await env.clock.advance(1000)
+  await env.clock.settle()
+  expect(handoffs(env).length).toBe(2)
+  expect(handoffs(env)[1]!.text.split('\n')[0]).toBe('ccinformer-ci:abc1234-2')
+  // The second hand-off's marker didn't take the first turn's guard away.
+  expect(isDenied(await edit())).toBe(true)
+  await $.turn.complete(mainEnd('first'))
+  await $.turn.start({ text: 'ccinformer-ci:abc1234-2\nlogs', turnId: 'second' })
+  expect(isDenied(await edit())).toBe(true)
+})
+
+test("a check another session claimed isn't handed over again, nor its log read", CLOCK_HEAVY, async ($, on) => {
+  const head = 'abc1234def5678'
+  const byCheck = engine(on, { mode: 'active', claims: [{ head, session: 'other-session', check: 'CI/lint' }] })
+  await startOn($, byCheck, { lint: 'pending', build: 'pending' })
+  await poll($, byCheck, { lint: 'fail', build: 'pending' })
+  expect(handoffs(byCheck)).toEqual([])
+  expect(byCheck.commands.some(c => c.startsWith('gh run view') || c.startsWith('gh api'))).toBe(false)
+})
+
+test('an older version claimed the whole commit: nothing is handed over', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', claims: [{ head: 'abc1234def5678', session: 'other-session' }] })
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending' })
+  expect(handoffs(env)).toEqual([])
+})
+
+test('passive: a check that fails while others run gives a toast at once, then the end toast; no hand-off', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on)
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending' })
+  expect(env.toasts).toContain('✗ CI check failed on PR #7: lint (1 still running)')
+  expect(env.toasts).not.toContain(EARLY_TOAST)
+  await poll($, env, { lint: 'fail', build: 'pass' })
+  expect(env.toasts).toContain('✗ CI failed on PR #7: lint')
+  expect(handoffs(env)).toEqual([])
+})
+
+test('passive with the CI finished toast off: no early toast either', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { permissions: { base: 'defaults', set: { 'notify.ciToast': false } } })
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending' })
+  expect(env.toasts.filter(t => t.startsWith('✗'))).toEqual([])
+})
+
+test('Look into failed CI off: an early failure in an active repo reads nothing and hands nothing over', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active', permissions: { base: 'defaults', set: { 'claude.ciHandoff': false } } })
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  await poll($, env, { lint: 'fail', build: 'pending' })
+  expect(handoffs(env)).toEqual([])
+  expect(env.commands.some(c => c.startsWith('gh api'))).toBe(false)
+})
+
+test('asked while CI still runs: the failed job is read through the API and handed over', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on)
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  env.ci.state = { lint: 'fail', build: 'pending' }
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'ci investigate' })
+  await env.clock.settle()
+  expect(handoffs(env).length).toBe(1)
+  expect(handoffs(env)[0]!.text).toContain('job 11: x is unused')
+})
+
+test("asked in an active repo when the ask's own refresh first sees the failure: one hand-off", CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, { mode: 'active' })
+  await startOn($, env, { lint: 'pending', build: 'pending' })
+  env.ci.state = { lint: 'fail', build: 'pending' }
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'ci investigate' })
+  await env.clock.settle()
+  await env.clock.advance(1000)
+  await env.clock.settle()
+  expect(handoffs(env).length).toBe(1)
 })

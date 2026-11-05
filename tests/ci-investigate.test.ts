@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { CI_TEXTS, failedChecks, handoffPrompt, isGuardedTurn, isReadOnlyTool, jobOf, logCommands, tailOf } from '../hooks/ci/investigate'
+import { CI_TEXTS, failedChecks, failedPart, handoffPrompt, isGuardedTurn, isReadOnlyTool, jobOf, logCommands, tailOf } from '../hooks/ci/investigate'
 import type { CiCheck, CiSnapshot } from '../types'
 
 const check = (name: string, bucket: CiCheck['bucket'], link: string): CiCheck => ({ name, workflow: 'CI', bucket, startedAt: '', completedAt: '', link })
@@ -25,16 +25,36 @@ const CI: CiSnapshot = {
 describe('what the session is handed', () => {
   test("only failed checks, and each Actions job's log once", async () => {
     expect(failedChecks(CI).map(c => c.name)).toEqual(['lint', 'test', 'external'])
-    expect(jobOf(`${RUNS}/100/job/11`)).toEqual({ run: '100', job: '11' })
-    expect(jobOf(`${RUNS}/100`)).toEqual({ run: '100', job: '' })
+    expect(jobOf(`${RUNS}/100/job/11`)).toEqual({ run: '100', job: '11', host: 'github.com', repo: 'acme/shop' })
+    expect(jobOf(`${RUNS}/100`)).toEqual({ run: '100', job: '', host: 'github.com', repo: 'acme/shop' })
     expect(jobOf('https://ci.example.com/build/9')).toBeNull()
     expect(logCommands(failedChecks(CI))).toEqual([
-      { check: 'lint', argv: ['gh', 'run', 'view', '--job', '11', '--log-failed'] },
-      { check: 'test', argv: ['gh', 'run', 'view', '--job', '12', '--log-failed'] },
+      { check: 'lint', argv: ['gh', 'run', 'view', '--job', '11', '--log-failed'], fallback: ['gh', 'api', 'repos/acme/shop/actions/jobs/11/logs'] },
+      { check: 'test', argv: ['gh', 'run', 'view', '--job', '12', '--log-failed'], fallback: ['gh', 'api', 'repos/acme/shop/actions/jobs/12/logs'] },
     ])
-    // A run's link (no job) fetches the run's failed log, once for every check it holds.
+    // A run's link (no job) fetches the run's failed log, once for every check it holds; such a check fails only once
+    // its run has finished, so it needs no fallback.
     const runs = [check('ci', 'fail', `${RUNS}/200`), check('ci again', 'fail', `${RUNS}/200`)]
-    expect(logCommands(runs)).toEqual([{ check: 'ci, ci again', argv: ['gh', 'run', 'view', '200', '--log-failed'] }])
+    expect(logCommands(runs)).toEqual([{ check: 'ci, ci again', argv: ['gh', 'run', 'view', '200', '--log-failed'], fallback: null }])
+  })
+
+  test("a job's fallback names the repo and host its link does", async () => {
+    const link = 'https://git.example.com/team/app/actions/runs/5/job/6'
+    expect(jobOf(link)).toEqual({ run: '5', job: '6', host: 'git.example.com', repo: 'team/app' })
+    expect(logCommands([check('lint', 'fail', link)])[0]!.fallback).toEqual(['gh', 'api', '--hostname', 'git.example.com', 'repos/team/app/actions/jobs/6/logs'])
+  })
+
+  test("a job's raw log is cut to what failed: no mark, no timestamps, nothing after the last error", async () => {
+    const raw = [
+      '﻿2026-01-02T03:04:05.1234567Z ##[group]Run npm run lint',
+      '2026-01-02T03:04:06.0000000Z src/cart.ts:3 x is unused',
+      '2026-01-02T03:04:06.5000000Z ##[error]Process completed with exit code 1.',
+      '2026-01-02T03:04:07.0000000Z Post job cleanup.',
+      '',
+    ].join('\r\n')
+    expect(failedPart(raw)).toBe('##[group]Run npm run lint\nsrc/cart.ts:3 x is unused\n##[error]Process completed with exit code 1.')
+    // With no error line, the whole log is kept.
+    expect(failedPart('2026-01-02T03:04:05Z one\n2026-01-02T03:04:06Z two')).toBe('one\ntwo')
   })
 
   test('a log is cut to its last lines, then its last characters, and says so', async () => {
@@ -45,7 +65,7 @@ describe('what the session is handed', () => {
   })
 
   test('the marker leads the turn, which names the failure, fences each log and the diff as CI output, and asks for a fix idea, not a fix', async () => {
-    const { text, marker } = handoffPrompt(CI, [{ check: 'lint', tail: 'error: unused import', isCut: true }], { text: '+import x', isCut: false }, 2)
+    const { text, marker } = handoffPrompt(CI, failedChecks(CI), [{ check: 'lint', tail: 'error: unused import', isCut: true }], { text: '+import x', isCut: false }, 2)
     expect(marker).toBe('ccinformer-ci:abc1234-2')
     expect(text.split('\n')[0]).toBe(marker)
     expect(text).toContain('CI failed on PR #7 (branch feat/cart, commit abc1234).')
@@ -57,9 +77,21 @@ describe('what the session is handed', () => {
     expect(text).toContain('Cause (what failed and why)')
     expect(text).toContain('recommend making a proper plan first')
     expect(text).toContain("don't make the change")
-    const bare = handoffPrompt(CI, [], { text: '', isCut: true }, 1).text
+    const bare = handoffPrompt(CI, failedChecks(CI), [], { text: '', isCut: true }, 1).text
     expect(bare).toContain('No log could be fetched')
     expect(bare).toContain('----- changes (cut; read the files for the rest) -----\n(no diff could be read)')
+    // CI has finished and nothing was handed over before: neither line.
+    expect(text).not.toContain('Still running')
+    expect(text).not.toContain('Handed over earlier')
+  })
+
+  test('a hand-off made while CI runs names what still runs, and what an earlier hand-off of the commit covered', async () => {
+    const running = Array.from({ length: 12 }, (_, i) => check(`job${i + 1}`, 'pending', `${RUNS}/100/job/${20 + i}`))
+    const ci = { ...CI, checks: [check('e2e', 'fail', `${RUNS}/100/job/15`), ...running] }
+    const { text } = handoffPrompt(ci, [ci.checks[0]!], [], { text: '', isCut: false }, 3, ['lint'])
+    expect(text).toContain('- e2e (CI):')
+    expect(text).toContain("Still running: job1, job2, job3, job4, job5, job6, job7, job8, job9, job10 and 2 more (not part of this hand-off; CI hasn't finished).")
+    expect(text).toContain('Handed over earlier for this commit: lint.')
   })
 })
 
@@ -77,7 +109,7 @@ describe('the read-only turn', () => {
   })
 
   test('no text has an em dash', async () => {
-    const texts = [...Object.values(CI_TEXTS).map(t => (typeof t === 'function' ? t('x') : t)), handoffPrompt(CI, [], { text: '', isCut: false }, 1).text]
+    const texts = [...Object.values(CI_TEXTS).map(t => (typeof t === 'function' ? t('x') : t)), handoffPrompt(CI, failedChecks(CI), [], { text: '', isCut: false }, 1).text]
     expect(texts.filter(t => t.includes(String.fromCharCode(0x2014)))).toEqual([])
   })
 })

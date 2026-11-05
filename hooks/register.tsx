@@ -540,6 +540,7 @@ export const register: Register = on => {
       saveDiff: diff => update($, diffAtom, () => diff),
       clearSelection: () => update($, selectedAtom, s => ({ ...s, code: '' })),
       onCiFailed: ci => ciActive.onFailed(ci),
+      mode: () => ciState.mode,
       may,
     })
     // Active CI mode (ci/run.ts): a failed check looked into read-only, its report handed to this session as a turn.

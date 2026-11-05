@@ -11,17 +11,21 @@ import {
   LOG_CHARS,
   LOG_LINES,
   LOGS_CHARS,
+  checkKey,
   failedChecks,
+  failedPart,
   handoffDiff,
   handoffPrompt,
   logCommands,
+  stillRunning,
   tailOf,
 } from './investigate'
 
 // The mode and the claims, per repo, in the store every session shares.
 const STORE_MODE = 'ciMode:'
 const STORE_CLAIMS = 'ciInvestigated:'
-const CLAIMS_KEPT = 20
+// One per check handed over (a commit can hand several over).
+const CLAIMS_KEPT = 60
 // How long a claim waits before reading the claims back: another session's claim on the same commit lands by then.
 const CLAIM_SETTLE_MS = 1000
 // Logs still being read after this have hung (the session reloaded mid-read, say); a new look may start.
@@ -50,7 +54,8 @@ export type CiActive = {
   readMode: () => Promise<void>
   // Switches the repo's mode; says how it went.
   setMode: (mode: CiActiveState['mode']) => Promise<string>
-  // A commit's checks failed in the session that pinged: looks into it when the repo is active.
+  // A check failed (early, while others still run, or when the commit's checks finished): its new failures are looked
+  // into when the repo is active, one look at a time.
   onFailed: (ci: CiSnapshot) => Promise<void>
   // The person asked: the branch's failing checks, looked into in either mode.
   investigateNow: () => Promise<void>
@@ -60,6 +65,22 @@ export type CiActive = {
 // (which register.tsx keeps read-only).
 export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive {
   let handoffs = 0
+  // Looks run one at a time, each holding the queue until its turn has started (or was refused): the read-only guard
+  // knows one waiting turn's marker, so a second hand-off must not replace it. `queued` counts the looks waiting or
+  // running.
+  let queue: Promise<void> = Promise.resolve()
+  let queued = 0
+  // While a person's look refreshes CI, the automatic looks that refresh would start are left out: the asked look that
+  // follows covers the same failures.
+  let isAsking = false
+  const enqueue = (fn: () => Promise<void>) => {
+    queued += 1
+    queue = queue
+      .then(fn)
+      .catch(() => undefined)
+      .then(() => void (queued -= 1))
+    return queue
+  }
 
   const run = (argv: string[], root: string) =>
     deps.light(argv, undefined, root).catch((err: unknown) => ({ exitCode: -1, stdout: '', stderr: String(err) }))
@@ -72,20 +93,33 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
     deps.notify(text) // relay
   }
 
-  // This session takes the commit unless another already has; two that claim at once both write, and the first
-  // claim read back wins.
-  const claim = async (repoKey: string, head: string) => {
-    const read = async () => {
-      const stored = await $.store.get(STORE_CLAIMS + repoKey)
-      return Array.isArray(stored) ? (stored as { head: string; session: string }[]) : []
-    }
-    const before = await read()
-    if (before.some(c => c.head === head)) return false
-    await $.store.set(STORE_CLAIMS + repoKey, [...before, { head, session: deps.selfId }].slice(-CLAIMS_KEPT))
+  type Claim = { head: string; session: string; check?: string }
+  const readClaims = async (repoKey: string) => {
+    const stored = await $.store.get(STORE_CLAIMS + repoKey)
+    return Array.isArray(stored) ? (stored as Claim[]) : []
+  }
+  // Claims these checks of the commit for this session and returns the ones it holds: with `elect`, those whose first
+  // claim, read back once another session's claim on them would have landed, is this session's; without, the ones it
+  // wrote. Two sessions that claim at once both write, and the first claim read back wins. The claims are written before
+  // the settle: that is what keeps an early look, an end-of-run look and an older version's look (which takes any claim
+  // on the commit as its own) from handing a check over twice. A claim with no check, an older version's, covers the
+  // whole commit.
+  const claimChecks = async (repoKey: string, head: string, keys: string[], elect: boolean) => {
+    const before = await readClaims(repoKey)
+    const onHead = before.filter(c => c.head === head)
+    if (onHead.some(c => !c.check)) return []
+    const taken = new Set(onHead.map(c => c.check))
+    const fresh = keys.filter(k => !taken.has(k))
+    if (!fresh.length) return []
+    await $.store.set(STORE_CLAIMS + repoKey, [...before, ...fresh.map(check => ({ head, session: deps.selfId, check }))].slice(-CLAIMS_KEPT))
+    if (!elect) return fresh
     await $.clock.sleep(CLAIM_SETTLE_MS)
-    return (await read()).find(c => c.head === head)?.session === deps.selfId
+    const after = await readClaims(repoKey)
+    return fresh.filter(k => after.find(c => c.head === head && (!c.check || c.check === k))?.session === deps.selfId)
   }
 
+  // An automatic look hands over the failed checks no session has yet; an asked one hands over every failed check
+  // and claims them, so no automatic look repeats them.
   const look = async (ci: CiSnapshot, asked: boolean) => {
     if (!deps.isInteractive || (!asked && !deps.may('claude.ciHandoff'))) return
     if (isRunning(await $.clock.now())) return void (asked && deps.notify(CI_TEXTS.replyBusy))
@@ -94,19 +128,30 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
     if (!asked && (await $.store.get(STORE_MODE + report.repoKey)) !== 'active') return
     const failed = failedChecks(ci)
     if (!failed.length) return void (asked && deps.notify(CI_TEXTS.replyNoFailure)) // asked
-    if (!asked && !(await claim(report.repoKey, ci.head))) return
+    const won = await claimChecks(report.repoKey, ci.head, failed.map(checkKey), !asked)
+    const checks = asked ? failed : failed.filter(c => won.includes(checkKey(c)))
+    if (!checks.length) return
+    const keys = new Set(checks.map(checkKey))
+    const before = new Set((await readClaims(report.repoKey)).filter(c => c.head === ci.head && c.check && !keys.has(c.check)).map(c => c.check))
+    const earlier = ci.checks.filter(c => before.has(checkKey(c))).map(c => c.name)
 
     const at = await $.clock.now()
     await deps.save(s => ({ ...s, run: { head: ci.head, state: 'investigating', why: '', marker: '', at } }))
-    deps.notify(CI_TEXTS.started) // may: claude.ciHandoff
-    // One at a time, so the reads never crowd the light lane.
+    deps.notify(stillRunning(ci).length ? CI_TEXTS.startedEarly : CI_TEXTS.started) // may: claude.ciHandoff
+    // One at a time, so the reads never crowd the light lane. A job whose run still goes on has no failed-steps log in
+    // gh yet; its own log is read through the API instead, and cut to what failed.
     const logs: { check: string; tail: string; isCut: boolean }[] = []
     let budget = LOGS_CHARS
-    for (const { check, argv } of logCommands(failed)) {
+    for (const { check, argv, fallback } of logCommands(checks)) {
       if (budget <= 0) break
-      const ran = await run(argv, report.root)
-      if (ran.exitCode !== 0 || !ran.stdout.trim()) continue
-      const { tail, isCut } = tailOf(ran.stdout, LOG_LINES, Math.min(LOG_CHARS, budget))
+      let ran = await run(argv, report.root)
+      let text = ran.exitCode === 0 ? ran.stdout : ''
+      if (!text.trim() && fallback) {
+        ran = await run(fallback, report.root)
+        text = ran.exitCode === 0 ? failedPart(ran.stdout) : ''
+      }
+      if (!text.trim()) continue
+      const { tail, isCut } = tailOf(text, LOG_LINES, Math.min(LOG_CHARS, budget))
       budget -= tail.length
       logs.push({ check, tail, isCut: isCut || ran.stdout.length >= LOG_CAP_CHARS })
     }
@@ -117,17 +162,15 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
     const diff = handoffDiff(diffText, await deps.noise(), 'isStdoutTruncated' in diffRan && !!diffRan.isStdoutTruncated, DIFF_CHARS)
 
     handoffs += 1
-    const { text, marker } = handoffPrompt(ci, logs, diff, handoffs)
-    // The marker first, so the turn that brings it is known as soon as it starts; the submit isn't awaited, as it
-    // resolves only once that turn has started.
+    const { text, marker } = handoffPrompt(ci, checks, logs, diff, handoffs, earlier)
     // Switched off while the logs were read: nothing is handed over.
     if (!asked && !deps.may('claude.ciHandoff'))
       return void (await deps.save(s => ({ ...s, run: s.run && { ...s.run, state: 'failed', why: CI_TEXTS.switchedOff, marker: '' } })))
+    // The marker first, so the turn that brings it is known as soon as it starts. The submit resolves only once that
+    // turn has started, and is awaited so the queue's next look waits for it.
     await deps.save(s => ({ ...s, run: s.run && { ...s.run, state: 'waiting', marker } }))
-    void $.prompt
-      .submit({ text })
-      .then(result => (result.drop !== undefined ? fail(result.drop, CI_TEXTS.refused(result.drop)) : undefined))
-      .catch((err: unknown) => fail(String(err), CI_TEXTS.refused(String(err))))
+    const result = await $.prompt.submit({ text }).catch((err: unknown) => ({ drop: String(err) })) // may: claude.ciHandoff (or asked)
+    if (result.drop !== undefined) await fail(result.drop, CI_TEXTS.refused(result.drop))
   }
 
   return {
@@ -146,12 +189,18 @@ export function createCiActive($: EngineInterface, deps: CiActiveDeps): CiActive
       if (mode === 'active') return CI_TEXTS.modeOn + (deps.may('claude.ciHandoff') ? '' : CI_TEXTS.heldOff)
       return CI_TEXTS.modeOff + (deps.may('notify.ciToast') ? '' : CI_TEXTS.quietOff)
     },
-    onFailed: ci => look(ci, false),
+    onFailed: ci => (isAsking ? Promise.resolve() : enqueue(() => look(ci, false))),
     investigateNow: async () => {
-      await deps.refresh()
+      if (queued) return void deps.notify(CI_TEXTS.replyBusy) // asked
+      isAsking = true
+      try {
+        await deps.refresh()
+      } finally {
+        isAsking = false
+      }
       const ci = await deps.ci()
       if (!ci) return void deps.notify(CI_TEXTS.replyNoFailure) // asked
-      await look(ci, true)
+      void enqueue(() => look(ci, true))
     },
   }
 }
