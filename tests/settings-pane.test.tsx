@@ -376,7 +376,7 @@ test('deny all leaves only the Safety switches on; approve all turns the rest ba
   await ui.press({ key: 'settings-deny' })
   await clock.settle()
   expect(await ui.find({ type: 'Text', text: 'passive' })).toBeDefined()
-  for (const d of PERMISSIONS) expect(await rowState(ui, d.id)).toBe(d.id === 'safety.prodStatus' ? 'on' : 'off')
+  for (const d of PERMISSIONS) expect(await rowState(ui, d.id)).toBe(d.group === 'safety' && d.id !== 'safety.envBand' ? 'on' : 'off')
 
   await ui.press({ key: 'settings-approve' })
   await clock.settle()
