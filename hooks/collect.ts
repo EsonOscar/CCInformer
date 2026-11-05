@@ -1,5 +1,7 @@
-import type { BaseCi, CiSnapshot, GitSnapshot } from '../types'
+import type { BaseCi, CiSnapshot, FileChange, GitSnapshot } from '../types'
 import { firstLine } from './format'
+import { markNoise, rewriteCandidates, rewriteVerdicts } from './git/noise'
+import type { NoiseRule } from './packs/types'
 import {
   parseBranches, parseChecks, parseLog, parseNumstat, parsePr, parseRuns, parseStashes, parseStatus, parseWorktrees, withNumstat,
 } from './parse'
@@ -72,6 +74,43 @@ export const collectGit = async (exec: Exec, now: number): Promise<GitSnapshot> 
 export const collectDiff = async (exec: Exec, path: string): Promise<string> => {
   const diff = await run(exec, ['git', 'diff', '--no-color', '--no-ext-diff', 'HEAD', '--', ':/' + path])
   return diff.exitCode === 0 ? diff.stdout : reason(diff, 'git could not diff the file')
+}
+
+// The verdicts on whether a file is only an editor's rewrite, by the commit and the file's stamp they were read at,
+// and the rules they were read under: a file is diffed again only when one of those changed.
+export type NoiseCache = { rules: string; verdicts: Map<string, { key: string; isNoise: boolean }> }
+export const newNoiseCache = (): NoiseCache => ({ rules: '', verdicts: new Map() })
+
+// The changed files with the pack's noise marked: generated ones by path, editor rewrites by one -U0 diff of the
+// candidates whose stamp changed since their last verdict (a candidate the diff gives no whole section for isn't one).
+// `stamps` are the candidates' modified times and sizes, which the caller reads.
+export const collectNoise = async (
+  exec: Exec,
+  files: FileChange[],
+  rules: NoiseRule[],
+  head: string,
+  stamps: Record<string, string>,
+  cache: NoiseCache,
+): Promise<FileChange[]> => {
+  if (!rules.length) return files
+  const ruleKey = JSON.stringify(rules)
+  if (cache.rules !== ruleKey) {
+    cache.rules = ruleKey
+    cache.verdicts.clear()
+  }
+  const candidates = rewriteCandidates(files, rules)
+  for (const path of [...cache.verdicts.keys()]) if (!candidates.includes(path)) cache.verdicts.delete(path)
+  const keyOf = (path: string) => `${head}:${path}:${stamps[path] ?? ''}`
+  const stale = candidates.filter(p => cache.verdicts.get(p)?.key !== keyOf(p))
+  if (stale.length) {
+    const diff = await run(exec, [
+      'git', 'diff', '--no-color', '--no-ext-diff', '--no-textconv', '--src-prefix=a/', '--dst-prefix=b/', '-U0', 'HEAD', '--',
+      ...stale.map(p => ':(top,literal)' + p),
+    ])
+    const verdicts = diff.exitCode === 0 ? rewriteVerdicts(diff.stdout, !!diff.isStdoutTruncated, rules) : {}
+    for (const path of stale) cache.verdicts.set(path, { key: keyOf(path), isNoise: verdicts[path] === true })
+  }
+  return markNoise(files, rules, Object.fromEntries(candidates.map(p => [p, cache.verdicts.get(p)?.isNoise === true])))
 }
 
 // The open PR's checks for this branch; with no open PR, the Actions runs for the checked-out commit.

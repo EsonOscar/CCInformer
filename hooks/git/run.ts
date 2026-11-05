@@ -1,10 +1,12 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { CiSnapshot, DiffPreview, FileChange, GitSnapshot } from '../../types'
-import { collectCi, collectDiff, collectGit } from '../collect'
+import { collectCi, collectDiff, collectGit, collectNoise, newNoiseCache } from '../collect'
 import type { Exec } from '../collect'
 import { createSolo } from '../core/lanes'
 import type { May } from '../core/permissions'
+import type { NoiseRule } from '../packs/types'
+import { rewriteCandidates } from './noise'
 import { ciOutcome } from '../insight'
 import { previewDiff, previewNewFile } from '../parse'
 import { gitFolderFacts } from '../read-git'
@@ -25,6 +27,8 @@ export type GitDeps = {
   diff: () => Promise<DiffPreview | null>
   saveDiff: (diff: DiffPreview | null) => Promise<unknown>
   clearSelection: () => Promise<unknown>
+  // The resolved pack's noise rules ([] with none).
+  noise: () => Promise<NoiseRule[]>
   // A commit's checks finished with a failure, in the session that pinged for it (active CI mode decides what follows).
   onCiFailed?: (ci: CiSnapshot) => Promise<void>
   may: May
@@ -43,6 +47,7 @@ export type Git = {
 // is skipped), and a ping when a commit's checks finish.
 export function createGit($: EngineInterface, deps: GitDeps): Git {
   const solo = createSolo()
+  const noiseCache = newNoiseCache()
 
   // Tells the person once when this commit's checks finish; one session pings for all of them.
   const pingCi = async (prev: CiSnapshot | null, ci: CiSnapshot) => {
@@ -75,7 +80,16 @@ export function createGit($: EngineInterface, deps: GitDeps): Git {
     solo('git', async () => {
       const before = await deps.git()
       const collected = await collectGit(deps.exec, await $.clock.now())
-      const git = collected.gitDir ? { ...collected, ...(await gitFolderFacts($, collected.gitDir)) } : collected
+      // The pack's noise: generated files and editor rewrites are marked, so the view can fold them.
+      const rules = collected.error ? [] : await deps.noise()
+      const stamps: Record<string, string> = {}
+      for (const path of rewriteCandidates(collected.files, rules)) {
+        const stat = await $.fs.stat(`${collected.root}/${path}`).catch(() => null)
+        stamps[path] = stat ? `${stat.mtimeMs}:${stat.size}` : ''
+      }
+      const files = await collectNoise(deps.exec, collected.files, rules, collected.head, stamps, noiseCache)
+      const marked = { ...collected, files }
+      const git = marked.gitDir ? { ...marked, ...(await gitFolderFacts($, marked.gitDir)) } : marked
       await deps.saveGit(git)
       // An open diff follows its file, and closes once the file is no longer changed (committed, reverted).
       const diff = await deps.diff()

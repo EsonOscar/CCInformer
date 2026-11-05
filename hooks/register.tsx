@@ -5,7 +5,7 @@ import type {
   AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, SkillsSettings, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
-import { areaFor, areaNames } from './areas'
+import { areaDef, areaFor, areaNames, shownView, viewsFor } from './areas'
 import { createBudgets } from './budgets/run'
 import { createChecks } from './checks/run'
 import { programCandidates, skipReason } from './checks/tools'
@@ -167,6 +167,12 @@ let paneTop = 0
 // The surface the pane was last drawn for. A scroll event names none, so the scroll hook reads it here: only the
 // terminal's pane scrolls its own content; any other surface scrolls the pane itself.
 let paneSurface = 'terminal'
+
+// The Code views the repo's pack draws (Rules and Budgets need its data), as the pane decides them.
+async function codeViews($: EngineInterface) {
+  const [pack, findings, dismissed] = await Promise.all([read($, packAtom), read($, findingsAtom), read($, dismissedAtom)])
+  return viewsFor(areaDef('code'), pack, findings.some(f => !dismissed.includes(f.id)))
+}
 
 async function setPaneTop($: EngineInterface, top: number): Promise<void> {
   if (top === paneTop) return
@@ -516,9 +522,16 @@ export const register: Register = on => {
 
     const isActive = (now: number) => isTurnRunning || now - lastActive < ACTIVE_MS
 
+    // The pack's noise rules, for Code › Git and the CI hand-off: the pack is read once if it hasn't been yet, never on
+    // every poll in a repo that has none.
+    const packNoise = async () => {
+      if (!packReport) await reloadPack()
+      return packResolved?.noise ?? []
+    }
     // Code › Git (git/run.ts): git, CI with its ping, and a file's diff.
     const { refreshGit, refreshCi, loadDiff } = createGit($, {
       exec,
+      noise: packNoise,
       git: () => read($, gitAtom),
       saveGit: git => update($, gitAtom, () => git),
       ci: () => read($, ciAtom),
@@ -532,6 +545,7 @@ export const register: Register = on => {
     // Active CI mode (ci/run.ts): a failed check looked into read-only, its report handed to this session as a turn.
     const ciActive = createCiActive($, {
       light: lanes.light,
+      noise: packNoise,
       report: async () => packReport ?? (await reloadPack()),
       isInteractive: e.isInteractive,
       selfId,
@@ -611,7 +625,7 @@ export const register: Register = on => {
     }
     const refresh = async (area: Area) => {
       if (area === 'code') await refreshGit().then(refreshCi).then(ciActive.readMode)
-      if (area === 'code' && (await read($, codeViewAtom)) === 'budgets') await budgets.refresh()
+      if (area === 'code' && shownView(await codeViews($), await read($, codeViewAtom)) === 'budgets') await budgets.refresh()
       if (area === 'work') await checkRecords().then(loadHistory)
       if (area === 'work' && (await read($, workViewAtom)) === 'stats') await loadStats()
       if (area === 'work' && (await read($, workViewAtom)) === 'plans') await plans.refresh()
@@ -797,7 +811,10 @@ export const register: Register = on => {
       void live.ci.investigateNow()
       return { text: CI_TEXTS.replyStarted }
     }
-    const target = name ? areaFor(name) : null
+    const named = name ? areaFor(name) : null
+    // A Code view the pack has no data for opens Code as it is drawn, and says why; the stored view is left alone.
+    const isHidden = named?.area === 'code' && !!named.view && !(await codeViews($)).some(v => v.id === named.view)
+    const target = isHidden ? { area: named!.area } : named
     // A new install's bare /ccinformer opens on Debug › Settings until they have been shown, without keeping that area
     // for the next session. Decided from what is read here, as state this hook writes reads back as it was when it began.
     const isFirstOpen = !arg && (await $.store.get(STORE_SETTINGS_FIRST).catch(() => undefined)) === true
@@ -822,6 +839,7 @@ export const register: Register = on => {
       void markSettingsShown($).catch(() => undefined)
     } else void live?.refresh(await read($, areaAtom))
     if (!target) return arg ? { text: `CCInformer has no area "${name}". Try: ${areaNames().join(', ')}.` } : {}
+    if (isHidden) return { text: named!.view === 'budgets' ? "This repo's pack has no budgets." : "This repo's pack has no checks." }
     if (name === 'pack' && (sub === 'trust' || sub === 'untrust')) return { text: (await live?.setTrust(sub === 'trust')) ?? '' }
     return sub ? { text: `/${COMMAND} ${name} takes no "${sub}"` + (name === 'pack' ? ': try trust or untrust.' : '.') } : {}
   }).catch(($, e, next) => next(e))

@@ -129,11 +129,12 @@
     },
   ],
 
-  // Files a tool writes (generated) or an editor rewrites (editor-rewrite; normalize: regexes removed before
-  // comparing old and new lines).
+  // Files a tool writes (generated: folded whatever changed) or an editor rewrites on save (editor-rewrite: each match
+  // of normalize is taken out of a hunk's removed and added lines, which must then be equal, in order). Folded out of
+  // Code › Git and the CI hand-off; never hides a finding.
   "noise": [
-    { "id": "generated", "glob": "gen/**", "kind": "generated" },
-    { "id": "scenes", "glob": "**/*.scene", "kind": "editor-rewrite", "normalize": ["uid=\"[^\"]*\""] },
+    { "id": "generated", "glob": "**/.godot/**", "kind": "generated" },
+    { "id": "scenes", "glob": "**/*.{tscn,tres}", "kind": "editor-rewrite", "normalize": ["uid=\"[^\"]*\"", "load_steps=\\d+"] },
   ],
 
   // Plan files outside .local/plans/ (which the board always reads), and how their checkpoints read. The patterns

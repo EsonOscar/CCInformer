@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
-import { AREAS, areaFor, isBuilt, keysOf } from '../hooks/areas'
+import { AREAS, areaFor, isBuilt, keysOf, shownView, viewsFor } from '../hooks/areas'
 
 describe('the areas and their keys', () => {
   test('no key is used twice within an area plus the global keys', async () => {
@@ -50,8 +50,29 @@ const ANSWERS: [RegExp, string][] = [
   [/^git rev-parse/, '/repo/.git\n/repo\n'],
 ]
 
-// `opened` and `closed` collect the pane ids the plugin opens and closes.
-const engine = (on: Parameters<TestBody>[1], store: Record<string, unknown> = { permissions: { base: 'defaults', set: {} } }) => {
+// A user pack for the repo with a check and a budget, so Code draws all three of its views.
+const PACK_FILE = '/home/test/.claude/ccinformer/packs/shop.pack.jsonc'
+const FULL_PACK = JSON.stringify({
+  schema: 1,
+  id: 'acme-shop',
+  version: '1',
+  match: { remote: ['github.com/acme/*'] },
+  checks: [{ id: 'max-lines', label: 'File length', on: ['src/**/*.ts'], analyzer: 'size-lines', cost: 'edit', class: 'ci', options: { max: 300 } }],
+  budgets: [
+    {
+      id: 'start',
+      label: 'Start-up',
+      unit: 'bytes',
+      direction: 'max',
+      limit: { relative: 1.05, baseline: { kind: 'json', path: 'perf/baseline.json', pointer: '/start' } },
+      sources: [{ kind: 'json', path: 'perf/latest.json', pointer: '/start' }],
+      cost: 'cheap',
+    },
+  ],
+})
+
+// `opened` and `closed` collect the pane ids the plugin opens and closes. With `pack`, the repo has FULL_PACK.
+const engine = (on: Parameters<TestBody>[1], store: Record<string, unknown> = { permissions: { base: 'defaults', set: {} } }, opts: { pack?: boolean } = {}) => {
   const opened: string[] = []
   const closed: string[] = []
   mock.clock(on, { now: 1_000_000 })
@@ -61,10 +82,23 @@ const engine = (on: Parameters<TestBody>[1], store: Record<string, unknown> = { 
   on('session.cwd', () => ({ value: '/repo' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('agent.list', () => ({ value: [] }))
-  on('fs.exists', () => ({ value: false }))
+  const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
+  const isPack = (path: string) => !!opts.pack && posix(path) === PACK_FILE
+  on('fs.exists', (_, e) => ({ value: isPack(e.path) }))
+  if (opts.pack) {
+    on('fs.read', (_, e) => ({ value: isPack(e.path) ? FULL_PACK : null }) as never)
+    on('fs.stat', (_, e) => ({ value: isPack(e.path) ? { kind: 'file', size: FULL_PACK.length, mtimeMs: 1 } : null }) as never)
+    on('fs.list', (_, e) => ({ value: PACK_FILE.startsWith(posix(e.path) + '/') ? [{ name: 'shop.pack.jsonc', kind: 'file', mtimeMs: 1 }] : [] }) as never)
+  }
+  const repo: [RegExp, string][] = opts.pack
+    ? [
+        [/^git rev-parse --show-toplevel --git-common-dir$/, '/repo\n.git\n'],
+        [/^git config --get remote\.origin\.url$/, 'git@github.com:acme/shop.git\n'],
+      ]
+    : []
   on('process.run', (_, e) => {
     const line = (e as { argv: string[] }).argv.join(' ')
-    const answer = ANSWERS.find(([pattern]) => pattern.test(line))
+    const answer = [...repo, ...ANSWERS].find(([pattern]) => pattern.test(line))
     const ok = !!answer || line.startsWith('git ')
     return { value: { exitCode: ok ? 0 : 1, stdout: answer?.[1] ?? '', stderr: ok ? '' : 'gh is not set up', isStdoutTruncated: false, isStderrTruncated: false } }
   })
@@ -121,13 +155,18 @@ test('each view sits under its area, and Timeline is not drawn until it has a vi
 })
 
 test('every hotkey drawn in an area is in its key map, and none is drawn twice, on the terminal and the desktop', TWO_SURFACES, async ($, on) => {
-  engine(on)
+  // A pack with a check and a budget, so every view of every area is drawn.
+  engine(on, undefined, { pack: true })
   await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
 
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await $.ui.mount({ ...PANE, surface })
     for (const area of AREAS.filter(isBuilt)) {
       await ui.press({ key: 'area-' + area.id })
+      if (area.views.length > 1) {
+        const tabs = (await ui.findAll({ type: 'Button' })).map(b => String(b.key ?? '')).filter(k => k.startsWith('view-'))
+        expect({ area: area.id, tabs: [...new Set(tabs)] }).toEqual({ area: area.id, tabs: area.views.map(v => 'view-' + v.id) })
+      }
       for (const view of area.views.length > 1 ? area.views : [null]) {
         if (view) await ui.press({ key: 'view-' + view.id })
         const drawn = (await ui.findAll({ type: 'Button' })).map(b => b.props.hotkey).filter((h): h is string => typeof h === 'string')
@@ -197,4 +236,28 @@ test('each area keeps its selected row while another area shows', async ($, on) 
   await ui.press({ key: 'run-close' })
   expect(await ui.find({ key: 'run-close' })).toBeUndefined()
   await ui.unmount()
+})
+
+describe('views drawn per pack', () => {
+  const code = AREAS.find(a => a.id === 'code')!
+  const pack = (sections: { section: string; removedBy?: string }[]) => ({ entries: sections.map((s, i) => ({ id: 'e' + i, label: '', layer: 'user', ...s })) }) as never
+  const ids = (views: { id: string }[]) => views.map(v => v.id)
+
+  test('every view while the pack is unread; then only those it has data for', async () => {
+    expect(ids(viewsFor(code, null, false))).toEqual(['git', 'rules', 'budgets'])
+    expect(ids(viewsFor(code, pack([]), false))).toEqual(['git'])
+    expect(ids(viewsFor(code, pack([{ section: 'checks' }]), false))).toEqual(['git', 'rules'])
+    expect(ids(viewsFor(code, pack([{ section: 'budgets' }]), false))).toEqual(['git', 'budgets'])
+    expect(ids(viewsFor(code, pack([{ section: 'checks', removedBy: 'user' }]), false))).toEqual(['git'])
+    // Findings still shown keep Rules drawn.
+    expect(ids(viewsFor(code, pack([]), true))).toEqual(['git', 'rules'])
+    // Areas whose views need nothing are untouched.
+    const debug = AREAS.find(a => a.id === 'debug')!
+    expect(viewsFor(debug, pack([]), false)).toEqual(debug.views)
+  })
+
+  test('a stored view that is not drawn falls back to the first one drawn', async () => {
+    const drawn = viewsFor(code, pack([{ section: 'checks' }]), false)
+    expect([shownView(drawn, 'rules'), shownView(drawn, 'budgets'), shownView(drawn, 'git')]).toEqual(['rules', 'git', 'git'])
+  })
 })

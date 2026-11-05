@@ -2,7 +2,7 @@ import type {
   AgentRow, Area, BudgetState, PermissionChoices, CheckRun, CiActiveState, PlansState, SkillsSettings, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
 } from '../types'
-import { areaDef } from './areas'
+import { areaDef, shownView, viewsFor } from './areas'
 import { spinner } from './format'
 import { sessionGroups } from './insight'
 import { ACCENT, AreaBar, ViewBar, areaBarFit, viewBarFit } from './ui'
@@ -148,8 +148,9 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const views: Record<Area, string> = { now: d.nowView, code: d.codeView, work: d.workView, timeline: '', debug: d.debugView }
   const ruleCount = shownFindings(d.findings, d.dismissed).length
   const counts: Record<string, string> = d.area === 'debug' ? debugCounts(debugData) : d.area === 'code' && ruleCount ? { rules: String(ruleCount) } : {}
-  const hasChecks = !!d.pack?.entries.some(e => e.section === 'checks' && !e.removedBy)
-  const hasBudgets = !!d.pack?.entries.some(e => e.section === 'budgets' && !e.removedBy)
+  // The views this area draws for the repo's pack, and the one shown (a stored view the pack has no data for falls back).
+  const drawn = viewsFor(def, d.pack, ruleCount > 0)
+  const shown = shownView(drawn, views[d.area])
   const rulesNav = { selected: d.selected.code, pick: nav.pickFinding, dismiss: nav.dismissFinding }
   // The pack's checks in its order: the run lines Rules draws, and only for checks still in the pack.
   const checkIds = d.pack?.entries.filter(e => e.section === 'checks' && !e.removedBy).map(e => e.id) ?? []
@@ -163,16 +164,16 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: isPlanSelected ? '' : d.selected.work, pickRun: nav.pickRun }
   const planNav = { selected: isPlanSelected ? d.selected.work.slice(PLAN_SELECTED.length) : '', pick: nav.pickPlan, archive: nav.archivePlan }
   const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions, togglePlanFiles: nav.togglePlanFiles }
-  const hasViewBar = def.views.length > 1
+  const hasViewBar = drawn.length > 1
   const badges = badgesOf(d)
   // The shown view, the same on every surface: one element, or null for an area with nothing built. A fragment holds
   // only elements and strings, so the views are picked here rather than switched on and off inside one.
   const view =
     d.area === 'now' && d.nowView === 'env' ? EnvView(k, d.tasks, d.processes, d.memory, d.now)
     : d.area === 'now' && d.nowView === 'sessions' ? SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)
-    : d.area === 'code' && d.codeView === 'git' ? GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)
-    : d.area === 'code' && d.codeView === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRuns, checkIds, hasChecks, d.now, rulesNav)
-    : d.area === 'code' && d.codeView === 'budgets' ? BudgetsView(k, d.budgets, hasBudgets, d.now, nav.measure)
+    : d.area === 'code' && shown === 'git' ? GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)
+    : d.area === 'code' && shown === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRuns, checkIds, d.now, rulesNav)
+    : d.area === 'code' && shown === 'budgets' ? BudgetsView(k, d.budgets, d.now, nav.measure)
     : d.area === 'work' && d.workView === 'runs' ? AgentsPanel(k, d.agents, d.runs, d.now, width, runNav)
     : d.area === 'work' && d.workView === 'stats' ? StatsView(k, d.stats, d.statsName, width, nav.pickStats)
     : d.area === 'work' && d.workView === 'plans' ? PlansView(k, d.plans, d.now, planNav, d.skills.planFiles)
@@ -202,7 +203,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
         <Box key="header" flexDirection="column">
           {AreaBar(k, d.area, badges, nav.showArea, nav.refresh, null, d.version)}
           {divider}
-          {hasViewBar && ViewBar(k, def.views, views[d.area], nav.pickView, counts, null)}
+          {hasViewBar && ViewBar(k, drawn, shown, nav.pickView, counts, null)}
         </Box>
         <Box key="content" flexDirection="column" flexGrow={1}>
           {view}
@@ -219,7 +220,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   // In the terminal the bars take the rows they need at this width: the header's rows are the title, the area bar's, a
   // line, then, for an area with several views, a blank row and the view bar's.
   const areaPlace = areaBarFit(badges, width)
-  const viewPlace = hasViewBar ? viewBarFit(def.views, counts, width) : null
+  const viewPlace = hasViewBar ? viewBarFit(drawn, counts, width) : null
   const headerRows = 1 + areaPlace.rows.length + 1 + (viewPlace ? 1 + viewPlace.rows.length : 0)
   return (
     // The padding leaves room for the header above the content and the footer below it, so a long view scrolls clear
@@ -250,7 +251,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
         </Box>
         {AreaBar(k, d.area, badges, nav.showArea, nav.refresh, areaPlace)}
         {divider}
-        {viewPlace && ViewBar(k, def.views, views[d.area], nav.pickView, counts, viewPlace)}
+        {viewPlace && ViewBar(k, drawn, shown, nav.pickView, counts, viewPlace)}
       </Box>
       {/* The footer, in every area, laid over the tree at the window's bottom rows. Its rows run the full width,
           covering what's beneath. */}

@@ -7,7 +7,8 @@ export type PermissionChoices = { base: 'defaults' | 'off'; set: Record<string, 
 // The planning skills' own settings (~/.claude/ccinformer/skills.json): whether they save plan files into the repo.
 export type SkillsSettings = { planFiles: boolean }
 
-export type FileChange = { path: string; code: string; added: number; removed: number }
+// `noise`: the pack's noise kind for a file that is generated output or only an editor's rewrite; absent otherwise.
+export type FileChange = { path: string; code: string; added: number; removed: number; noise?: 'generated' | 'editor-rewrite' }
 export type Commit = { sha: string; subject: string; age: string }
 export type Worktree = { path: string; branch: string }
 // Another local branch: how long since its last commit, and how it stands against its upstream ("↑2, ↓1").
