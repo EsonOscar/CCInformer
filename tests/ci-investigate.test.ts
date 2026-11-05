@@ -83,6 +83,16 @@ describe('what the session is handed', () => {
     // CI has finished and nothing was handed over before: neither line.
     expect(text).not.toContain('Still running')
     expect(text).not.toContain('Handed over earlier')
+    expect(text).not.toContain('likely flaky')
+  })
+
+  test('a likely-flaky check is marked with its count, and the turn is asked to judge flakiness against a real break', async () => {
+    const flaky = { ...check('e2e', 'fail', `${RUNS}/100/job/15`), flaky: 2 }
+    const once = { ...check('lint', 'fail', `${RUNS}/100/job/11`), flaky: 1 }
+    const { text } = handoffPrompt({ ...CI, checks: [flaky, once] }, [flaky, once], [], { text: '', isCut: false }, 1)
+    expect(text).toContain(`- e2e (CI): ${RUNS}/100/job/15 (likely flaky: failed, then passed on a rerun, in 2 other runs in the last 7 days)`)
+    expect(text).toContain(`- lint (CI): ${RUNS}/100/job/11 (likely flaky: failed, then passed on a rerun, in 1 other run in the last 7 days)`)
+    expect(text).toContain('Say whether this failure looks like that flakiness or like a real break from these changes')
   })
 
   test('a hand-off made while CI runs names what still runs, and what an earlier hand-off of the commit covered', async () => {

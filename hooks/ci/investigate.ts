@@ -137,7 +137,8 @@ export const handoffPrompt = (
   earlier: string[] = [],
 ): { text: string; marker: string } => {
   const marker = `ccinformer-ci:${short(ci.head)}-${n}`
-  const checks = failed.map(c => `- ${c.name}${c.workflow ? ` (${c.workflow})` : ''}: ${c.link || 'no link'}`)
+  const flakyNote = (n = 0) => (n > 0 ? ` (likely flaky: failed, then passed on a rerun, in ${n} other run${n === 1 ? '' : 's'} in the last 7 days)` : '')
+  const checks = failed.map(c => `- ${c.name}${c.workflow ? ` (${c.workflow})` : ''}: ${c.link || 'no link'}${flakyNote(c.flaky)}`)
   const running = stillRunning(ci).map(c => c.name)
   const logText = logs.length
     ? logs.map(l => `=== ${l.check}${l.isCut ? ' (older lines left out)' : ''}\n${l.tail}`).join('\n\n')
@@ -148,6 +149,11 @@ export const handoffPrompt = (
     '',
     'Failed checks:',
     ...checks,
+    ...(failed.some(c => (c.flaky ?? 0) > 0)
+      ? [
+          'A check marked likely flaky has failed and then passed on a rerun lately. Say whether this failure looks like that flakiness or like a real break from these changes; if it looks flaky, say that rerunning the failed jobs is the likely fix.',
+        ]
+      : []),
     ...(running.length ? [`Still running: ${listed(running)} (not part of this hand-off; CI hasn't finished).`] : []),
     ...(earlier.length ? [`Handed over earlier for this commit: ${listed(earlier)}.`] : []),
     '',

@@ -1,5 +1,8 @@
 import type { BaseCi, CiSnapshot, FileChange, GitSnapshot } from '../types'
 import { firstLine } from './format'
+import { jobOf } from './ci/investigate'
+import { FLAKY_DAYS, addRun, flakedJobs, rerunRuns } from './git/flaky'
+import type { FlakyIndex } from './git/flaky'
 import { markNoise, rewriteCandidates, rewriteVerdicts } from './git/noise'
 import type { NoiseRule } from './packs/types'
 import {
@@ -84,6 +87,36 @@ export const newNoiseCache = (): NoiseCache => ({ rules: '', verdicts: new Map()
 // The changed files with the pack's noise marked: generated ones by path, editor rewrites by one -U0 diff of the
 // candidates whose stamp changed since their last verdict (a candidate the diff gives no whole section for isn't one).
 // `stamps` are the candidates' modified times and sizes, which the caller reads.
+// How many jobs reads run at once, so git's own polls keep light-lane slots.
+const FLAKY_READS_AT_ONCE = 2
+
+// The repo's jobs that lately failed and then passed on a rerun: the runs of the last week that were rerun, newest
+// first, then each one's jobs over all its attempts, two at a time. A failed list gives an empty index; a failed jobs
+// read leaves that run out.
+export const collectFlaky = async (exec: Exec, now: number): Promise<FlakyIndex> => {
+  const since = new Date(now - FLAKY_DAYS * 86_400_000).toISOString().slice(0, 10)
+  const listed = await run(exec, ['gh', 'run', 'list', '--created', `>=${since}`, '--limit', '200', '--json', 'databaseId,attempt,headSha,createdAt,url'])
+  if (listed.exitCode !== 0) return {}
+  const runs = rerunRuns(listed.stdout, now)
+  let index: FlakyIndex = {}
+  for (let i = 0; i < runs.length; i += FLAKY_READS_AT_ONCE) {
+    const batch = runs.slice(i, i + FLAKY_READS_AT_ONCE)
+    const read = await Promise.all(
+      batch.map(r => {
+        const id = jobOf(r.url)
+        if (!id) return null
+        const host = id.host === 'github.com' ? [] : ['--hostname', id.host]
+        return run(exec, ['gh', 'api', ...host, `repos/${id.repo}/actions/runs/${r.id}/jobs?filter=all&per_page=100`])
+      }),
+    )
+    batch.forEach((r, j) => {
+      const ran = read[j]
+      if (ran && ran.exitCode === 0) index = addRun(index, r, flakedJobs(ran.stdout))
+    })
+  }
+  return index
+}
+
 export const collectNoise = async (
   exec: Exec,
   files: FileChange[],

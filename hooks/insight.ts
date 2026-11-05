@@ -2,6 +2,9 @@ import type { CiCheck, CiSnapshot, Compaction, SessionBeat, StepRow } from '../t
 
 // Plain functions behind the CI ping, the Sessions tab and the context chart, so the tests can feed them rows.
 
+// Failed checks as a toast names them, a likely-flaky one marked.
+const names = (checks: CiCheck[]) => checks.map(c => c.name + ((c.flaky ?? 0) > 0 ? ' (likely flaky)' : '')).join(', ')
+
 // What to tell the person when this commit's checks stop running: null while they run, or when nothing changed.
 export const ciOutcome = (prev: CiSnapshot | null, next: CiSnapshot): { isOk: boolean; text: string } | null => {
   if (!prev || prev.head !== next.head || next.checks.length === 0) return null
@@ -10,7 +13,7 @@ export const ciOutcome = (prev: CiSnapshot | null, next: CiSnapshot): { isOk: bo
   const failed = next.checks.filter(c => c.bucket === 'fail')
   const where = next.pr ? `PR #${next.pr.number}` : next.branch
   return failed.length
-    ? { isOk: false, text: `CI failed on ${where}: ${failed.map(c => c.name).join(', ')}` }
+    ? { isOk: false, text: `CI failed on ${where}: ${names(failed)}` }
     : { isOk: true, text: `CI passed on ${where}: ${next.checks.length} check${next.checks.length === 1 ? '' : 's'}` }
 }
 
@@ -27,7 +30,7 @@ export const newFailures = (prev: CiSnapshot | null, next: CiSnapshot): CiCheck[
 // The toast for checks that failed while others still run.
 export const earlyFailureText = (ci: CiSnapshot, failed: CiCheck[]): string => {
   const running = ci.checks.filter(c => c.bucket === 'pending').length
-  return `CI check failed on ${ci.pr ? `PR #${ci.pr.number}` : ci.branch}: ${failed.map(c => c.name).join(', ')} (${running} still running)`
+  return `CI check failed on ${ci.pr ? `PR #${ci.pr.number}` : ci.branch}: ${names(failed)} (${running} still running)`
 }
 
 // A session whose beat is older than this has ended or hung; it is left out.
