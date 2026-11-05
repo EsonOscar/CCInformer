@@ -476,6 +476,7 @@ export const register: Register = on => {
       outputDir: configDir + '/ccinformer/output',
       sessionId: selfId,
       heavy: lanes.heavy,
+      light: lanes.light,
       pack: async () => packResolved ?? (await reloadPack(), packResolved),
       report: () => packReport,
       reload: reloadPack,

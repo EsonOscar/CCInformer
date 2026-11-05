@@ -19,7 +19,8 @@ const USER_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { 
   "checks": [{ "id": "max-lines", "label": "File length", "on": ["src/**/*.ts"], "analyzer": "size-lines", "cost": "edit", "class": "ci",
     "rules": ["max-lines"], "options": { "max": 3 } },
     { "id": "tidy", "label": "tidy", "on": ["src/**/*.ts"], "analyzer": "problem-matcher", "cost": "turn", "class": "advise", "bin": ["tidy", "{files}"],
-      "options": { "pattern": "^(?<file>[^:]+):(?<line>\\\\d+): (?<message>.*)$" } }] }`
+      "options": { "pattern": "^(?<file>[^:]+):(?<line>\\\\d+): (?<message>.*)$" } },
+    { "id": "scenes", "label": "Scene node paths", "on": ["**/*.tscn", "**/*.cs"], "analyzer": "tscn-nodepaths", "cost": "turn", "class": "advise" }] }`
 // A plan whose open checkpoint names PR #9, which GitHub says is still open.
 const PLAN = '# Cart\n### CP1: cart page (#9)\n'
 const PR = JSON.stringify({ number: 7, title: 'Cart', url: 'https://github.com/acme/shop/pull/7', baseRefName: 'main', isDraft: false, state: 'OPEN' })
@@ -177,6 +178,7 @@ const workingSession = async ($: Dollar, env: Env, atStart: () => void = () => {
   await $.turn.start({ text: 'add the cart', turnId: 't1' })
   await $.tool.call({ tool: 'Bash', command: 'npm run e2e', run_in_background: true })
   const written = await $.tool.call({ tool: 'Write', file_path: '/repo/src/cart.ts', content: lines(5) })
+  await $.tool.call({ tool: 'Write', file_path: '/repo/atrium/lobby.tscn', content: '[node name="Lobby" type="Control"]\n' })
   await $.tool.call({ tool: 'Bash', command: 'git push' })
   await env.clock.advance(2000)
   await $.turn.complete(turnEnd('t1'))
@@ -203,6 +205,8 @@ test('an install that ran an older version (other keys, nothing chosen) does all
   expect(env.seen.commands).toContain('cat /proc/meminfo')
   expect(env.seen.commands.some(c => c.includes('eslint'))).toBe(true)
   expect(env.seen.commands).toContain('tidy src/cart.ts')
+  // The scene check reads git once a turn that wrote a scene ends: the commit first.
+  expect(env.seen.commands).toContain('git rev-parse HEAD')
   expect(env.seen.toasts).toContain('✗ CI failed on PR #7: lint')
   expect(env.seen.notifies).toContain('CI failed on PR #7: lint')
   expect(env.store.has(SESSION_KEY)).toBe(true)

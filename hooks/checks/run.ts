@@ -10,6 +10,7 @@ import { readText } from '../read-records'
 import { covers, isTold, noteFor, ownedRules, regexFindings, sizeFindings, withoutInline } from './findings'
 import { repoPath } from './glob'
 import { keysetFindings, languagesOf, tableOf } from './i18n'
+import { createSceneChecks } from './scenes'
 import type { TableFile } from './i18n'
 import { parseSuppressions } from './suppressions'
 import type { Suppressions } from './suppressions'
@@ -34,6 +35,8 @@ export type CheckDeps = {
   outputDir: string
   sessionId: string
   heavy: Lane
+  // Quick git reads (the scene checks'), beside the git and CI polls.
+  light: Lane
   pack: () => Promise<ResolvedPack | null>
   report: () => PackReport | null
   reload: () => Promise<PackReport>
@@ -68,6 +71,8 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
   let isCheckQueued = false
   let isTrustAsked = false
   let toTell: { findings: Finding[]; stamps: Record<string, string> } | null = null
+  // The findings the model has been told this session: the scene checks tell each once.
+  const told = new Set<string>()
 
   // A file's modified time and size, '' when it isn't there: a file whose stamp changed since a run was edited again.
   const stampOf = async (path: string) => {
@@ -131,6 +136,25 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
     }
     return set
   }
+  // The Godot scene checks (scenes.ts), which read files and git themselves and need no trust.
+  const runScenes = createSceneChecks({
+    light: deps.light,
+    stampOf,
+    read: path => readText($, path),
+    exists: path => $.fs.exists(path).catch(() => false),
+    now: () => $.clock.now(),
+    heldFor,
+    saveFindings: deps.saveFindings,
+    saveRun: deps.saveRun,
+    tell: (check, files, found, stamps) => {
+      const kept = toTell?.findings.filter(f => f.check !== check || !files.includes(f.file)) ?? []
+      toTell = { findings: [...kept, ...found.filter(f => isTold(f) && !told.has(f.id))], stamps: { ...toTell?.stamps, ...stamps } }
+    },
+    pending,
+    queue: () => {
+      isCheckQueued = true
+    },
+  })
   // The tool's output file, read back after its run; over 4 MiB the host refuses the read, so its size is checked first.
   const readOutput = async (path: string): Promise<OutputRead> => {
     const stat = await $.fs.stat(path).catch(() => null)
@@ -148,6 +172,8 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
     const report = deps.report()
     if (!pack || !report) return
     await checkTables(pack, report.root, written)
+    // Before the tool checks, so they never wait behind the trust question; a failure here leaves those to run.
+    await runScenes(pack, report.root, written).catch(() => undefined)
     for (const check of pack.checks.filter(isToolCheck)) {
       const queued = pending.get(check.id) ?? new Set<string>()
       pending.delete(check.id)
@@ -257,7 +283,9 @@ export function createChecks($: EngineInterface, deps: CheckDeps): Checks {
       const dismissed = await deps.dismissed()
       const fresh: string[] = []
       for (const [file, stamp] of Object.entries(pending.stamps)) if (stamp && (await stampOf(`${root}/${file}`)) === stamp) fresh.push(file)
-      return noteFor(pending.findings.filter(f => fresh.includes(f.file) && !dismissed.includes(f.id)), 'turn')
+      const telling = pending.findings.filter(f => fresh.includes(f.file) && !dismissed.includes(f.id))
+      for (const f of telling) told.add(f.id)
+      return noteFor(telling, 'turn')
     },
   }
 }

@@ -235,8 +235,9 @@ export type Finding = {
 // The latest run of a check that runs the repo's own tools after a turn, one per such check: over how many files, how
 // long it took, what went wrong ('' for nothing), and how many findings the tool reported in files the turn didn't
 // write (counted, not listed). `waitsForTrust` while the repo's tools may not run yet.
-// `skipped`: why the check didn't run (its program isn't on this machine), absent when it did.
-export type CheckRun = { check: string; label: string; at: number; ms: number; files: number; isRunning: boolean; waitsForTrust: boolean; error: string; elsewhere: number; skipped?: string }
+// `skipped`: why the check didn't run (its program isn't on this machine), absent when it did. `note`: what a passed run
+// left out, as `1 scene too large`.
+export type CheckRun = { check: string; label: string; at: number; ms: number; files: number; isRunning: boolean; waitsForTrust: boolean; error: string; elsewhere: number; skipped?: string; note?: string }
 
 // The pane's footer: how full the context window is, and how much of the subscription's 5-hour and 7-day windows is
 // used, each a percentage; null where there's no reading (before the first response, or without a subscription).
