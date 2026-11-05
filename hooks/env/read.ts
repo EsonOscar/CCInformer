@@ -9,7 +9,7 @@ async function readText($: EngineInterface, path: string): Promise<string | null
 }
 
 // The scripts of the package.json in a folder, or none.
-async function readScripts($: EngineInterface, dir: string): Promise<Record<string, string>> {
+export async function scriptsAt($: EngineInterface, dir: string): Promise<Record<string, string>> {
   const text = await readText($, dir + '/package.json')
   try {
     const scripts = (JSON.parse(text ?? '{}') as { scripts?: unknown }).scripts
@@ -30,7 +30,7 @@ export async function classifyCommand(
 ): Promise<{ label: string; process: ProcessMatcher | null; env: EnvRule | null }> {
   const dir = commandDir(command)
   const base = !dir ? cwd : /^([a-z]:|\/)/i.test(dir) ? dir : cwd + '/' + dir
-  const { text, label } = expandCommand(command, await readScripts($, base))
+  const { text, label } = expandCommand(command, await scriptsAt($, base))
   const envFiles: { text: string; key?: string }[] = []
   for (const f of envFilesFor(pack, text)) {
     const body = await readText($, base + '/' + f.file)

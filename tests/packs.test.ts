@@ -3,9 +3,9 @@ import { describe, expect, test } from 'claude-code/testing'
 import { cleanRemote, detect, normalizeRemote, remoteMatches } from '../hooks/packs/detect'
 import { PARSE_HINT, parseJsonc } from '../hooks/packs/jsonc'
 import { DEFAULT_CHECKPOINT, DEFAULT_DONE, DEFAULT_PR_REF } from '../hooks/plans/parse'
-import { hostTone } from '../hooks/packs/merge'
+import { hostTone, mergeLayers } from '../hooks/packs/merge'
 import { BUILTINS } from '../hooks/packs/builtins'
-import { resolvePack } from '../hooks/packs/resolve'
+import { entryRows, resolvePack } from '../hooks/packs/resolve'
 import type { PackInput } from '../hooks/packs/resolve'
 import { isStoredTrust, runnableChecks, trustOf } from '../hooks/packs/trust'
 import type { ResolvedPack } from '../hooks/packs/types'
@@ -323,7 +323,10 @@ describe('the shape of each entry', () => {
     ],
     environments: [
       { id: 'staging', label: 'staging', tone: 'shared', hostPatterns: ['*.staging.example.test'], argRegex: '--mode[= ]staging', readOnly: true,
-        approvals: [{ id: 'writes', tool: 'Bash', commandRegex: 'migrate', inputRegex: 'drop', pathGlob: 'db/**', label: 'writes', mode: 'log', scope: 'session' }] },
+        approvals: [
+          { id: 'writes', tool: 'Bash', commandRegex: 'migrate', inputRegex: 'drop', label: 'writes', mode: 'log', scope: 'session' },
+          { id: 'migration-files', tool: 'Edit', pathGlob: 'db/**', label: 'migration files', scope: 'once' },
+        ] },
     ],
     checks: [
       { id: 'size', label: 'File length', on: ['src/**/*.ts'], analyzer: 'size-lines', cost: 'edit', class: 'ci', ignore: ['**/*.test.ts'], suppressions: 'eslint-suppressions.json', rules: ['max-lines'], options: { max: 500 } },
@@ -566,5 +569,110 @@ describe('the two layers', () => {
       ],
     })
     expect(resolved.pack.id).toBe('node-vite')
+  })
+})
+
+describe('approval rules', () => {
+  // A user pack (or, made into a built-in, a built-in) with one environment of the given tone and these rules.
+  const withRules = (tone: string, approvals: object[], over: Record<string, unknown> = {}) => ({
+    schema: 1,
+    id: 'acme-shop',
+    version: '1',
+    match: { remote: ['github.com/acme/*'] },
+    environments: [{ id: 'target', label: 'target', tone, approvals }],
+    ...over,
+  })
+  const asBuiltin = (pack: Record<string, unknown>) => {
+    const { match: _match, ...rest } = pack
+    return { ...rest, detect: [{ file: 'package.json', weight: 1, required: true }] }
+  }
+  const rule = (over: Record<string, unknown>) => ({ id: 'r', tool: 'Bash', commandRegex: '^npm run x', label: 'r', scope: 'once', ...over })
+  const reasonsOf = (pack: object, layer: 'built-in' | 'user' = 'user') => checkPack(pack, layer).reasons
+
+  test('a tool that matches every call needs a field that narrows it; a tool-only MCP rule is fine', async () => {
+    expect(reasonsOf(withRules('shared', [rule({ tool: '*', commandRegex: undefined })]))).toEqual([
+      'approval r: "tool": "*" matches every tool call; add a "commandRegex", "inputRegex" or "pathGlob" that narrows it',
+    ])
+    expect(reasonsOf(withRules('shared', [rule({ tool: '**', commandRegex: undefined })]))[0]).toContain('matches every tool call')
+    expect(reasonsOf(withRules('shared', [rule({ tool: '*' })]))).toEqual([])
+    expect(reasonsOf(withRules('prod', [{ id: 'deploy', tool: 'mcp__*__trigger_deploy', label: 'deploy', scope: 'once' }]))).toEqual([])
+  })
+
+  test("a permission rule as the tool, and a field the tool can't have, are refused with what to write instead", async () => {
+    expect(reasonsOf(withRules('shared', [rule({ tool: 'Bash(npm run *)' })]))).toEqual([
+      'approval r: "tool" is a tool name or glob such as "Bash" or "mcp__*__execute_sql", not a permission rule; put the command in "commandRegex"',
+    ])
+    expect(reasonsOf(withRules('shared', [rule({ tool: 'mcp__*__execute_sql' })]))).toEqual([
+      `approval r: "commandRegex" reads a shell command, but "tool": "mcp__*__execute_sql" isn't a shell tool (Bash, PowerShell, Monitor)`,
+    ])
+    expect(reasonsOf(withRules('shared', [rule({ commandRegex: undefined, pathGlob: 'db/**' })]))).toEqual([
+      `approval r: "pathGlob" reads a file path, but "tool": "Bash" isn't Edit, Write or NotebookEdit`,
+    ])
+    expect(reasonsOf(withRules('shared', [rule({ tool: 'PowerShell' }), rule({ id: 'files', tool: 'Write', commandRegex: undefined, pathGlob: 'db/**' })]))).toEqual([])
+  })
+
+  test('only your own pack loosens a shared or prod rule; a built-in asks every time', async () => {
+    const session = rule({ scope: 'session' })
+    const log = rule({ mode: 'log' })
+    expect(reasonsOf(asBuiltin(withRules('prod', [log])), 'built-in')).toEqual([`approval r: a built-in's prod rule asks; "mode": "log" comes only from a user pack`])
+    expect(reasonsOf(asBuiltin(withRules('shared', [session])), 'built-in')).toEqual([
+      `approval r: a built-in's shared rule asks every time; "scope": "session" comes only from a user pack`,
+    ])
+    expect(reasonsOf(asBuiltin(withRules('local', [session])), 'built-in')).toEqual([])
+    expect(reasonsOf(asBuiltin(withRules('shared', [log])), 'built-in')).toEqual([])
+    expect(reasonsOf(withRules('prod', [log, { ...session, id: 's' }]))).toEqual([])
+  })
+
+  test("an approval id may not be another entry's, nor one the pack switches off", async () => {
+    expect(reasonsOf(withRules('shared', [rule({ id: 'target' })]))).toEqual([
+      'approval target: the id is also an environment id in this pack or its built-in; "disable" would switch off both',
+    ])
+    expect(reasonsOf(withRules('shared', [rule({ id: 'eslint' })], { extends: ['node-vite'] }))[0]).toContain('the id is also a check id')
+    expect(reasonsOf(withRules('shared', [rule({})], { disable: ['r'] }))).toEqual([
+      'approval r: "disable" names this id, which switches the rule off; give the rule another id or leave it out',
+    ])
+  })
+
+  // Rows as Debug › Pack gets them, from the merge of a built-in and a user pack.
+  const BASE = {
+    schema: 1 as const,
+    id: 'base',
+    version: '1',
+    environments: [
+      { id: 'staging', label: 'staging', tone: 'shared' as const, approvals: [{ id: 'x', tool: 'Bash', commandRegex: 'a', label: 'x', scope: 'once' as const }] },
+      { id: 'prod', label: 'production', tone: 'prod' as const, approvals: [{ id: 'x', tool: 'Bash', commandRegex: 'a', label: 'x', scope: 'once' as const }] },
+    ],
+  }
+  const rowsOf = (user: object) => {
+    const { pack, entries } = mergeLayers([
+      { layer: 'built-in', pack: BASE },
+      { layer: 'user', pack: { schema: 1, id: 'mine', version: '1', ...user } },
+    ])
+    return entryRows(pack, entries).filter(e => e.section === 'approvals')
+  }
+
+  test('the same id in two environments is two rows, and one disable switches both off', async () => {
+    expect(rowsOf({}).map(r => [r.env, r.id, r.removedBy ?? '', r.approval?.envLabel])).toEqual([
+      ['staging', 'x', '', 'staging'],
+      ['prod', 'x', '', 'production'],
+    ])
+    expect(rowsOf({ disable: ['x'] }).map(r => [r.env, r.removedBy, r.approval])).toEqual([
+      ['staging', 'user', undefined],
+      ['prod', 'user', undefined],
+    ])
+  })
+
+  test('a switched-off environment takes its rules with it; a prod rule that logs or asks once a session is loosened', async () => {
+    expect(rowsOf({ disable: ['prod'] }).map(r => [r.env, r.removedBy ?? ''])).toEqual([
+      ['staging', ''],
+      ['prod', 'user'],
+    ])
+    const loosened = rowsOf({ environments: [{ id: 'prod', approvals: [{ id: 'x', tool: 'Bash', commandRegex: 'a', label: 'x', scope: 'once', mode: 'log' }] }] })
+    expect(loosened.map(r => [r.env, r.approval?.mode, r.approval?.isLoosened, r.layer, r.changedBy])).toEqual([
+      ['staging', 'ask', false, 'built-in', []],
+      ['prod', 'log', true, 'built-in', ['user']],
+    ])
+    const session = rowsOf({ environments: [{ id: 'staging', approvals: [{ id: 'x', tool: 'Bash', commandRegex: 'a', label: 'x', scope: 'session' }] }] })
+    expect(session.map(r => r.approval?.isLoosened)).toEqual([false, false])
   })
 })

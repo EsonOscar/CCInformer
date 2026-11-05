@@ -235,3 +235,55 @@ test("findings stay reachable: Rules is still drawn after the pack's checks are 
   expect(await viewTabs(ui)).toEqual(['view-git', 'view-rules'])
   await ui.unmount()
 })
+
+// A user pack with approval rules on staging and production, one of them loosened (a prod rule that only logs).
+const RULES_PACK = JSON.stringify({
+  schema: 1,
+  id: 'acme-shop',
+  version: '1',
+  match: { remote: ['github.com/acme/*'] },
+  environments: [
+    { id: 'staging', label: 'staging', tone: 'shared', approvals: [{ id: 'migrate', tool: 'Bash', commandRegex: '^npm run db:migrate\\b', label: 'staging migration', scope: 'once' }] },
+    { id: 'prod', label: 'production', tone: 'prod', approvals: [{ id: 'check', tool: 'Bash', commandRegex: '^npm run db:check\\b', label: 'prod check', mode: 'log', scope: 'once' }] },
+  ],
+})
+
+test('Debug › Pack lists each approval rule with its environment and what the gate does; a loosened prod rule is amber', async ($, on) => {
+  engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: RULES_PACK })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: /APPROVALS/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'staging · asks each time · user pack' })).toBeDefined()
+  const loosened = await ui.find({ type: 'Text', text: 'production · logs, no prompt, loosened · user pack' })
+  expect(loosened?.props.color).toBe('warning')
+  expect(await ui.find({ type: 'Text', text: '!' })).toBeDefined()
+  // The gates are on with nothing stored, so nothing says they're off.
+  expect(await ui.find({ type: 'Text', text: /Approval gates are off/ })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('with the Approval gates switch off, Debug › Pack says the rules neither ask nor log', async ($, on) => {
+  engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: RULES_PACK })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'settings' })
+  const settings = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await settings.press({ key: 'perm-safety.approvalGates' })
+  await settings.unmount()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'Approval gates are off in Debug › Settings (Safety): these rules neither ask nor log.' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a rule switched off with its environment is drawn off, with the layer that switched it off', async ($, on) => {
+  const pack = { ...JSON.parse(RULES_PACK), disable: ['prod'] }
+  engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: JSON.stringify(pack) })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  expect(await ui.find({ type: 'Text', text: 'prod · off in user pack' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: 'staging · asks each time · user pack' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '!' })).toBeUndefined()
+  await ui.unmount()
+})

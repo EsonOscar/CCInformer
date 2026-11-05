@@ -41,7 +41,7 @@ The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads
    In plan mode, put the draft and the paths in the plan instead: the plan's approval is the yes, and the write follows once plan mode ends. If the question can't be asked (no AskUserQuestion, as in a headless run), is dismissed or gets no clear yes, show the text only and write nothing.
 8. **An existing pack for this repo** (step 2 or 5): its text is in `packs` in the tool's answer to your draft. Show the diff between it and the fresh draft, and propose Edits to it that bring in what the repo now says and keep the person's own entries and comments. Remove an entry of theirs only when its source is gone from the repo, and say so. On yes, write a copy first, `<path>.<YYYYMMDD>.bak` (today's date; add `-2`, `-3` if that name exists; the name never ends in `.pack.jsonc`, so the mod never loads it), then make the Edits.
 9. **After writing**, call the tool with the written file's text and name: `draft.valid` true and `draft.shadowedBy` empty. Then point the person to `/ccinformer pack` (Debug › Pack), where it shows once the next turn starts.
-10. **Never in a pack:** secrets, tokens, passwords, env values, credentials in URLs, personal paths, and `approvals` (nothing acts on them yet).
+10. **Never in a pack:** secrets, tokens, passwords, env values, credentials in URLs and personal paths.
 
 ## Shared: reading the repo
 
@@ -74,6 +74,7 @@ The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads
 | a report script that prints a number, with a tracked baseline or limit | a budget: a `command` source with `parse` built from the script's print format as read in its source (never run it), a `ci-log` source with the exact job and step names, the baseline as a `json` source |
 | a long-running script the built-in doesn't recognise | a `processes` entry |
 | env file and deploy names | `environments`: production names get `"tone": "prod"`, staging and preview `"shared"`; `argRegex` from the scripts (`--mode staging`); `hostPatterns` only as the person answers "Which hosts mean `<env>`? I don't read env files." (options: "Leave hostPatterns out (Recommended)", or their own answer) |
+| scripts and MCP tools that touch a shared or prod environment (migrations, deploys, DB tests, load runs, database or hosting MCP writes) | that environment's `approvals`, one rule each, from the template: `"mode": "ask"` for a write, `"mode": "log"` for a read, `"scope": "once"`. A `commandRegex` is anchored (`^npm run db:migrate:staging\\b`) and also matches what the script's body targets, so running the body directly is caught; MCP tools are written `mcp__*__<tool>`, narrowed by `inputRegex` over the call's `key=value` arguments (`^project_id=<ref>$`), or by name alone for a tool that takes no such argument. Project ids and hosts only as the person gives them. `"scope": "session"`, or `"mode": "log"` on a prod rule, only when the person asks for it |
 | generated output | `noise` with `"kind": "generated"` |
 | files an editor rewrites on save (ids, counters it renumbers) | `noise` with `"kind": "editor-rewrite"` and the renumbered parts as `normalize` regexes |
 | plan files outside `.local/plans/` | `plans.globs` |

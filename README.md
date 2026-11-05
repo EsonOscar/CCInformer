@@ -1,6 +1,6 @@
 # CCInformer
 
-A Claude Code mod: a pane docked on the right of the terminal, or of a session in the desktop app's Code tab, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings. On a new install all of them start off except Safety (the band and the production status line), so the toasts, notes for Claude and background checks below come once you switch them on; an install from before 0.24.0 keeps the switches it had.
+A Claude Code mod: a pane docked on the right of the terminal, or of a session in the desktop app's Code tab, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings. On a new install all of them start off except Safety (the band, the production status line and the approval gates), so the toasts, notes for Claude and background checks below come once you switch them on; an install from before 0.24.0 keeps the switches it had.
 
 - **Now** (`1`)
   - **Env** (`e`): the processes this session started, which environment each points at and how long it has run; the processes your pack knows on this machine, with their memory; and free memory, with a toast when it runs low. Command lines and env values are never kept.
@@ -16,11 +16,13 @@ A Claude Code mod: a pane docked on the right of the terminal, or of a session i
 - **Debug** (`5`)
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its time, every model request with its tokens, and how the context grew, with compactions marked.
   - **Pack** (`p`): the [pack](#packs) this repo resolved to and where each value came from. `a` lets the repo's own tools run, or stops them.
-  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band and the production status line) stay as they are under both; you switch them off by hand. Last comes the planning skills' own switch, Plan files (`f`), which both leave alone too (see [Plans](#plans)). On a new install a bare `/ccinformer` opens here until you have seen it.
+  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band, the production status line and the approval gates) stay as they are under both; you switch them off by hand. Last comes the planning skills' own switch, Plan files (`f`), which both leave alone too (see [Plans](#plans)). On a new install a bare `/ccinformer` opens here until you have seen it.
 
 An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The top right shows the version running, such as `v0.19.0`. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
 
 **The band** above the prompt warns while a process Claude started targets a shared or production environment, as your pack defines them: `⚠ STAGING  npm run dev:staging  targets a shared environment`.
+
+**Approval gates** stop a tool call your pack's rules name, such as a staging migration or a deploy, for your OK before it runs, and log each one ([Approval gates](#approval-gates)).
 
 ## Requirements
 
@@ -105,13 +107,29 @@ A pack holds only these keys: `schema`, `id`, `version`, `match`, `detect` (buil
 
 **What a pack must hold.** Every entry has an `id`, and processes, environments, checks and budgets a `label`. Each kind has its own required fields: a check its `on`, `analyzer`, `cost` and `class`; a budget its `unit`, `direction`, `limit`, `sources` and `cost`; a `size-lines` check its `options.max`; `plans` its `globs`. Every value is of its kind (`hostPatterns` a list, `tone` one of `local`, `shared` or `prod`), and a key an entry doesn't take is refused, nested ones included, so a typo says so. A user pack needs `match.remote`; a built-in needs a `detect` rule with `"required": true`. An entry with the id of one in the built-in the user pack `extends` is read merged over it, so it names only the fields it changes.
 
-**Regexes.** Every regex a pack holds (a process's `match`, an environment's `argRegex`, a check's `options.pattern`, a budget source's `parse`, a noise rule's `normalize`, the plan patterns) must compile, stay within 300 characters, and neither repeat a group that itself repeats or branches (`(\w+)+`, `(a|b)+`) nor hold more than two `.*` or `.+`: a heuristic, as JS has no regex timeout. A field whose value is read from a group (`parse`, `envFrom.argRegex`, `plans.prRef`) needs one. In JSONC every backslash is written twice (`"\\b"`): a single `"\b"` is a backspace, and is refused. Process and environment patterns also run in .NET on Windows, so what .NET reads differently (an escape such as `\_` or `\q`, the classes `[]` and `[^]`) is refused there.
+**Regexes.** Every regex a pack holds (a process's `match`, an environment's `argRegex`, an approval's `commandRegex` and `inputRegex`, a check's `options.pattern`, a budget source's `parse`, a noise rule's `normalize`, the plan patterns) must compile, stay within 300 characters, and neither repeat a group that itself repeats or branches (`(\w+)+`, `(a|b)+`) nor hold more than two `.*` or `.+`: a heuristic, as JS has no regex timeout. A field whose value is read from a group (`parse`, `envFrom.argRegex`, `plans.prRef`) needs one. In JSONC every backslash is written twice (`"\\b"`): a single `"\b"` is a backspace, and is refused. Process and environment patterns also run in .NET on Windows, so what .NET reads differently (an escape such as `\_` or `\q`, the classes `[]` and `[^]`) is refused there.
 
 **Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo; the ones compared inside the mod (translation keys, Godot scenes) don't: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). With Turn checks on in Debug › Settings they run after each turn that wrote files, and with Turn check notes on Claude is told what they find. With Ask about repo trust on, the first such check asks once per repo, and never again, whatever you answer. All three start off on a new install. A yes holds until `a` in Debug › Pack (or `/ccinformer pack untrust`) takes it back.
 
 ### Environments
 
-The band and Now › Env place a process Claude starts by its environment: the command, with npm scripts expanded through `package.json`, matched by an environment's `argRegex`, or the hosts in the env file it reads (Vite's `.env.<mode>` for `--mode <mode>`) held against the environment's `hostPatterns`. Its `tone` (`local`, `shared` or `prod`) decides the band; a production one goes on the status line too.
+The band and Now › Env place a process Claude starts by its environment: the command, with npm scripts expanded through `package.json`, matched by an environment's `argRegex`, or the hosts in the env file it reads (Vite's `.env.<mode>` for `--mode <mode>`) held against the environment's `hostPatterns`. Its `tone` (`local`, `shared` or `prod`) decides the band; a production one goes on the status line too. `readOnly` has no effect yet: the approval rules decide what is gated.
+
+### Approval gates
+
+An environment can list `approvals`: tool calls that need your OK, such as a staging migration, a write through a database's MCP tool, or a deploy. A rule names a `tool`, a name or glob such as `Bash` or `mcp__*__execute_sql` (one shell tool names them all, so a `Bash` rule also meets the same command run through PowerShell or Monitor), and narrows it with any of these, all of which must match:
+
+- `commandRegex`: each command of a shell line, plus `npm run <name>` and that script's own commands as lines of their own. Anchor it (`^npm run db:migrate:staging\\b`), and match what the script targets as well, so running its body directly is caught too.
+- `inputRegex`: an MCP call's arguments, one `key=value` line each (`^project_id=<ref>$`). A tool that takes no such argument needs a rule on its name alone.
+- `pathGlob`: the repo path an Edit, Write or NotebookEdit writes.
+
+A matching call stops for a question: **Deny**, **Approve once**, and **Approve for this session** for a rule with `"scope": "session"`. Only those labels approve: text typed under "Other", a dismissed question, one left until Claude Code's away-from-keyboard timeout, a `-p` run or a gate that fails all refuse the call, and Claude is told why. A rule with `"mode": "log"` runs with no question and is still logged, which suits reads. In default mode Claude Code's own permission prompt may follow the gate's; in auto mode the gate asks only for what a rule names, so edits, local tests and git never stop.
+
+Every gated call leaves one line in `~/.claude/ccinformer/approvals/<repo>/<session>.jsonl` (a new file every 128 KiB or so): the time, the environment and rule, the tool, the script that matched (`npm run db:migrate:staging`, never the command line or a value), the folder, the branch and the answer (`approved`, `approved-session`, `session`, `logged`, `denied`, `other`, `no answer`, `busy` or `error`). The answer is what was said at the gate; Claude Code can still refuse the call after it. Nothing deletes old logs yet.
+
+A built-in pack's shared and prod rules ask every time; only your own pack can make one `log` or `session`, and Debug › Pack shows such a prod rule in amber, beside every rule's environment and what the gate does with it. When a user pack is refused, a toast says so, as its rules then don't apply. The gates are a Safety switch in Debug › Settings, on unless you switch it off.
+
+Limits: a pack's rules apply only in sessions started in the repo it matches, so a session started elsewhere reaches the same MCP connectors and hosts unasked; a route to a target that no rule names isn't gated; and nothing guards the packs folder or the log itself.
 
 ### Checks
 

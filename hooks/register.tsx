@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 import type {
-  AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, SkillsSettings, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
+  AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, SkillsSettings, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GateRules, GitSnapshot, MemoryReading,
   NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, areaFor, areaNames, shownView, viewsFor } from './areas'
@@ -18,10 +18,13 @@ import { createLanes, createSolo } from './core/lanes'
 import { EXPLAIN_TEXTS, NEW_INSTALL, allSet, choicesFrom, explainPrompt, isAllowed, startingChoices, toggled } from './core/permissions'
 import type { May, PermissionId } from './core/permissions'
 import { DEFAULT_SKILLS, SKILLS_FILE, readSkills, skillsText } from './core/skills'
-import { endedTaskIds, envTaskFor } from './env/classify'
+import { commandDir, endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
-import { classifyCommand } from './env/read'
+import { classifyCommand, scriptsAt } from './env/read'
+import { appendEvent } from './gates/ledger'
+import { answerOf, askFor, couldApply, denyText, eventScript, gateCall, gateRulesOf, isApproved, isShell, ledgerDir, pickGate, sessionKey } from './gates/match'
+import type { Answer } from './gates/match'
 import { manifestVersion, paneTitle } from './format'
 import { readUsage } from './usage'
 import { createGit } from './git/run'
@@ -136,6 +139,8 @@ const stepsAtom = atom({ plugin: 'ccinformer', key: 'steps' } as const, [] as St
 const compactionsAtom = atom({ plugin: 'ccinformer', key: 'compactions' } as const, [] as Compaction[])
 const sessionsAtom = atom({ plugin: 'ccinformer', key: 'sessions' } as const, [] as SessionBeat[])
 const packAtom = atom({ plugin: 'ccinformer', key: 'pack' } as const, null as PackReport | null)
+const gateRulesAtom = atom({ plugin: 'ccinformer', key: 'gateRules' } as const, null as GateRules | null)
+const sessionApprovalsAtom = atom({ plugin: 'ccinformer', key: 'sessionApprovals' } as const, [] as string[])
 const envTasksAtom = atom({ plugin: 'ccinformer', key: 'envTasks' } as const, [] as EnvTask[])
 const nowViewAtom = atom({ plugin: 'ccinformer', key: 'nowView' } as const, 'env' as NowView)
 const processesAtom = atom({ plugin: 'ccinformer', key: 'processes' } as const, null as ProcessList | null)
@@ -188,6 +193,96 @@ async function saveEnvTasks($: EngineInterface, tasks: EnvTask[]): Promise<void>
   const status = prod && may('safety.prodStatus') ? `⚠ PROD · ${prod.label || prod.envLabel}` : undefined
   if (status !== shownStatus) $.ui.status(status)
   shownStatus = status
+}
+
+// The approval gates' rules and this session's approvals, kept here as well as in state: a hook reads state as it
+// stood when its event began, so one that answers after another's approval reads that approval from here. State
+// keeps both over a hot reload, which starts these over.
+let gateMirror: GateRules | null = null
+let approvedMirror = new Set<string>()
+// Asks of the gate still open, so a question the host refuses at once while another is open reads as busy.
+let openAsks = 0
+const BUSY_MS = 1000
+// The refused user packs this session has warned about, by file and reasons.
+const warnedPacks = new Set<string>()
+
+async function readGateRules($: EngineInterface): Promise<GateRules | null> {
+  return (await read($, gateRulesAtom)) ?? gateMirror
+}
+
+async function saveGateRules($: EngineInterface, rules: GateRules): Promise<void> {
+  gateMirror = rules
+  await update($, gateRulesAtom, () => rules)
+}
+
+async function approveForSession($: EngineInterface, key: string): Promise<void> {
+  approvedMirror.add(key)
+  await update($, sessionApprovalsAtom, list => (list.includes(key) ? list : [...list, key]))
+}
+
+async function forgetSessionApprovals($: EngineInterface): Promise<void> {
+  approvedMirror = new Set()
+  await update($, sessionApprovalsAtom, () => [])
+}
+
+// What the approval gate says about one call: null lets it run, a text refuses it. It never calls next, so a throw
+// here is the gate's own (gateFailure decides then), and nothing that fails once the call ran refuses it.
+async function decideGate($: EngineInterface, tool: string, input: Record<string, unknown>): Promise<string | null> {
+  const rules = await readGateRules($)
+  // A routine call no rule could name costs this one state read.
+  if (!rules?.rules.some(g => couldApply(g.rule, tool, input))) return null
+  const command = isShell(tool) && typeof input.command === 'string' ? input.command : ''
+  const dir = commandDir(command)
+  const scripts = command ? await scriptsAt($, !dir ? cwd : /^([a-z]:|\/)/i.test(dir) ? dir : cwd + '/' + dir) : {}
+  for (const key of await read($, sessionApprovalsAtom)) approvedMirror.add(key)
+  const call = gateCall(tool, input, scripts, rules.root)
+  const picked = pickGate(rules.rules, call, approvedMirror)
+  if (!picked) return null
+  const { gate } = picked
+  let answer: Answer = picked.isSessionApproved ? 'session' : 'logged'
+  if (!picked.isSessionApproved && (gate.rule.mode ?? 'ask') === 'ask') {
+    const ask = askFor(gate, call)
+    const isAnotherOpen = openAsks > 0
+    openAsks += 1
+    const askedAt = await $.clock.now()
+    const reply = await $.ui.ask(ask.question, { options: ask.options, header: ask.header }).catch(() => null) // may: safety.approvalGates
+    openAsks -= 1
+    answer = answerOf(reply, ask.options)
+    if (reply === null && isAnotherOpen && (await $.clock.now()) - askedAt < BUSY_MS) answer = 'busy'
+    if (answer === 'approved-session') await approveForSession($, sessionKey(gate))
+  }
+  const head = await readBranch($).catch(() => '')
+  const event = { t: await $.clock.now(), env: gate.env, rule: gate.rule.id, tool, script: eventScript(call, gate.rule), cwd, head: head || undefined, answer }
+  // No event, no call: the log is part of the gate.
+  const isLogged = await appendEvent($, rules.ledgerDir, await $.session.id(), event).then(
+    () => true,
+    () => false,
+  )
+  if (!isLogged) return denyText(gate, 'error')
+  return isApproved(answer) ? null : denyText(gate, answer)
+}
+
+// A gate that failed refuses what a rule could name, logging it when it can, and lets the rest run; with no rules
+// to read, it refuses only shell and MCP calls. It never throws. The log write isn't awaited: in a .catch only `$`
+// calls are free, and a write waiting its turn could outlast the grace.
+async function gateFailure($: EngineInterface, tool: string, input: Record<string, unknown>): Promise<string | null> {
+  const isRisky = isShell(tool) || /^mcp__/i.test(tool)
+  try {
+    const stored = await read($, gateRulesAtom).then(
+      r => r ?? gateMirror,
+      () => undefined,
+    )
+    const rules = stored === undefined ? gateMirror : stored
+    if (!rules) return stored === undefined && isRisky ? denyText(null, 'error') : null
+    const gate = rules.rules.find(g => couldApply(g.rule, tool, input))
+    if (!gate) return null
+    const t = await $.clock.now().catch(() => 0)
+    const sessionId = await $.session.id().catch(() => '')
+    if (sessionId) void appendEvent($, rules.ledgerDir, sessionId, { t, env: gate.env, rule: gate.rule.id, tool, cwd, answer: 'error' }).catch(() => undefined)
+    return denyText(gate, 'error')
+  } catch {
+    return isRisky ? denyText(null, 'error') : null
+  }
 }
 
 // The Debug › Settings choices, kept here as well as in state so every gate decides at once with no `$` call. Only
@@ -398,11 +493,33 @@ export const register: Register = on => {
         packReport = report
         packResolved = pack
         await update($, packAtom, () => report)
+        await saveGates(pack, report)
         packStamp = await packSignature($, report.root, configDir)
         return report
       })().finally(() => {
         packLoad = null
       }))
+    // The approval gates read their rules from state. A remote that couldn't be read matches no user pack, so the
+    // rules already known for this folder stay rather than going quietly. A refused user pack is said once, unless
+    // this repo has a pack of its own that loaded.
+    const saveGates = async (pack: ResolvedPack, report: PackReport) => {
+      const known = await readGateRules($)
+      const isRemoteLost = !report.remote && !!known?.rules.length && known.root === report.root
+      if (!isRemoteLost) await saveGateRules($, gateRulesOf(pack, report.root, ledgerDir(configDir, report.repoKey)))
+      const hasOwn = report.layers.some(l => l.layer === 'user' && l.state === 'loaded')
+      for (const l of report.layers.filter(l => l.layer === 'user' && (l.state === 'refused' || l.state === 'broken'))) {
+        const key = l.source + '\n' + l.reasons.join('\n')
+        if (warnedPacks.has(key)) continue
+        warnedPacks.add(key)
+        const name = l.source.split(/[\\/]/).pop() ?? l.source
+        if (!hasOwn && may('safety.approvalGates')) $.ui.toast(`A user pack was refused (${name}), so its approval rules don't apply. Debug › Pack says why.`)
+      }
+    }
+    // Read before the session's first tool call, so the gates have their rules from the start.
+    const hadRules = !!(await read($, gateRulesAtom))?.rules.length
+    await reloadPack().catch(() => {
+      if (hadRules && may('safety.approvalGates')) $.ui.toast("CCInformer couldn't read this repo's pack, so its approval rules don't apply yet (Debug › Pack).")
+    })
     // The processes the pack knows on this machine, and the free memory: one query for both, through the light
     // lane. A toast says so once when memory runs low, and again only after it recovered.
     const platform: Platform = (await $.env.get('OS')) === 'Windows_NT' ? 'windows' : 'posix'
@@ -696,7 +813,8 @@ export const register: Register = on => {
       },
       // A main turn starts: read the pack again if a file it comes from changed.
       checkPack: async () => {
-        if (packReport && (await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
+        if (!packReport) await reloadPack()
+        else if ((await packSignature($, packReport.root, configDir)) !== packStamp) await reloadPack()
       },
       // A user pack draft, checked against this repo and the packs folder as they are now; nothing is written. The
       // first look (no draft) also carries the skill's template, read from the mod's own folder.
@@ -766,7 +884,6 @@ export const register: Register = on => {
     }
     $.clock.every(TICK_MS, () => void tick())
     void beat(startedAt)
-    void reloadPack()
 
     // Reopen where it was left; the engine seats a pane opened unasked only in a wide terminal.
     if ((await $.store.get(STORE_OPEN)) === true && may('show.paneReopen')) {
@@ -787,6 +904,8 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     // A /clear or /resume keeps the session's process; only a real end takes it off the Sessions tab.
     if (selfId && e.reason !== 'clear' && e.reason !== 'resume') await $.store.delete(STORE_SESSION + selfId)
+    // The session goes on under a new id: an approval for "this session" doesn't carry over.
+    if (e.reason === 'clear' || e.reason === 'resume') await forgetSessionApprovals($)
     return next(e)
   })
 
@@ -978,10 +1097,32 @@ export const register: Register = on => {
     if (isWritten) lastWriteAt = await $.clock.now()
     const note = isWritten ? await live?.checkFile(input.file_path as string) : ''
     return note && may('claude.inlineNotes') ? ({ ...result, context: [...(result.context ?? []), note] } as typeof result) : result
-    // A failing recorder lets the call run, except in CI's read-only turn, where it is still refused.
-  }).catch(($, e, next) =>
-    next.called ? next(e) : !e.agentId && ciState.guardedTurn && !isReadOnlyTool(String(e.tool)) ? { deny: CI_TEXTS.guardDeny } : next(e),
-  )
+    // A failing recorder lets the call run, except in CI's read-only turn, where it is still refused, and a call an
+    // approval rule could name: a gate beneath that failed lands here too, so it is refused the way the gate would.
+  }).catch(async ($, e, next) => {
+    if (next.called) return next(e)
+    const tool = String(e.tool)
+    if (!e.agentId && ciState.guardedTurn && !isReadOnlyTool(tool)) return { deny: CI_TEXTS.guardDeny }
+    const deny = tool !== 'AskUserQuestion' && may('safety.approvalGates') ? await gateFailure($, tool, e as unknown as Record<string, unknown>) : null
+    return deny === null ? next(e) : { deny }
+  })
+
+  // Approval gates (hooks/gates): a call one of the pack's rules names is asked first, or with a log rule only logged,
+  // and either way written to this session's log before it runs. Inside the recorder, so a refused call is recorded
+  // as denied; AskUserQuestion, the gate's own question among them, never reaches it. Subagents' calls are gated too.
+  // The gate catches its own failures: within one mod a hook beneath that throws fails the hooks above it, the
+  // recorder here, whose .catch would let the call run.
+  on('tool.call', { tool: /^(?!AskUserQuestion$)/ }, async ($, e, next) => {
+    if (!may('safety.approvalGates')) return next(e)
+    const tool = String(e.tool)
+    const input = e as unknown as Record<string, unknown>
+    const deny = await decideGate($, tool, input).catch(() => gateFailure($, tool, input))
+    return deny === null ? next(e) : { deny }
+  }).catch(async ($, e, next) => {
+    if (next.called || !may('safety.approvalGates')) return next(e)
+    const deny = await gateFailure($, String(e.tool), e as unknown as Record<string, unknown>)
+    return deny === null ? next(e) : { deny }
+  })
 
   on('agent.spawn', async ($, e, next) => {
     const startedAt = await $.clock.now()

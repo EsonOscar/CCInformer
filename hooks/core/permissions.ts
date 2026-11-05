@@ -131,6 +131,14 @@ export const PERMISSIONS = [
     description: 'The status line while a process Claude started targets production.',
     isOnByDefault: true,
   },
+  {
+    id: 'safety.approvalGates',
+    group: 'safety',
+    label: 'Approval gates',
+    description:
+      "Asks before a tool call your pack's approval rules name (or only logs it, for a rule in log mode), and keeps a log of each under ~/.claude/ccinformer/approvals/.",
+    isOnByDefault: true,
+  },
 ] as const satisfies readonly PermissionDef[]
 
 export type PermissionId = (typeof PERMISSIONS)[number]['id']

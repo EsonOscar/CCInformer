@@ -5,7 +5,8 @@ import type { EnvRule, Layer, ListSection, PackManifest, ResolvedPack, Tone } fr
 export type LayerInput = { layer: Layer; pack: PackManifest }
 
 // One value of the resolved pack and the layer that set it; a later layer that changed it, or switched it off.
-export type Entry = { section: string; id: string; label: string; layer: Layer; changedBy: Layer[]; removedBy?: Layer }
+// An approval's entry also names its environment: rules in two environments may share an id.
+export type Entry = { section: string; id: string; label: string; layer: Layer; changedBy: Layer[]; removedBy?: Layer; env?: string }
 
 type Item = { id: string; label?: string; glob?: string; kind?: string }
 
@@ -18,13 +19,14 @@ const labelOf = (item: Item): string => item.label ?? item.glob ?? item.kind ?? 
 export const mergeLayers = (layers: LayerInput[]): { pack: ResolvedPack; entries: Entry[] } => {
   let pack: ResolvedPack = { ...EMPTY }
   const entries = new Map<string, Entry>()
-  const key = (section: string, id: string) => section + '\u0000' + id
-  const set = (section: string, item: Item, layer: Layer) => {
-    const old = entries.get(key(section, item.id))
+  const key = (section: string, id: string, env?: string) => section + '\u0000' + (env ? env + '/' : '') + id
+  const set = (section: string, item: Item, layer: Layer, env?: string) => {
+    const k = key(section, item.id, env)
+    const old = entries.get(k)
     // An entry that changes only some fields of an earlier one keeps that one's label unless it names its own.
-    entries.set(key(section, item.id), old && !old.removedBy
+    entries.set(k, old && !old.removedBy
       ? { ...old, label: item.label ?? old.label, changedBy: [...old.changedBy, layer] }
-      : { section, id: item.id, label: labelOf(item), layer, changedBy: [] })
+      : { section, id: item.id, label: labelOf(item), layer, changedBy: [], ...(env ? { env } : {}) })
   }
 
   for (const input of layers) {
@@ -36,14 +38,15 @@ export const mergeLayers = (layers: LayerInput[]): { pack: ResolvedPack; entries
       for (const item of list) set(section, item, input.layer)
     }
     pack = { ...pack, environments: pack.environments.map(env => withApprovals(env, layers, input)) }
-    for (const env of next.environments ?? []) for (const a of env.approvals ?? []) set('approvals', a, input.layer)
+    for (const env of next.environments ?? []) for (const a of env.approvals ?? []) set('approvals', a, input.layer, env.id)
     if (next.plans) {
       pack = { ...pack, plans: { ...pack.plans, ...next.plans } }
       set('plans', { id: 'plans', label: next.plans.globs.join(', ') }, input.layer)
     }
     for (const id of next.disable ?? []) {
       pack = disableId(pack, id)
-      for (const entry of entries.values()) if (entry.id === id && !entry.removedBy) entries.set(key(entry.section, id), { ...entry, removedBy: input.layer })
+      // Each entry with the id, in any section and environment, under its own key.
+      for (const [k, entry] of entries) if (entry.id === id && !entry.removedBy) entries.set(k, { ...entry, removedBy: input.layer })
     }
   }
   return { pack, entries: [...entries.values()] }

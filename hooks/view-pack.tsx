@@ -1,4 +1,4 @@
-import type { PackEntryRow, PackLayerRow, PackReport } from '../types'
+import type { PackApprovalRow, PackEntryRow, PackLayerRow, PackReport } from '../types'
 import { ACTIONS } from './areas'
 import { ago, lastSegment } from './format'
 import { SECTION_ORDER } from './packs/merge'
@@ -23,13 +23,20 @@ const SECTION_TITLES: Record<string, string> = {
   plans: 'Plans',
 }
 
-// `isToldClaude`: Debug › Settings lets the turn checks run and tell Claude what they find.
-export type PackNav = { toggleTrust: () => void; isToldClaude: boolean }
+// `isToldClaude`: Debug › Settings lets the turn checks run and tell Claude what they find. `isGateOn`: its Approval
+// gates switch is on, so the approval rules ask and log.
+export type PackNav = { toggleTrust: () => void; isToldClaude: boolean; isGateOn: boolean }
+
+export const GATES_OFF = 'Approval gates are off in Debug › Settings (Safety): these rules neither ask nor log.'
+
+// What the gate does with a rule, as Debug › Pack says it.
+export const approvalText = (a: PackApprovalRow): string =>
+  (a.mode === 'log' ? 'logs, no prompt' : a.scope === 'session' ? 'asks once a session' : 'asks each time') + (a.isLoosened ? ', loosened' : '')
 
 // What this repo's pack came to: each layer and how it went, whether the repo's own tools may run, and every value
 // with the layer that set it.
 export const PackView = (k: Kit, report: PackReport | null, now: number, nav: PackNav): JSX.Element => {
-  const { Box } = k
+  const { Box, Text } = k
   if (!report) return <Box flexDirection="column">{Section(k, 'Pack')}{Empty(k, 'Reading the pack…')}</Box>
   const sections = SECTION_ORDER.map(s => ({ section: s, rows: report.entries.filter(e => e.section === s) })).filter(s => s.rows.length > 0)
   return (
@@ -41,7 +48,12 @@ export const PackView = (k: Kit, report: PackReport | null, now: number, nav: Pa
       {sections.map(s => (
         <Box key={'pack-' + s.section} flexDirection="column">
           {Section(k, SECTION_TITLES[s.section] ?? s.section, String(s.rows.length))}
-          {s.rows.map(e => Entry(k, e, report.trust.isTrusted))}
+          {s.section === 'approvals' && !nav.isGateOn && (
+            <Text key="gates-off" color="warning" wrap="wrap">
+              {GATES_OFF}
+            </Text>
+          )}
+          {s.rows.map(e => (s.section === 'approvals' ? ApprovalEntry(k, e) : Entry(k, e, report.trust.isTrusted)))}
         </Box>
       ))}
     </Box>
@@ -103,16 +115,18 @@ const Trust = (k: Kit, report: PackReport, now: number, nav: PackNav): JSX.Eleme
   )
 }
 
+const layersOf = (e: PackEntryRow): string => [LAYER_NAMES[e.layer], ...e.changedBy.map(l => '→ ' + LAYER_NAMES[l])].join(' ')
+
 const Entry = (k: Kit, e: PackEntryRow, isTrusted: boolean): JSX.Element => {
   const { Box, Text } = k
-  const from = [LAYER_NAMES[e.layer], ...e.changedBy.map(l => '→ ' + LAYER_NAMES[l])].join(' ')
+  const from = layersOf(e)
   const glyph: Glyph = e.removedBy
     ? { char: '–', color: 'inactive', dim: true }
     : e.needsTrust && !isTrusted
       ? { char: '◌', color: 'warning' }
       : { char: '•', color: ACCENT }
   return (
-    <Box key={'entry-' + e.section + e.id}>
+    <Box key={'entry-' + e.section + (e.env ?? '') + e.id}>
       {Line(
         k,
         glyph,
@@ -120,6 +134,30 @@ const Entry = (k: Kit, e: PackEntryRow, isTrusted: boolean): JSX.Element => {
           {e.label + (e.label !== e.id ? ' · ' + e.id : '')}
         </Text>,
         <Text dimColor>{e.removedBy ? 'off in ' + LAYER_NAMES[e.removedBy] : from}</Text>,
+      )}
+    </Box>
+  )
+}
+
+// An approval rule: its environment and what the gate does with it, amber when a person's own pack loosened a prod
+// rule (it only logs, or asks once a session). A row kept by an older version, with no details, is drawn plainly.
+const ApprovalEntry = (k: Kit, e: PackEntryRow): JSX.Element => {
+  const { Box, Text } = k
+  const a = e.approval
+  if (!e.removedBy && !a) return Entry(k, e, true)
+  const isLoosened = !!a?.isLoosened
+  const glyph: Glyph = e.removedBy ? { char: '–', color: 'inactive', dim: true } : isLoosened ? { char: '!', color: 'warning' } : { char: '•', color: ACCENT }
+  const where = a?.envLabel ?? e.env ?? ''
+  const right = e.removedBy ? `${where} · off in ${LAYER_NAMES[e.removedBy]}` : `${where} · ${approvalText(a!)} · ${layersOf(e)}`
+  return (
+    <Box key={'entry-' + e.section + (e.env ?? '') + e.id}>
+      {Line(
+        k,
+        glyph,
+        <Text dimColor={!!e.removedBy} wrap="truncate-end">
+          {e.label + (e.label !== e.id ? ' · ' + e.id : '')}
+        </Text>,
+        isLoosened ? <Text color="warning">{right}</Text> : <Text dimColor>{right}</Text>,
       )}
     </Box>
   )

@@ -1,3 +1,4 @@
+import { PATH_TOOLS, SHELL_TOOLS, toolGlobMatches } from '../gates/match'
 import { BUILTINS } from './builtins'
 import {
   ANALYZERS,
@@ -231,7 +232,8 @@ export const checkPack = (value: unknown, layer: 'built-in' | 'user'): Checked<P
     if (env.approvals === undefined) continue
     reasons.push(...checkList('environments.' + String(env.id) + '.approvals', env.approvals))
     for (const a of Array.isArray(env.approvals) ? env.approvals.filter(isObject) : [])
-      if (typeof a.id === 'string' && a.id) reasons.push(...checkShape(`approval ${a.id}`, a, APPROVAL_SHAPE, APPROVAL_REQUIRED))
+      if (typeof a.id === 'string' && a.id)
+        reasons.push(...checkShape(`approval ${a.id}`, a, APPROVAL_SHAPE, APPROVAL_REQUIRED), ...approvalReasons(a, env, layer, idsOf(value, base), value.disable))
   }
   for (const p of merged.processes as Record<string, unknown>[])
     if (p.envFrom !== undefined)
@@ -241,6 +243,48 @@ export const checkPack = (value: unknown, layer: 'built-in' | 'user'): Checked<P
   if (value.plans !== undefined) reasons.push(...checkPlans(value.plans))
   reasons.push(...regexReasons(merged))
   return reasons.length ? { reasons } : { value: value as PackManifest, reasons: [] }
+}
+
+// What a gate reads, so a rule can't silently never fire, or fire on everything.
+const TOOL_GLOB = /^[A-Za-z0-9_*?.-]+$/
+const COMMON_TOOLS = ['Read', 'Edit', 'Bash', 'AskUserQuestion']
+
+// Every list entry's id in a pack and the built-in it builds on, with its section: `disable` takes one id for all.
+const idsOf = (value: Record<string, unknown>, base: PackManifest | undefined): Map<string, string> => {
+  const ids = new Map<string, string>()
+  for (const pack of [base as Record<string, unknown> | undefined, value])
+    for (const section of LIST_SECTIONS)
+      for (const entry of Array.isArray(pack?.[section]) ? (pack[section] as unknown[]).filter(isObject) : [])
+        if (typeof entry.id === 'string') ids.set(entry.id, SECTIONS[section].name)
+  return ids
+}
+
+// An approval rule's own sense: a tool name or glob, the fields its tool can have, nothing that matches every call,
+// a built-in that never loosens a shared or prod rule (only a person's own pack does), and an id that `disable`
+// can't confuse with another entry's.
+const approvalReasons = (a: Record<string, unknown>, env: Record<string, unknown>, layer: 'built-in' | 'user', ids: Map<string, string>, disable: unknown): string[] => {
+  const where = `approval ${String(a.id)}`
+  const reasons: string[] = []
+  const tool = typeof a.tool === 'string' ? a.tool : ''
+  const isNarrowed = ['commandRegex', 'inputRegex', 'pathGlob'].some(k => typeof a[k] === 'string' && a[k])
+  if (tool && !TOOL_GLOB.test(tool))
+    reasons.push(`${where}: "tool" is a tool name or glob such as "Bash" or "mcp__*__execute_sql", not a permission rule; put the command in "commandRegex"`)
+  else if (tool) {
+    if (!isNarrowed && COMMON_TOOLS.every(t => toolGlobMatches(tool, t)))
+      reasons.push(`${where}: "tool": "${tool}" matches every tool call; add a "commandRegex", "inputRegex" or "pathGlob" that narrows it`)
+    if (a.commandRegex !== undefined && !SHELL_TOOLS.some(t => toolGlobMatches(tool, t)))
+      reasons.push(`${where}: "commandRegex" reads a shell command, but "tool": "${tool}" isn't a shell tool (${SHELL_TOOLS.join(', ')})`)
+    if (a.pathGlob !== undefined && !PATH_TOOLS.some(t => toolGlobMatches(tool, t)))
+      reasons.push(`${where}: "pathGlob" reads a file path, but "tool": "${tool}" isn't Edit, Write or NotebookEdit`)
+  }
+  const tone = env.tone
+  if (layer === 'built-in' && (tone === 'shared' || tone === 'prod') && a.scope === 'session')
+    reasons.push(`${where}: a built-in's ${tone} rule asks every time; "scope": "session" comes only from a user pack`)
+  if (layer === 'built-in' && tone === 'prod' && a.mode === 'log') reasons.push(`${where}: a built-in's prod rule asks; "mode": "log" comes only from a user pack`)
+  const section = typeof a.id === 'string' ? ids.get(a.id) : undefined
+  if (section) reasons.push(`${where}: the id is also ${/^[aeiou]/.test(section) ? 'an' : 'a'} ${section} id in this pack or its built-in; "disable" would switch off both`)
+  if (isStrings(disable) && disable.includes(String(a.id))) reasons.push(`${where}: "disable" names this id, which switches the rule off; give the rule another id or leave it out`)
+  return reasons
 }
 
 // A user pack's `match`: only `remote`, globs over the remote's host/owner/repo, at least one.
@@ -566,7 +610,7 @@ const regexReasons = (value: Record<string, unknown>): string[] => {
   for (const e of list('environments')) {
     reasons.push(...checkRegex(`environment ${String(e.id)}`, 'argRegex', e.argRegex, { flags: 'm', isDotnet: true }))
     for (const a of Array.isArray(e.approvals) ? e.approvals.filter(isObject) : [])
-      for (const field of ['commandRegex', 'inputRegex']) reasons.push(...checkRegex(`approval ${String(a.id)}`, field, a[field]))
+      for (const field of ['commandRegex', 'inputRegex']) reasons.push(...checkRegex(`approval ${String(a.id)}`, field, a[field], { flags: 'm' }))
   }
   for (const c of list('checks'))
     if (c.analyzer === 'regex-lines' || c.analyzer === 'problem-matcher')
