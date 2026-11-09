@@ -48,6 +48,8 @@ export type PaneData = {
   compactions: Compaction[]
   sessions: SessionBeat[]
   pack: PackReport | null
+  // Why the last read of the pack failed; '' once one succeeds.
+  packFailed: string
   findings: Finding[]
   dismissed: string[]
   checkRuns: CheckRun[]
@@ -178,7 +180,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
     : d.area === 'work' && d.workView === 'stats' ? StatsView(k, d.stats, d.statsName, width, nav.pickStats)
     : d.area === 'work' && d.workView === 'plans' ? PlansView(k, d.plans, d.now, planNav, d.skills.planFiles)
     : d.area === 'debug' && d.debugView === 'settings' ? SettingsView(k, d.permissions, d.skills, settingsNav)
-    : d.area === 'debug' && d.debugView === 'pack' ? PackView(k, d.pack, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes'), isGateOn: isAllowed(d.permissions, 'safety.approvalGates') })
+    : d.area === 'debug' && d.debugView === 'pack' ? PackView(k, d.pack, d.packFailed, d.now, { toggleTrust: nav.toggleTrust, isToldClaude: isAllowed(d.permissions, 'bg.turnChecks') && isAllowed(d.permissions, 'claude.turnNotes'), isGateOn: isAllowed(d.permissions, 'safety.approvalGates') })
     : d.area === 'debug' ? DebugPanel(k, d.debugView, debugData, d.now, width)
     : null
   // A full-width line in a box one row high that hides what doesn't fit: off the terminal a ─ is drawn wider than a

@@ -139,6 +139,7 @@ const stepsAtom = atom({ plugin: 'ccinformer', key: 'steps' } as const, [] as St
 const compactionsAtom = atom({ plugin: 'ccinformer', key: 'compactions' } as const, [] as Compaction[])
 const sessionsAtom = atom({ plugin: 'ccinformer', key: 'sessions' } as const, [] as SessionBeat[])
 const packAtom = atom({ plugin: 'ccinformer', key: 'pack' } as const, null as PackReport | null)
+const packFailedAtom = atom({ plugin: 'ccinformer', key: 'packFailed' } as const, '')
 const gateRulesAtom = atom({ plugin: 'ccinformer', key: 'gateRules' } as const, null as GateRules | null)
 const sessionApprovalsAtom = atom({ plugin: 'ccinformer', key: 'sessionApprovals' } as const, [] as string[])
 const envTasksAtom = atom({ plugin: 'ccinformer', key: 'envTasks' } as const, [] as EnvTask[])
@@ -183,6 +184,14 @@ async function setPaneTop($: EngineInterface, top: number): Promise<void> {
   if (top === paneTop) return
   paneTop = top
   await update($, paneTopAtom, () => top)
+}
+
+// Shows a view in the area that has it; a name no area has changes nothing.
+async function writeView($: EngineInterface, view: string): Promise<void> {
+  if (view === 'runs' || view === 'stats' || view === 'plans') await update($, workViewAtom, () => view)
+  if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
+  if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
+  if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack' || view === 'settings') await update($, debugViewAtom, () => view)
 }
 
 // Writes the tracked processes; the status line names a production one too, as a backup for the band.
@@ -482,14 +491,18 @@ export const register: Register = on => {
     const solo = createSolo()
     // The pack: read at start, and again when a file it comes from has changed. A reload asked for while one
     // runs joins it. The latest report is kept here too: a hook reads state as it stood when its event began, so
-    // one that waited for a load reads the load's result from here.
+    // one that waited for a load reads the load's result from here. A failed read says why in Debug › Pack.
     let packStamp = ''
     let packReport: PackReport | null = null
     let packResolved: ResolvedPack | null = null
     let packLoad: Promise<PackReport> | null = null
     const reloadPack = (): Promise<PackReport> =>
       (packLoad ??= (async () => {
-        const { pack, report } = await loadPack($, exec, cwd, configDir)
+        const { pack, report } = await loadPack($, exec, cwd, configDir).catch(async (err: unknown) => {
+          await update($, packFailedAtom, () => (err instanceof Error ? err.message : String(err)))
+          throw err
+        })
+        await update($, packFailedAtom, () => '')
         packReport = report
         packResolved = pack
         await update($, packAtom, () => report)
@@ -750,6 +763,8 @@ export const register: Register = on => {
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
       if (area === 'now' && (await read($, nowViewAtom)) === 'env') await refreshProcesses()
       if (area === 'debug') await queueChoices($).then(loadSkills)
+      // A pack that couldn't be read at start is tried again whenever Debug is shown or refreshed.
+      if (area === 'debug' && !packReport) await reloadPack().catch(() => undefined)
     }
 
     live = {
@@ -758,10 +773,7 @@ export const register: Register = on => {
       showArea: async ({ area, view }) => {
         await setPaneTop($, 0)
         await update($, areaAtom, () => area)
-        if (view === 'runs' || view === 'stats' || view === 'plans') await update($, workViewAtom, () => view)
-        if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
-        if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
-        if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack' || view === 'settings') await update($, debugViewAtom, () => view)
+        if (view) await writeView($, view)
         if (view === 'settings') void markSettingsShown($).catch(() => undefined)
         await $.store.set(STORE_AREA, area)
         await refresh(area)
@@ -938,8 +950,9 @@ export const register: Register = on => {
     // A new install's bare /ccinformer opens on Debug › Settings until they have been shown, without keeping that area
     // for the next session. Decided from what is read here, as state this hook writes reads back as it was when it began.
     const isFirstOpen = !arg && (await $.store.get(STORE_SETTINGS_FIRST).catch(() => undefined)) === true
-    // The area is set before the pane opens, so its first drawing is the right one.
+    // The area and view are set before the pane opens, so its first drawing is the right one.
     if (target) await update($, areaAtom, () => target.area)
+    if (target?.view) await writeView($, target.view)
     // A pane opened again starts at the top: what it showed may have got shorter while it was closed.
     await setPaneTop($, 0)
     if (isFirstOpen) {
@@ -1222,14 +1235,14 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRuns, budgets, plans, usage, contentTop, ciActive, version, permissions, skills] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRuns, budgets, plans, usage, contentTop, ciActive, version, permissions, skills, packFailed] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunsAtom),
-      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom),
+      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom), read($, packFailedAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, findings, dismissed, checkRuns, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
+      tools, steps, compactions, sessions, pack, packFailed, findings, dismissed, checkRuns, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
       surface: String(e.surface),

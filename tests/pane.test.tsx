@@ -16,9 +16,9 @@ const PANE = {
 } as const
 
 // Nothing sits beneath the plugin in a test: these hooks stand for the engine. `opened` collects the ids of the
-// panes the plugin opens.
-const engine = (on: Parameters<TestBody>[1], opened: string[] = []) => {
-  mock.clock(on, { now: 1_000_000 })
+// panes the plugin opens; `onOpen` runs as a pane opens, before the plugin's open resolves.
+const engine = (on: Parameters<TestBody>[1], opened: string[] = [], onOpen = async () => {}) => {
+  const clock = mock.clock(on, { now: 1_000_000 })
   // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
   mock.store(on, { permissions: { base: 'defaults', set: {} } })
   mock.env(on, { HOME: '/home/test' })
@@ -28,14 +28,16 @@ const engine = (on: Parameters<TestBody>[1], opened: string[] = []) => {
   on('process.run', () => ({ value: { exitCode: 128, stdout: '', stderr: 'not a git repository', isStdoutTruncated: false, isStderrTruncated: false } }))
   on('agent.list', () => ({ value: [] }))
   on('command.register', (_, e) => ({ value: { command: e.name } }))
-  on('ui.open', (_, e) => {
+  on('ui.open', async (_, e) => {
     opened.push(e.id)
+    await onOpen()
     return { value: { isPlaced: true } }
   })
   // The mod's own manifest; no other file exists.
   on('fs.read', (_, e) => ({ value: /plugin\.json$/.test(e.path) ? '{ "name": "ccinformer", "version": "9.8.7" }' : null }) as never)
   on('session.start', (_, e) => ({ cwd: e.cwd }))
   on('tool.call', () => ({ result: {}, text: 'ok' }))
+  return clock
 }
 
 test('/ccinformer and its alias /side both open the pane, which names itself as a working copy', async ($, on) => {
@@ -56,6 +58,29 @@ test('/ccinformer and its alias /side both open the pane, which names itself as 
   expect(await ui.find({ type: 'Text', text: 'v9.8.7' })).toBeDefined()
   expect(await ui.find({ key: 'area-debug' })).toBeDefined()
   await ui.unmount()
+})
+
+test('/ccinformer <view> opens the pane already on that view, so its first drawing shows it', async ($, on) => {
+  // The headings each view draws first; each case moves to another view than the one shown before.
+  const cases = [
+    { view: 'settings', heading: '▍SETTINGS' },
+    { view: 'context', heading: '▍CONTEXT' },
+    { view: 'plans', heading: '▍PLANS' },
+    { view: 'sessions', heading: '▍THIS FOLDER' },
+    { view: 'env', heading: '▍STARTED HERE' },
+  ]
+  const firsts: string[] = []
+  const clock = engine(on, [], async () => {
+    const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+    const texts = (await ui.findAll({ type: 'Text' })) as { text?: string }[]
+    firsts.push(texts.map(t => t.text ?? '').find(t => t.startsWith('▍')) ?? '')
+    await ui.unmount()
+  })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  const typed = { origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 160 } } as const
+  for (const c of cases) await $.command.run({ ...typed, command: 'ccinformer', args: c.view })
+  await clock.settle()
+  expect(cases.map((c, i) => (firsts[i] ?? '').slice(0, c.heading.length))).toEqual(cases.map(c => c.heading))
 })
 
 test('the areas draw, and a tool call shows in Debug', async ($, on) => {
