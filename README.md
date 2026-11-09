@@ -1,47 +1,40 @@
 # CCInformer
 
-A Claude Code mod: a pane docked on the right of the terminal, or of a session in the desktop app's Code tab, in five areas you switch with `1`-`5`. Timeline (`4`) isn't built yet, so it isn't drawn. Everything it does by itself (telling Claude what checks found, toasts and notifications, checks in the background) has a switch in Debug › Settings. On a new install all of them start off except Safety (the band, the production status line and the approval gates), so the toasts, notes for Claude and background checks below come once you switch them on; an install from before 0.24.0 keeps the switches it had.
+A side pane for Claude Code, docked on the right of the terminal or of the desktop app's Code tab: your sessions and processes, git and CI, workflow runs and plans, and checks on what Claude writes.
+
+Everything it does by itself has a switch in Debug › Settings. A new install starts with them all off except Safety (the band, the production status line, the approval gates) and Plan files.
+
+## Areas
+
+The digits shown switch areas; the letters shown switch views and run actions.
 
 - **Now** (`1`)
-  - **Env** (`e`): the processes this session started, which environment each points at and how long it has run; the processes your pack knows on this machine, with their memory; and free memory, with a toast when it runs low. Command lines and env values are never kept.
-  - **Sessions** (`s`): the other Claude sessions on this machine that have Tell other sessions on in Debug › Settings, and what each is working on, with a warning when another one works in this folder.
+  - **Env** (`e`): the processes this session started and the environment each targets, the processes your pack knows with their memory, and free memory.
+  - **Sessions** (`s`): the other Claude sessions on this machine that have Tell other sessions on, and what each is working on.
 - **Code** (`2`)
-  - **Git** (`g`): the repository's name, branch, upstream, ahead/behind, and a warning during a rebase or merge. CI for the branch's PR, a failed check linking to its run, and a toast plus a desktop notification when a commit's checks finish, with a toast as soon as a PR's check fails while others still run. A failed check whose job lately failed and then passed on a rerun of another commit is marked likely flaky, in its row, the toast and what Claude is handed. In active mode (`i`, per repo, off by default), a failed check makes Claude look into it as soon as it fails and present the cause and a fix idea in a turn of its own, which stays read-only until it ends or you type into it; a check that fails later gets a turn of its own after that one. On a branch without a PR, a failure shows once its workflow ends. It uses tokens. Changed files (press one for its diff, `f` shows all, `d` opens `/diff`), with the pack's [noise](#noise) (generated output, an editor's rewrites) folded out and counted apart until `f` shows it, tagged; commits to push and pull, recent commits, branches, stashes and worktrees. `u` fetches.
-  - **Rules** (`k`), drawn when the pack has checks (or findings are still shown): what the pack's [checks](#checks) found in the files Claude wrote, marked `CI` where pushing would fail CI and `rule` where it's the project's own rule. Press a finding, then `x` to dismiss it. With Inline check notes on, Claude is told about them too.
-  - **Budgets** (`b`), drawn when the pack has budgets: the pack's [budgets](#budgets), such as a bundle's size, against their limits. `m` builds, then measures.
+  - **Git** (`g`): branch, changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits, branches, and CI for the PR. `u` fetches.
+    - `i` switches active CI for the repo: with Look into failed CI on, Claude looks into a failed check in a read-only turn (it uses tokens).
+  - **Rules** (`k`), when your pack has checks: what they found in the files Claude wrote. `x` dismisses the selected one.
+  - **Budgets** (`b`), when your pack has budgets: each against its limit. `m` builds, then measures.
 - **Work** (`3`)
-  - **Runs** (`w`): the running workflow's phases (`p`/`n`, `l` follows the live one) and its agents with their model, tools and tokens; recent runs in this project (press one to open it, `x` closes it); subagents.
-  - **Stats** (`s`): every finished run of a workflow in this project: its duration trend, time per phase, and how each model's agents did. `o` shows the next workflow.
-  - **Plans** (`t`): the checkpoint board for your [plans](#plans): each checkpoint's status (✓ done, ◐ partly, ○ open, – dropped) and PRs, a warning when a PR has merged but the plan still reads open, and archiving.
+  - **Runs** (`w`): the running workflow's phases (`p`/`n`, `l` follows the live one) and agents (`ctx`: the latest request's context, `↓`: output tokens); recent runs (`x` closes one).
+  - **Stats** (`s`): finished runs of a workflow: duration, time per phase, results per model. `o` shows the next workflow.
+  - **Plans** (`t`): the checkpoints of your [plans](#skills) and their status. Select a plan, then `a` archives it.
 - **Debug** (`5`)
-  - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): every tool call with its time, every model request with its tokens, and how the context grew, with compactions marked.
-  - **Pack** (`p`): the [pack](#packs) this repo resolved to and where each value came from. `a` lets the repo's own tools run, or stops them.
-  - **Settings** (`s`): everything CCInformer does by itself, each with a switch, grouped by what it touches: Claude, questions, toasts and notifications, the pane, the background. `y` approves all, `n` denies all (then it only shows what you open), `e` has Claude explain them. The Safety switches (the band, the production status line and the approval gates) stay as they are under both; you switch them off by hand. Last comes the planning skills' own switch, Plan files (`f`), which both leave alone too (see [Plans](#plans)). On a new install a bare `/ccinformer` opens here until you have seen it.
+  - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): tool calls, model requests and how the context grew.
+  - **Pack** (`p`): the [pack](#packs) in use and where each value came from. `a` lets the repo's own tools run, or stops them.
+  - **Settings** (`s`): a switch for each thing the mod does by itself. `y` turns all on, `n` all off (Safety and Plan files stay as they are), `e` has Claude explain them, `f` switches the planning skills' plan files.
 
-An area's badge flags something worth a look, such as `!` on Code while a push would fail CI. The top right shows the version running, such as `v0.19.0`. The footer shows `Context: 34% | 5hr (4h12m): 12% | 7d (6d3h20m): 40.5%`: how full the context window is, and how much of your subscription's 5-hour and 7-day limits is used, with the time until each resets.
+**The band** above the prompt warns while a process Claude started targets a shared or production environment. **[Approval gates](#approval-gates)** ask about, or log, the tool calls your pack names.
 
-**The band** above the prompt warns while a process Claude started targets a shared or production environment, as your pack defines them: `⚠ STAGING  npm run dev:staging  targets a shared environment`.
-
-**Approval gates** stop a tool call your pack's rules name, such as a staging migration or a deploy, for your OK before it runs, and log each one ([Approval gates](#approval-gates)).
+The footer shows context use and your 5-hour and 7-day limits, with the time until each resets.
 
 ## Requirements
 
-- **Claude Code 2.1.317 or later**, the oldest version CCInformer is known to work with; releases are tested against the latest. An older one can refuse the mod with an invalid manifest error (`Unrecognized key: "types"`); `claude update` fixes that.
-- **git** on the PATH.
-
-The rest is optional; without it, only the parts that use it stay empty:
-
-| Tool | Used for | Without it |
-|---|---|---|
-| `gh`, logged in (`gh auth status`) | CI in Code › Git and looking into a failed check, a budget's `ci-log` source, merged-PR warnings in Work › Plans | no CI, no CI readings, no merged-PR warnings |
-| Node | the install script's auto-update step; a repo's own tools | the script leaves auto-update off, and says how to switch it on |
-| Windows PowerShell (Windows) / `ps`, `/proc/meminfo`, `rm` (Linux) / `ps`, `uname`, `sysctl`, `vm_stat`, `rm` (macOS) | Now › Env's processes and memory; removing a plan's original when it's archived | Env says the process list could not be read; an archive keeps the original |
-| bash (Git Bash on Windows) | the build waves of `/ccinformer:plan-feature` | build that plan in the main session instead |
-| Python 3 (standard library only) | applying the changes of `/ccinformer:audit-docs` | the audit runs, but its changes can't be checked or applied |
+- Claude Code 2.1.317 or later, and git.
+- Optional: `gh`, logged in, for CI; Node 16 or later for auto-update; Python 3 for `/ccinformer:audit-docs`; Git Bash on Windows for `/ccinformer:plan-feature`'s build waves.
 
 ## Install
-
-The install script first checks the Claude Code version: an older one than Requirements names is offered `claude update`, and without a yes the script stops and shows the update commands. Then it adds this repository as a marketplace, switches on auto-update for it, and installs the mod, so later releases arrive by themselves. If git, Node or `gh` is missing, it says what each is for and offers to install it (winget on Windows; brew, apt-get, dnf or pacman elsewhere), one at a time; nothing is installed without your yes. It is safe to run again at any time: on a machine that already has the mod, it only offers the tools that are missing and updates the mod. Its last line says where the switches are: Debug › Settings (in the pane, `5` then `s`). A new install starts with them off except Safety; an update keeps yours.
 
 Windows (PowerShell):
 
@@ -55,168 +48,55 @@ Linux or macOS:
 curl -fsSL https://raw.githubusercontent.com/EsonOscar/CCInformer/main/install/install.sh | bash
 ```
 
-If the first `claude` on your PATH doesn't run, set `CLAUDE_BIN` to a working one first. If an update leaves the old version showing, an older copy earlier on PATH hides the new one: `type -a claude` (`Get-Command claude -All` on Windows) lists them.
+The script checks your Claude Code version, offers to install missing tools (only with your yes), and installs the mod, with auto-update on when Node 16 or later is there. It is safe to run again.
 
-Or install by hand, without auto-update. At the prompt of a terminal session:
+If the first `claude` on your PATH doesn't run, set `CLAUDE_BIN` to one that does.
 
-```
-/plugin install ccinformer --marketplace EsonOscar/CCInformer
-```
-
-Answer `y` to add the marketplace, then pick the user scope. From a shell: `claude plugin install ccinformer --marketplace EsonOscar/CCInformer`. In the desktop app, where `/plugin` doesn't run: + next to the prompt box → Plugins → Add marketplace `EsonOscar/CCInformer` → Add plugin.
-
-One install covers both: installed at the user scope, from the script or a terminal, the mod also loads in the desktop app's Code tab.
+By hand, without auto-update: `/plugin install ccinformer --marketplace EsonOscar/CCInformer` at the user scope. In the desktop app: + next to the prompt box → Plugins → Add marketplace `EsonOscar/CCInformer` → Add plugin. One install covers both.
 
 ## Use
 
-- `/ccinformer` opens or closes the pane. `/ccinformer <area or view>` opens it there (`/ccinformer code`, `/ccinformer stats`). `/ccinformer ci active` or `ci passive` switches what a failed check leads to, and `/ccinformer ci investigate` looks into this branch's failed check now, in either mode. `/ccinformer settings` opens the switches. `/side` is a short alias.
-- Ctrl+X Tab gives the pane the keyboard: `1`-`5` switch areas, the letters shown switch views and run actions, `r` refreshes and scrolls back to the top, Esc gives the keyboard back. Clicking works without it.
-- In the desktop app `/ccinformer` works the same, and a click in the pane gives it the keyboard. There the pane scrolls as one page: the areas sit at its top and the usage line at its bottom, rather than staying put as they do in the terminal.
+- `/ccinformer` opens or closes the pane; `/ccinformer <area or view>` opens it there (`/ccinformer stats`). `/side` is an alias.
+- `/ccinformer ci active`, `ci passive` or `ci investigate`: what a failed check leads to, or look into one now.
+- `/ccinformer pack trust` or `pack untrust`: let the repo's own tools run, or stop them.
+- Ctrl+X Tab gives the pane the keyboard, Esc gives it back; `r` refreshes. Clicking always works.
 
 ## Skills
 
-Three planning skills come with the mod. Each plans in plan mode, asks you only the decisions that are really yours, and writes a plan whose checkpoints Work › Plans shows as the work happens.
+| Skill | For |
+|---|---|
+| `/ccinformer:plan-feature <task>` | Thorough planning by a workflow of agents (often 10 to 20), then the build |
+| `/ccinformer:plan-feature-small <task>` | Smaller tasks: Claude plans, one critic agent reviews, then the build |
+| `/ccinformer:plan-handoff <feature>` | Planning for someone who isn't a developer, ending in a doc a developer builds from |
+| `/ccinformer:audit-docs <focus>` | Checks a repo's docs against its code, then fixes what you approve |
+| `/ccinformer:write-pack` | Drafts your [pack](#packs) for the repo you're in |
 
-| Skill | Use it for | What it costs |
-|---|---|---|
-| `/ccinformer:plan-feature <task>` | A feature worth a thorough review: several parts of the code, data, access rules | A workflow of agents: scouts, 1 to 3 planners, then critics whose findings are checked against the code. Often 10 to 20 agents, on Opus at high effort at most |
-| `/ccinformer:plan-feature-small <task>` | A smaller change, or a tighter token budget | Claude reads the code and drafts the plan; one critic agent on Opus at medium effort reviews it against the code in a short workflow, a second round only after a blocker |
-| `/ccinformer:plan-handoff <feature>` | Planning for someone who isn't a developer | Like plan-feature, but it asks only product questions and ends with a doc a developer builds from |
+Run the planning skills in plan mode. plan-feature and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off); plan-handoff writes a doc for a developer. Nothing is committed unless you ask.
 
-1. Switch to plan mode (Shift+Tab until the bottom of the screen says plan mode) and run the skill with what you want built.
-2. Answer its questions: only real decisions, each with a recommended option.
-3. Approve the plan. plan-feature and plan-feature-small save it to `.local/plans/` (unless Plan files is off in Debug › Settings) and build it checkpoint by checkpoint. Nothing is committed or pushed unless you ask.
-4. Follow along in Work › Plans (`3`, then `t`), and archive the plan there once it's done.
+A repo's planning settings go in a `## Planning` section of its CLAUDE.md, or in `.local/ccinformer-planning.md`.
 
-**Planning settings.** A repo's checks, the risks to review for, the actions that need your OK and its commit rules can be written down once: in a committed `## Planning` section of its CLAUDE.md, or privately in `.local/ccinformer-planning.md`. After a first run in a repo with neither, the skill offers to write the private one for you.
-
-**Agent models.** The skills' workflows run their agents on Opus at high effort at most, whatever model your session runs on, so a session on a larger model orchestrates and checks without fanning it out. Defaults: scouts on Sonnet at medium effort (planners and critics check what they report against the code); planners, critics, builders, reviewers, auditors and verifiers on Opus at high; the side agents a build uses for menial tasks on Sonnet at medium; plan-feature-small's one critic on Opus at medium, kept fast (`MODEL` and `EFFORT` in `skills/plan-feature-small/plan-review.js`). To change them for one run, say so in the task text (`scouts on Opus`, `builders on Sonnet`): the skill passes a `model` and `effort` per scout or work package, and the script brings anything above the cap down to it. To move the cap itself, change `MAX_MODEL` and `MAX_EFFORT` near the top of the three fan-out scripts (`skills/plan-feature/plan-fanout.js`, `skills/plan-feature/build-fanout.js`, `skills/audit-docs/audit-docs-fanout.js`) in your own clone or fork, and run that copy with `claude --plugin-dir <folder>` (CONTRIBUTING.md "Working on the mod"); the installed release is replaced on every update, so an edit there doesn't last.
-
-**Docs audit.** `/ccinformer:audit-docs <focus>` checks a repo's docs against its code, in plan mode: any kind of doc (READMEs, contributor docs, design docs, ADRs, plans, changelogs, CLAUDE.md files), git-tracked or git-ignored. A workflow of read-only agents finds drift, stale status, history in current docs, broken references, contradictions and duplicates; you decide what is really yours to decide; the plan you approve holds every change. Once approved, a script checks each change against the docs as they were, applies them to a work folder, and installs them after a moved-text check and a review, keeping copies of the old docs in `~/.claude/audit-backups/`. Moved history goes to a history file. Its scripts need Python 3 (standard library only).
-
-**Writing a pack.** `/ccinformer:write-pack` has Claude draft your [user pack](#packs) for the repo you're in. It reads the repo's manifests, lint and format configs, git hooks, CI workflows, deploy configs and the tests that act as rules (env files by name only, never their contents), marks each check `ci` where CI fails on it and `rule` where it's only the project's own, and lists what CI enforces that a pack can't check. The mod's own validator checks the draft (through a read-only tool, `check_pack`, that Claude calls), and nothing is written until you approve the full path in `~/.claude/ccinformer/packs/`. Claude Code then asks you to allow the write itself, as it does for anything under `~/.claude`, so a pack is written in an interactive session; elsewhere you get the text and the path to save. A pack it writes matches the repo, so the repo's own tools may run there; an existing pack for the repo is updated in place, after a `.bak` copy, never doubled. Without plan mode it asks at the end; in plan mode the plan holds the draft and its approval is the yes.
+A hand-written plan in `.local/plans/` works too: a checkpoint is an id (`CP3`, `C7`) at the start of a heading, a table row or a bold label, with its status (`done`, `merged as #N`, `dropped`) on that line.
 
 ## Packs
 
-A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets and plan files. Packs are personal: nothing is read from inside the repo. Two layers, lowest first; lists merge by `id`, and the user pack's fields win:
+A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets, noise and plan files. Packs are personal: nothing is read from inside a repo.
 
-1. **A built-in pack**: the one your user pack `extends`, else one picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
-2. **Your user pack**, `~/.claude/ccinformer/packs/<name>.pack.jsonc`, for repos whose remote matches its `match.remote` (globs over `host/owner/repo`, e.g. `github.com/<owner>/*`). It can `extends` a built-in and `disable` ids from it. Your own values for a repo live here, outside the repo. Have Claude write one with `/ccinformer:write-pack` ([Skills](#skills)).
+- **A built-in pack**, picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
+- **Your user pack**, `~/.claude/ccinformer/packs/<name>.pack.jsonc`, for the repos whose remote it matches. It can extend a built-in, and its values win. `/ccinformer:write-pack` drafts one.
 
-A pack holds only these keys: `schema`, `id`, `version`, `match`, `detect` (built-ins only), `extends`, `processes`, `environments`, `checks`, `budgets`, `noise`, `plans` and `disable`. A pack with any other key, or a value it can't use, is refused whole, and Debug › Pack lists every reason, each saying what to change.
+Every setting, with what it does: [the template](skills/write-pack/pack-template.jsonc). How each works: [the pack reference](skills/write-pack/reference.md).
 
-**What a pack must hold.** Every entry has an `id`, and processes, environments, checks and budgets a `label`. Each kind has its own required fields: a check its `on`, `analyzer`, `cost` and `class`; a budget its `unit`, `direction`, `limit`, `sources` and `cost`; a `size-lines` check its `options.max`; `plans` its `globs`. Every value is of its kind (`hostPatterns` a list, `tone` one of `local`, `shared` or `prod`), and a key an entry doesn't take is refused, nested ones included, so a typo says so. A user pack needs `match.remote`; a built-in needs a `detect` rule with `"required": true`. An entry with the id of one in the built-in the user pack `extends` is read merged over it, so it names only the fields it changes.
-
-**Regexes.** Every regex a pack holds (a process's `match`, an environment's `argRegex`, an approval's `commandRegex` and `inputRegex`, a check's `options.pattern`, a budget source's `parse`, a noise rule's `normalize`, the plan patterns) must compile, stay within 300 characters, and neither repeat a group that itself repeats or branches (`(\w+)+`, `(a|b)+`) nor hold more than two `.*` or `.+`: a heuristic, as JS has no regex timeout. A field whose value is read from a group (`parse`, `envFrom.argRegex`, `plans.prRef`) needs one. In JSONC every backslash is written twice (`"\\b"`): a single `"\b"` is a backspace, and is refused. Process and environment patterns also run in .NET on Windows, so what .NET reads differently (an escape such as `\_` or `\q`, the classes `[]` and `[^]`) is refused there.
-
-**Repo trust.** Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo; the ones compared inside the mod (translation keys, Godot scenes) don't: a user pack matches it, or you allow it with `a` in Debug › Pack (or `/ccinformer pack trust`). With Turn checks on in Debug › Settings they run after each turn that wrote files, and with Turn check notes on Claude is told what they find. With Ask about repo trust on, the first such check asks once per repo, and never again, whatever you answer. All three start off on a new install. A yes holds until `a` in Debug › Pack (or `/ccinformer pack untrust`) takes it back.
-
-### Environments
-
-The band and Now › Env place a process Claude starts by its environment: the command, with npm scripts expanded through `package.json`, matched by an environment's `argRegex`, or the hosts in the env file it reads (Vite's `.env.<mode>` for `--mode <mode>`) held against the environment's `hostPatterns`. Its `tone` (`local`, `shared` or `prod`) decides the band; a production one goes on the status line too. `readOnly` has no effect yet: the approval rules decide what is gated.
+A pack with a mistake is refused whole, and Debug › Pack says what to change. Checks that run the repo's own tools (ESLint, a build) wait until you trust the repo: a matching user pack does, or `a` in Debug › Pack.
 
 ### Approval gates
 
-An environment can list `approvals`: tool calls that need your OK, such as a staging migration, a write through a database's MCP tool, or a deploy. A rule names a `tool`, a name or glob such as `Bash` or `mcp__*__execute_sql` (one shell tool names them all, so a `Bash` rule also meets the same command run through PowerShell or Monitor), and narrows it with any of these, all of which must match:
+An environment's `approvals` rules name tool calls (a shell command, an MCP call by its arguments, a written path) that need your OK.
 
-- `commandRegex`: each command of a shell line, plus `npm run <name>` and that script's own commands as lines of their own. Anchor it (`^npm run db:migrate:staging\\b`), and match what the script targets as well, so running its body directly is caught too.
-- `inputRegex`: an MCP call's arguments, one `key=value` line each (`^project_id=<ref>$`). A tool that takes no such argument needs a rule on its name alone.
-- `pathGlob`: the repo path an Edit, Write or NotebookEdit writes.
+- A matching call stops for **Deny**, **Approve once** or, for a session rule, **Approve for this session**. With `"mode": "log"` it runs unasked.
+- Anything but those labels (typed text, no answer, `-p`, a failure) refuses the call.
+- Each gated call adds a line to a log under `~/.claude/ccinformer/approvals/`, in files named by session, never the command or its values.
 
-A matching call stops for a question: **Deny**, **Approve once**, and **Approve for this session** for a rule with `"scope": "session"`. Only those labels approve: text typed under "Other", a dismissed question, one left until Claude Code's away-from-keyboard timeout, a `-p` run or a gate that fails all refuse the call, and Claude is told why. A rule with `"mode": "log"` runs with no question and is still logged, which suits reads. In default mode Claude Code's own permission prompt may follow the gate's; in auto mode the gate asks only for what a rule names, so edits, local tests and git never stop.
-
-Every gated call leaves one line in `~/.claude/ccinformer/approvals/<repo>/<session>.jsonl` (a new file every 128 KiB or so): the time, the environment and rule, the tool, the script that matched (`npm run db:migrate:staging`, never the command line or a value), the folder, the branch and the answer (`approved`, `approved-session`, `session`, `logged`, `denied`, `other`, `no answer`, `busy` or `error`). The answer is what was said at the gate; Claude Code can still refuse the call after it. Nothing deletes old logs yet.
-
-A built-in pack's shared and prod rules ask every time; only your own pack can make one `log` or `session`, and Debug › Pack shows such a prod rule in amber, beside every rule's environment and what the gate does with it. When a user pack is refused, a toast says so, as its rules then don't apply. The gates are a Safety switch in Debug › Settings, on unless you switch it off.
-
-Limits: a pack's rules apply only in sessions started in the repo it matches, so a session started elsewhere reaches the same MCP connectors and hosts unasked; a route to a target that no rule names isn't gated; and nothing guards the packs folder or the log itself.
-
-### Checks
-
-A check names an analyzer, the files it covers (`on`, minus `ignore`), when it runs (`cost`), and whether the repo's CI enforces it (`class: "ci"`) or it's only the project's rule (`"advise"`). Eight analyzers so far:
-
-- **`size-lines`** (`cost: "edit"`): a file over `options.max` lines, checked as Claude writes it. The repo's ESLint suppressions apply, and one that's no longer needed is reported.
-- **`regex-lines`** (`cost: "edit"`): each line matching `options.pattern`, checked as Claude writes the file, in any language, on each line's first 2000 characters, with `options.message` as what to do instead. In JS and TS files, comments and regex literals are skipped, and a match in a template string is reported on the line ESLint reports it on. Made for design rules (no raw `<button>`, no stock palette classes): an `advise` check reaches Claude as a project rule. A `ci` check that names the ESLint rule enforcing the same ban in `rules` says "CI will fail" at once, follows that rule's suppressions, and stands in for ESLint's finding on the same line at the end of the turn.
-- **`eslint-json`** (`cost: "turn"`): the repo's own ESLint, once a turn ends, over the files written in it, in a trusted repo, with the repo's suppressions applied. The built-in `node-vite` has it; in a repo where ESLint isn't installed, it's skipped (see below).
-- **`i18n-keysets`** (`cost: "turn"`): translation tables, flat JSON with one file per language in a folder (`da.json`, `en.json`, ...). Once a turn that wrote one ends, each table it touched must have the same keys in every language of `options.languages`, and no key another table already has, as in `"cart_empty" is missing; da.json and en.json have it`. A key added to every language over several steps of one turn gives nothing. It compares the files itself, so it needs no repo trust.
-- **`tscn-connections`** (`cost: "turn"`): Godot scenes against their C# scripts. Once a turn that wrote a scene, or a script a scene uses, ends, each `[connection]` whose method the target node's script doesn't declare (with its partial parts and the repo's base classes, three levels deep) is reported at its line, as in `connection "pressed" from PlayButton calls OnLeavePressed, which atrium/Lobby.cs doesn't declare`. A target that is an instanced scene or has no C# script, a lowercase engine method (`hide`), and a class chain still in the repo three levels up are skipped. `on` covers both, e.g. `["**/*.tscn", "**/*.cs"]`; no options. It compares the files inside the mod (and reads git for which scenes use a script), so it needs no repo trust; use `class: "advise"` unless CI builds and runs the scenes.
-- **`tscn-nodepaths`** (`cost: "turn"`): a `GetNode`, `GetNodeOrNull`, `HasNode`, `FindChild` or `new NodePath` string, or a `"%Name"`, in C# that names a node removed from a scene since the last commit and gone from every other scene, reported at the C# line. Read-only git (`git diff`, `git show`, `git grep`), no repo trust; `on` and `class` as above. It compares names, so a node moved under another parent with its name kept isn't flagged, a removal already committed is no longer one, a name another scene still uses counts as present, a scene over 4 MiB is skipped (and counted on the run line), and an edit made outside Claude's writes is checked at the next turn that writes a covered file.
-- **`sarif`** (`cost: "turn"`): any tool that writes SARIF 2.1.0, as ESLint's SARIF formatter, ruff, Semgrep, CodeQL, gcc 13 and Roslyn do. `bin` is the whole command, with `{files}` where the files written in the turn go (at most 40 a run, the rest in the next; without it the command runs once over the whole project, one run a turn, holding the heavy lane for as long as it takes, so set `timeoutMs`) and, for a tool that writes its log to a file rather than stdout, `{output}` where the mod's own file goes (`~/.claude/ccinformer/output/`, one per check, repo and session, emptied before and after each run; dotnet: `-p:ErrorLog={output}%2Cversion=2.1`, one project at a time, since a solution's projects would overwrite one log). A run's findings land on the files written in the turn; what the tool reports in other files is counted on its run line (`· 3 elsewhere`), not listed. A non-zero exit counts as findings only when an error is among them; otherwise the run is an error naming the cause, so drop flags that fail a tool on warnings alone. The repo's ESLint-format `suppressions` file applies as for `eslint-json`, for a tool that reports everything: ESLint applies its own and exits 2 on an unpruned one (unless run with `--pass-on-unpruned-suppressions`), so an ESLint SARIF check leaves `suppressions` out and takes an id of its own, with `"disable": ["eslint"]` to switch the built-in check off; `eslint-json` stays the ESLint route. An unused suppression is a warning here (no CI reads that file), reported for the files the tool looked at.
-- **`problem-matcher`** (`cost: "turn"`): any tool whose output has one diagnostic per line (gcc, clang, javac, mypy, msbuild). `bin` as for `sarif` (no `{output}`), and `options.pattern`, one regex tested against each line of stdout and stderr, with the named groups `file`, `line` and `message` (required) and `column`, `severity` and `code` (optional). The severity words `error`, `fatal error`, `warning`, `warn`, `note`, `info`, `information` and `hint` are read; any other, or no `severity` group, gives `options.severity` (`error` by default). The rule is `code`, else `rules[0]`, else the check's id. The pattern follows the rules under [Regexes](#packs). Lines are tested on their first 2000 characters; past 20000 lines the run is an error. Multi-line diagnostics aren't matched.
-
-Before a turn check runs, and before the trust question, the mod looks for its program the way the system would, by reading files only: a `node <script>` command's script in the repo, a command written with a slash (`./gradlew`) under the repo or at its absolute path, and a bare name (`dotnet`, `ruff`) in each `PATH` folder, with each `PATHEXT` extension on Windows. A check whose program isn't there is skipped: nothing runs, trust isn't asked, Claude isn't told, and its run line says so, dim, as in `dotnet build: skipped, dotnet isn't installed`. A bare name's answer holds for the session, since `PATH` doesn't change under a running Claude Code; a repo path is looked at again each turn, so installing ESLint in the repo takes effect at the next one.
-
-Code › Rules draws one line per turn check with its latest run (the scene checks too, the translation-key check not): running, skipped, waiting for trust, its error, or passed with the files and the time. The two placeholders, the group names and the severity words are the pack contract: a change to them is a breaking one.
-
-A user pack adds checks with the repo's own values:
-
-```jsonc
-"checks": [
-  { "id": "max-lines", "label": "File length", "on": ["src/**/*.{ts,tsx}"], "ignore": ["**/*.test.{ts,tsx}"],
-    "analyzer": "size-lines", "cost": "edit", "class": "ci",
-    "rules": ["max-lines"], "options": { "max": 500 }, "suppressions": "eslint-suppressions.json" },
-  { "id": "raw-button", "label": "Raw <button>", "on": ["src/**/*.tsx"], "ignore": ["src/components/ui/**"],
-    "analyzer": "regex-lines", "cost": "edit", "class": "advise",
-    "options": { "pattern": "<button\\b", "message": "use <Button> from the design system" } },
-  { "id": "i18n", "label": "Translation keys", "on": ["src/i18n/*.json", "src/modules/*/i18n/*.json"],
-    "analyzer": "i18n-keysets", "cost": "turn", "class": "ci", "options": { "languages": ["da", "en", "sv"] } },
-  { "id": "ruff", "label": "ruff", "on": ["**/*.py"],
-    "analyzer": "sarif", "cost": "turn", "class": "ci", "timeoutMs": 60000,
-    "bin": ["ruff", "check", "--output-format", "sarif", "{files}"] },
-  { "id": "gcc", "label": "gcc", "on": ["native/**/*.c"],
-    "analyzer": "problem-matcher", "cost": "turn", "class": "ci", "timeoutMs": 120000,
-    "bin": ["gcc", "-fsyntax-only", "{files}"],
-    "options": { "pattern": "^(?<file>(?:[A-Za-z]:)?[^:]+):(?<line>\\d+):(?:(?<column>\\d+):)?\\s+(?:fatal\\s+)?(?<severity>error|warning|note):\\s+(?<message>.*?)(?:\\s+\\[(?<code>-W[^\\]]+)\\])?$" } }
-]
-```
-
-Files changed by a shell command, not a file tool, aren't checked.
-
-### Budgets
-
-A budget is a number kept under (or over) a limit: a fixed one, or a share of a baseline read from a JSON file (`"relative": 1.05` is 5 % over it). Its sources are tried in order, and the first fresh value shows.
-
-- **`command`** runs the repo's own report (repo trust needed) and reads the number from its output with `parse` (a regex; its first group, times `scale`). It's fresh while its `freshAfter` file (the build it measures) is newer than HEAD and Claude's last write. `m` runs its `build` first.
-- **`ci-log`** reads the same line from the log of the newest CI run of HEAD with the named job; one from the branch's last run shows as stale.
-
-```jsonc
-"budgets": [
-  { "id": "start-brotli", "label": "Start-up bundle, brotli", "unit": "bytes", "direction": "max",
-    "limit": { "relative": 1.05, "baseline": { "kind": "json", "path": "<baseline>.json", "pointer": "/start/brotli" } },
-    "sources": [
-      { "kind": "command", "argv": ["node", "<report script>", "--check"], "parse": "brotli: ([0-9.]+) KB", "scale": 1024,
-        "freshAfter": "dist/index.html", "build": ["npm", "run", "build"] },
-      { "kind": "ci-log", "job": "<job name>", "step": "<step name>", "parse": "brotli: ([0-9.]+) KB", "scale": 1024 }
-    ],
-    "cost": "cheap" }
-]
-```
-
-### Noise
-
-Files a tool writes, and files an editor rewrites on save, are the pack's `noise`. They clutter what changed without being changes anyone made.
-
-- **`generated`**: a glob of output (`**/.godot/**`, `dist/**`, `**/*.import`). A changed file under it is noise, whatever changed; `normalize` is ignored here.
-- **`editor-rewrite`**: a glob of files an editor renumbers or re-ids when it saves them (`**/*.{tscn,tres}`), with `normalize`, regexes taken out of the removed and added lines before they're compared. For each hunk of the file's diff against HEAD, the removed lines must equal the added ones once each match is gone (runs of spaces then count as one, so `uid="[^"]*"` needs no leading space), in order. So a scene that only gained a `uid=` or renumbered `load_steps=` is noise, while a changed `ext_resource` path, a moved block or a binary change is not. Only modified files are judged (not added, deleted, renamed or conflicted ones), at most 100 at a time, each again only when it or HEAD changes.
-
-Noise is folded out of Code › Git's changed files and its counts (`f` shows it, tagged `generated` or `editor rewrite`), and left out of the diff active CI hands Claude, which names what it left out. A conflict is never folded. Noise never hides a finding: the checks follow their own globs.
-
-### Plans
-
-The board reads every Markdown plan in `.local/plans/`, in every repo, and the files a pack's `plans.globs` names, leaving out their archive folders. It writes to plans only when you archive one.
-
-- **A checkpoint** is an id (`CP3`, `C7`, `R3a`, `PR 4`) at the start of a heading, a table row's first cell, or a bold label, followed by punctuation: `### R3: foundation`, `| C7 | ... |`, `- **CP1, storage:**`. A range (`CP1–CP3`) defines each id in it.
-- **Its status** comes from the markers on its own line: done for `merged as #N`, a check-mark emoji, done or passed (but not "done when", a checkpoint's exit criterion), or a struck-through id; dropped for dropped, superseded or obsolete; partly for a yellow-circle emoji or PARTLY; otherwise open. A pack can set its own patterns with `plans.checkpoint`, `plans.done` and `plans.prRef`.
-- **Merged PRs.** With `gh`, the board checks the PRs that open checkpoints name. A merged one shows `⚠ #21 merged` on its row and `!` on Work, and a toast says so when it merges while you work. The plan's own status is left as it is.
-- **Finished plans** (every checkpoint done or dropped) read "ready to archive", with a reminder toast at most once a day.
-- **Archiving.** Press a plan's header, then `a`. It asks first, naming every file it will change, then moves the plan to `.local/plans/archive/` (or the pack's `plans.archiveDir`) and points the references to it there, in `.local/`, the plan's folder and your Claude memory notes for this project.
-- **Plan files off.** The Plan files switch in Debug › Settings (`f`) is the planning skills' own, kept for every repo in `~/.claude/ccinformer/skills.json` (`{ "planFiles": false }`; no file means on), which the skills read as a file. Off, plan-feature and plan-feature-small save no plan to `.local/plans/` and keep the checkpoint lines in Claude Code's own plan file instead, plan-handoff still writes its handoff doc, and none of them offers to write `.local/ccinformer-planning.md`; the empty board says so. Approve all and Deny all leave it as it is.
-
-## Numbers
-
-- **Context** (`ctx`) is what one request carried in: an agent's figure is its latest request's, as Claude Code's workflow bar counts it; a run's total is the bar's own.
-- **Output** (`↓`) is what the model generated, summed over requests: this is what an agent's time mostly goes to.
-- Debug › Requests sums every request's input, cache reads included: what was processed, not how full the context is.
+A built-in pack's shared and prod rules always ask; only your own pack can loosen one, shown in amber in Debug › Pack. Rules apply only in sessions started in the matched repo, and a route no rule names isn't gated.
 
 ## Changing it
 

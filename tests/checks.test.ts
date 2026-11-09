@@ -324,7 +324,7 @@ describe('SARIF', () => {
 })
 
 describe('problem-matcher', () => {
-  // The README's gcc pattern.
+  // The pack reference's gcc pattern (skills/write-pack/reference.md).
   const GCC =
     '^(?<file>(?:[A-Za-z]:)?[^:]+):(?<line>\\d+):(?:(?<column>\\d+):)?\\s+(?:fatal\\s+)?(?<severity>error|warning|note):\\s+(?<message>.*?)(?:\\s+\\[(?<code>-W[^\\]]+)\\])?$'
   const gcc = (fields: Partial<CheckSpec> = {}): CheckSpec =>

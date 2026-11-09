@@ -133,7 +133,7 @@ describe('command checks: sarif and problem-matcher', () => {
   const reasons = (c: object) => checkPack(pack(c), 'user').reasons
   const sarif = (fields: object) =>
     ({ id: 'ruff', label: 'ruff', on: ['**/*.py'], analyzer: 'sarif', cost: 'turn', class: 'ci', bin: ['ruff', 'check', '--output-format', 'sarif', '{files}'], ...fields })
-  // The README's gcc pattern.
+  // The pack reference's gcc pattern (skills/write-pack/reference.md).
   const GCC =
     '^(?<file>(?:[A-Za-z]:)?[^:]+):(?<line>\\d+):(?:(?<column>\\d+):)?\\s+(?:fatal\\s+)?(?<severity>error|warning|note):\\s+(?<message>.*?)(?:\\s+\\[(?<code>-W[^\\]]+)\\])?$'
   const matcher = (fields: object) =>
@@ -196,7 +196,7 @@ describe('command checks: sarif and problem-matcher', () => {
     expect(runnableChecks(own, false)).toEqual([])
     expect(runnableChecks(own, true).map(c => c.id)).toEqual(['ruff'])
     // A user pack check with the built-in's id merges field by field, so node-vite's suppressions stay on it: an
-    // ESLint SARIF check takes its own id (the README says so).
+    // ESLint SARIF check takes its own id (the pack reference says so).
     const reused = resolvePack(withUser())
     expect(reused.pack.checks.find(c => c.id === 'eslint')?.suppressions).toBe('eslint-suppressions.json')
   })

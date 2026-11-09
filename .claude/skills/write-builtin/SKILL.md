@@ -39,7 +39,7 @@ Stop and say which one fails, unless all three hold:
    - `hooks/packs/builtins.ts` (one import, one entry in `BUILTINS`);
    - `tests/pack-<id>.test.ts` (new);
    - `.claude-plugin/plugin.json` (the next minor version above `main`'s, read with `git show main:.claude-plugin/plugin.json`, unless this branch already raised it);
-   - `README.md` (the built-ins in the Packs section's "Today:").
+   - `README.md` and `skills/write-pack/reference.md` (the built-ins in each one's "Today:").
 
    Options: "Write them (Recommended)", "Change something first", "Don't write; show the text only". In plan mode, put the drafts and the paths in the plan instead; its approval is the yes. No clear yes, or no way to ask: show the text only and write nothing.
 6. **Write them, then run** every check, and fix what fails without loosening a test or a check:

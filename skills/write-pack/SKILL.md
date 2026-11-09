@@ -6,7 +6,7 @@ argument-hint: <optional focus, e.g. "only the checks">
 
 Write a pack. Focus, if any: $ARGUMENTS
 
-A user pack tells CCInformer about one repo: which commands are dev servers and which environment they point at, which checks to run on the files Claude writes (and whether CI enforces them), which numbers to keep under a limit, and where the plan files are. It lives outside the repo, in the person's packs folder, and only matches repos by their remote. README.md's "Packs" section is the reference, and the template every setting with what it does (**Shared: the template**).
+A user pack tells CCInformer about one repo: which commands are dev servers and which environment they point at, which checks to run on the files Claude writes (and whether CI enforces them), which numbers to keep under a limit, and where the plan files are. It lives outside the repo, in the person's packs folder, and only matches repos by their remote. `reference.md` next to this file is the reference, and the template every setting with what it does (**Shared: the template**).
 
 The mod checks drafts with its own tool, `mcp__ccinformer__check_pack`: it reads the repo and the packs folder, validates the text you give it with the same rules the mod loads packs by, and writes nothing.
 
