@@ -115,6 +115,38 @@ await test('a critic that returns nothing asks for the round again', async () =>
   assert.deepEqual(result, { round: 1, error: 'the critic returned nothing; run this round again' })
 })
 
+await test("a round other than 1, 2 or 'final' is refused by name", async () => {
+  await assert.rejects(run(baseArgs({ round: 3 }), () => review()), /round must be 1, 2 or 'final'/)
+})
+
+await test('the final check needs the changes made since the last review', async () => {
+  for (const changes of [undefined, '', '  ', ['a']])
+    await assert.rejects(run(baseArgs({ round: 'final', changes }), () => review()), /the final check needs changes: what changed since the last review/)
+})
+
+await test('the final check is one critic over only the listed changes', async () => {
+  const changes = 'CP2 now handles empty input\nThe contract renames parse() to read()'
+  const { calls } = await run(baseArgs({ round: 'final', changes }), () => review())
+  assert.equal(calls.length, 1)
+  const { prompt } = calls[0]
+  assert.match(prompt, /THIS IS THE FINAL CHECK/)
+  assert.match(prompt, /CP2 now handles empty input\nThe contract renames parse\(\) to read\(\)/)
+  assert.match(prompt, /Don't re-review the rest of the plan\./)
+  assert.doesNotMatch(prompt, /ROUND 2/)
+})
+
+await test('the final check never asks for another round, even after a blocker', async () => {
+  const { result } = await run(baseArgs({ round: 'final', changes: 'x' }), () => review({ correctness: [finding('blocker')] }))
+  assert.equal(result.round, 'final')
+  assert.equal(result.needsRound2, false)
+  assert.deepEqual(result.counts, { blocker: 1, shouldFix: 0, nit: 0 })
+})
+
+await test('a final check whose critic returns nothing asks for the final check again', async () => {
+  const { result } = await run(baseArgs({ round: 'final', changes: 'x' }), () => null)
+  assert.deepEqual(result, { round: 'final', error: 'the critic returned nothing; run the final check again' })
+})
+
 if (failures) {
   console.log(`${failures} failed`)
   process.exit(1)

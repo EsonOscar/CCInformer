@@ -1,13 +1,14 @@
 export const meta = {
   name: 'plan-review',
   description: 'One read-only critic reviews a drafted plan against the code, every lens in its own section',
-  whenToUse: 'Run by the CCInformer plan-feature-small skill in plan mode, with args {context, requirements, plan, files, round, lenses?, previous?}',
+  whenToUse: "Run by the CCInformer plan-feature-small skill (rounds 1 and 2, and the final check) and by plan-feature and plan-handoff (the final check), in plan mode, with args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final)}",
   phases: [{ title: 'Review', detail: 'one adversarial critic, every lens', model: 'opus' }],
 }
 
 // plan-feature-small's review: one critic, kept fast. It reads the plan file and the files the plan touches, and goes
 // further only to back up a finding. The main session checks what it finds and decides the replan; a second round is
-// for a blocker only (needsRound2), and there is never a third.
+// for a blocker only (needsRound2), and there is never a third. Once the main session has folded in the last round
+// and the user's answers, a final check looks only at what it changed since (round 'final'), once, with no round after.
 const MODEL = 'opus'
 const EFFORT = 'medium'
 const MAX_FILES = 30
@@ -39,7 +40,9 @@ if (typeof a.requirements !== 'string' || !a.requirements.trim()) fail('requirem
 if (typeof a.plan !== 'string' || !a.plan.trim()) fail("plan must be the plan file's path")
 if (!Array.isArray(a.files) || a.files.length < 1 || a.files.length > MAX_FILES || !a.files.every(f => typeof f === 'string' && f.trim()))
   fail(`files must list 1 to ${MAX_FILES} paths the plan touches`)
-if (a.round !== 1 && a.round !== 2) fail('round must be 1 or 2')
+if (a.round !== 1 && a.round !== 2 && a.round !== 'final') fail("round must be 1, 2 or 'final'")
+const isFinal = a.round === 'final'
+if (isFinal && (typeof a.changes !== 'string' || !a.changes.trim())) fail('the final check needs changes: what changed since the last review')
 const extra = a.lenses ?? []
 if (!Array.isArray(extra) || extra.length > MAX_LENSES) fail(`lenses must be a list of at most ${MAX_LENSES}`)
 for (const l of extra)
@@ -72,7 +75,9 @@ const SCHEMA = {
 
 const roundTwo = a.round === 2
   ? `\nTHIS IS ROUND 2. Round 1 found:\n${JSON.stringify(a.previous.findings, null, 1)}\nWhat changed since:\n${a.previous.changes}\nCheck these changes hardest, and whether the fixes broke something. Don't repeat a finding the changes fixed.\n`
-  : ''
+  : isFinal
+    ? `\nTHIS IS THE FINAL CHECK. The plan was reviewed before; since then the main session made these changes:\n${a.changes.trim()}\nCheck only these changes: is each one right against the code, and did it break anything else in the plan (a cross-reference, another checkpoint, the contract, a "done when" or test that would now pass wrongly)? Also flag a part these changes depend on that looks altered but isn't listed. Don't re-review the rest of the plan.\n`
+    : ''
 const prompt = `${a.context}
 
 REQUIREMENTS (judge the plan against these):
@@ -90,9 +95,9 @@ ${lenses.map(l => `- ${l.key}: ${l.focus}`).join('\n')}
 Each finding: BLOCKER (would break, contradict the code or the requirements, or skip a needed approval), SHOULD-FIX or NIT, with evidence (file and line where there is one) and the minimal fix. Don't restate the plan. At most about ${MAX_FINDINGS} findings in all, the most serious first.`
 
 phase('Review')
-log(`round ${a.round}: one critic, ${lenses.length} lenses, ${a.files.length} files to read first`)
+log(`${isFinal ? 'final check' : `round ${a.round}`}: one critic, ${lenses.length} lenses, ${a.files.length} files to read first`)
 const review = await agent(prompt, { label: 'critic', phase: 'Review', model: MODEL, effort: EFFORT, schema: SCHEMA })
-if (!review) return { round: a.round, error: 'the critic returned nothing; run this round again' }
+if (!review) return { round: a.round, error: `the critic returned nothing; run ${isFinal ? 'the final check' : 'this round'} again` }
 
 const all = Object.values(review.lenses || {}).flatMap(l => (l && Array.isArray(l.findings) ? l.findings : []))
 const count = (s) => all.filter(f => f && f.severity === s).length
