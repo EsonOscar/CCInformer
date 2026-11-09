@@ -327,6 +327,8 @@ declare module 'claude-code' {
       // The workflow phase Work shows; '' follows the live one.
       phase: string
       pack: PackReport | null
+      // Why the last read of the pack failed; '' once one succeeds.
+      packFailed: string
       // The approval rules the gate reads (null until the pack is first read), and the rules approved for this
       // session (hooks/gates/match.ts sessionKey).
       gateRules: GateRules | null

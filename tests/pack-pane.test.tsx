@@ -25,14 +25,33 @@ const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 
 // A Vite repo at /repo with an acme remote, its files in memory: `files` maps a path to its text, and `mtimes`
 // to when it last changed, so a test can change a file. `asked` collects each question put to the person, and
-// `answer` is what they pick.
-const engine = (on: Parameters<TestBody>[1], files: Record<string, string>) => {
+// `answer` is what they pick. With `trustFails`, the store is one of the test's own whose first that many reads of a
+// repo's trust fail, so the pack can't be read.
+const engine = (on: Parameters<TestBody>[1], files: Record<string, string>, trustFails = 0) => {
   const mtimes: Record<string, number> = Object.fromEntries(Object.keys(files).map(p => [p, 1]))
   const asked: string[] = []
   const state = { answer: 'Allow' }
   const clock = mock.clock(on, { now: 1_000_000 })
   // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
-  mock.store(on, { permissions: { base: 'defaults', set: {} } })
+  const seed = { permissions: { base: 'defaults', set: {} } }
+  if (!trustFails) mock.store(on, seed)
+  else {
+    const store = new Map<string, unknown>(Object.entries(seed))
+    let failsLeft = trustFails
+    on('store.get', (_, e) => {
+      if (!e.key.startsWith('trust:') || failsLeft-- <= 0) return { value: store.get(e.key) } as never
+      throw new Error('the store could not be read')
+    })
+    on('store.set', (_, e) => {
+      store.set(e.key, e.value)
+      return { value: undefined } as never
+    })
+    on('store.delete', (_, e) => {
+      store.delete(e.key)
+      return { value: undefined } as never
+    })
+    on('store.keys', () => ({ value: [...store.keys()] }) as never)
+  }
   mock.env(on, { HOME: '/home/test' })
   on('session.id', () => ({ value: 'self-session-id' }))
   on('session.cwd', () => ({ value: '/repo' }))
@@ -100,6 +119,23 @@ test('/ccinformer pack shows both layers and every value with the layer that set
   expect(await ui.find({ type: 'Text', text: /a user pack matches this repo/ })).toBeDefined()
   // A user pack's trust is withdrawn in the pack, not here.
   expect(await ui.find({ key: 'pack-trust' })).toBeUndefined()
+  await ui.unmount()
+})
+
+test('a pack that could not be read says so instead of "Reading", and Debug tries again', async ($, on) => {
+  // The read at start and the one /ccinformer pack starts both fail; r's succeeds.
+  const { clock } = engine(on, { '/repo/package.json': VITE_PKG, [PACKS + '/shop.pack.jsonc']: USER_PACK }, 2)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack' })
+  const ui = await $.ui.mount({ ...PANE, surface: 'terminal' })
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /Couldn't read the pack: .+\. r tries again\.$/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Reading the pack/ })).toBeUndefined()
+
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(await ui.find({ type: 'Text', text: /PACK · ACME-SHOP/ })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: /Couldn't read the pack/ })).toBeUndefined()
   await ui.unmount()
 })
 

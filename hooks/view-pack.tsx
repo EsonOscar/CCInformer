@@ -34,10 +34,10 @@ export const approvalText = (a: PackApprovalRow): string =>
   (a.mode === 'log' ? 'logs, no prompt' : a.scope === 'session' ? 'asks once a session' : 'asks each time') + (a.isLoosened ? ', loosened' : '')
 
 // What this repo's pack came to: each layer and how it went, whether the repo's own tools may run, and every value
-// with the layer that set it.
-export const PackView = (k: Kit, report: PackReport | null, now: number, nav: PackNav): JSX.Element => {
+// with the layer that set it. With no pack yet, either it is being read or the last read failed (`failed`, why).
+export const PackView = (k: Kit, report: PackReport | null, failed: string, now: number, nav: PackNav): JSX.Element => {
   const { Box, Text } = k
-  if (!report) return <Box flexDirection="column">{Section(k, 'Pack')}{Empty(k, 'Reading the pack…')}</Box>
+  if (!report) return <Box flexDirection="column">{Section(k, 'Pack')}{Empty(k, failed ? `Couldn't read the pack: ${failed}. r tries again.` : 'Reading the pack…')}</Box>
   const sections = SECTION_ORDER.map(s => ({ section: s, rows: report.entries.filter(e => e.section === s) })).filter(s => s.rows.length > 0)
   return (
     <Box flexDirection="column">
