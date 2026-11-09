@@ -8,7 +8,7 @@ const TYPED = { origin: { kind: 'composer' }, presentation: { isFullscreen: fals
 const BAND = {
   plugin: 'ccinformer',
   component: 'AbovePrompt',
-  props: { hasSurvey: false, isWorking: true, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} },
 } as const
 
 const PACKS = '/home/test/.claude/ccinformer/packs'
@@ -23,13 +23,17 @@ const USER_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { 
     { "id": "scenes", "label": "Scene node paths", "on": ["**/*.tscn", "**/*.cs"], "analyzer": "tscn-nodepaths", "cost": "turn", "class": "advise" }] }`
 // A plan whose open checkpoint names PR #9, which GitHub says is still open.
 const PLAN = '# Cart\n### CP1: cart page (#9)\n'
+// An invented Godot C# game, and the telemetry file its autoload wrote while it ran.
+const GODOT_PROJECT = 'config_version=5\n\n[application]\n\nconfig/name="Lantern"\n\n[dotnet]\n\nproject/assembly_name="Lantern"\n'
+const GODOT_TELEMETRY = JSON.stringify({ schema: 1, startedAt: 0, errorSource: 'logger', errorCount: 0, samples: [{ t: 1_000_000, fps: 60, slowestFrameMs: 16.7, slowestPhysicsMs: 2, drawCalls: 10, objects: 100, memMb: 50 }], errors: [], screenshot: null })
 const PR = JSON.stringify({ number: 7, title: 'Cart', url: 'https://github.com/acme/shop/pull/7', baseRefName: 'main', isDraft: false, state: 'OPEN' })
 const checks = (bucket: 'pending' | 'fail') =>
   JSON.stringify([{ name: 'lint', workflow: 'CI', bucket, startedAt: '', completedAt: '', link: 'https://github.com/acme/shop/actions/runs/100/job/11' }])
 const DENY_ALL = { base: 'off', set: {} }
 const SESSION_KEY = 'session:self-session-id'
-// The pack read, which runs whatever the switches say: it reads the mod's own config.
-const PACK_READ = /^git (rev-parse --show-toplevel --git-common-dir|config --get remote\.origin\.url|check-ignore)/
+// The pack read, which runs whatever the switches say: it reads the mod's own config. Nothing in a pack read asks
+// git what it ignores, so a check-ignore here was asked for by something else.
+const PACK_READ = /^git (rev-parse --show-toplevel --git-common-dir|config --get remote\.origin\.url)/
 
 const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `export const a${i} = ${i}`).join('\n') + '\n'
@@ -38,13 +42,16 @@ const turnEnd = (turnId: string) => ({ answer: '', durationMs: 1, isAborted: fal
 // A Vite repo on feat/cart with PR #7, whose lint check is pending until `ci.bucket` says it failed; a plan naming PR #9;
 // ESLint installed. Every command, toast, notification, status, question, pane opening and plugin prompt is recorded,
 // and the store is open to the test.
-const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {}, opts: { userPack?: boolean } = {}) => {
-  const files: Record<string, string> = {
-    '/repo/package.json': PACKAGE,
-    '/repo/node_modules/eslint/bin/eslint.js': '',
-    '/repo/.local/plans/2026-10-30-cart.md': PLAN,
-    ...(opts.userPack === false ? {} : { [PACKS + '/shop.pack.jsonc']: USER_PACK }),
-  }
+// With `godot`, the repo is a Godot C# game instead, with a telemetry file its autoload wrote.
+const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {}, opts: { userPack?: boolean; godot?: boolean } = {}) => {
+  const files: Record<string, string> = opts.godot
+    ? { '/repo/project.godot': GODOT_PROJECT, '/repo/.local/telemetry/telemetry.json': GODOT_TELEMETRY }
+    : {
+        '/repo/package.json': PACKAGE,
+        '/repo/node_modules/eslint/bin/eslint.js': '',
+        '/repo/.local/plans/2026-10-30-cart.md': PLAN,
+        ...(opts.userPack === false ? {} : { [PACKS + '/shop.pack.jsonc']: USER_PACK }),
+      }
   const ci = { bucket: 'pending' as 'pending' | 'fail' }
   const seen = {
     commands: [] as string[],
@@ -57,6 +64,8 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
     contexts: [] as string[],
     writes: [] as string[],
     tools: [] as string[],
+    stats: [] as string[],
+    reads: [] as string[],
   }
   const clock = mock.clock(on, { now: 1_000_000 })
   mock.env(on, { HOME: '/home/test' })
@@ -76,13 +85,19 @@ const engine = (on: Parameters<TestBody>[1], seed: Record<string, unknown> = {},
   on('session.usage', () => ({ value: { startedAt: 0, context: { tokens: 20, window: 100, percent: 20 }, rateLimits: [], cost: { usd: 0 } } }))
   on('agent.list', () => ({ value: [] }))
   on('fs.exists', (_, e) => ({ value: posix(e.path) in files }))
-  on('fs.read', (_, e) => ({ value: files[posix(e.path)] ?? null }) as never)
+  on('fs.read', (_, e) => {
+    seen.reads.push(posix(e.path))
+    return { value: files[posix(e.path)] ?? null } as never
+  })
   on('fs.write', (_, e) => {
     seen.writes.push(posix(e.path))
     files[posix(e.path)] = e.text
     return { value: undefined }
   })
-  on('fs.stat', (_, e) => ({ value: posix(e.path) in files ? { kind: 'file', size: files[posix(e.path)]!.length, mtimeMs: 1 } : null }) as never)
+  on('fs.stat', (_, e) => {
+    seen.stats.push(posix(e.path))
+    return { value: posix(e.path) in files ? { kind: 'file', size: files[posix(e.path)]!.length, mtimeMs: 1 } : null } as never
+  })
   on('fs.list', (_, e) => {
     const dir = posix(e.path) + '/'
     const names = Object.keys(files).filter(p => p.startsWith(dir) && !p.slice(dir.length).includes('/'))
@@ -362,4 +377,22 @@ test('Tell other sessions switched off in another session takes this one out of 
   expect(env.store.has(SESSION_KEY)).toBe(false)
   await env.clock.advance(30_000)
   expect(env.store.has(SESSION_KEY)).toBe(false)
+})
+
+
+test('a new install in a Godot game: with the pane closed or on Sessions, telemetry is never read and git is never asked what it ignores', CLOCK_HEAVY, async ($, on) => {
+  const env = engine(on, {}, { godot: true })
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await env.clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: 'sessions' })
+  await env.clock.advance(30_000)
+  await env.clock.settle()
+  await $.command.run({ ...TYPED, command: 'ccinformer', args: '' })
+  await env.clock.advance(300_000)
+  await env.clock.settle()
+  const telemetry = (paths: string[]) => paths.filter(p => p.includes('.local/telemetry'))
+  expect(telemetry(env.seen.stats)).toEqual([])
+  expect(telemetry(env.seen.reads)).toEqual([])
+  expect(env.seen.commands.filter(c => c.startsWith('git check-ignore'))).toEqual([])
+  expect(env.seen.writes).toEqual([])
 })

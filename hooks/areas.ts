@@ -56,7 +56,7 @@ export const REFRESH_KEY = 'r'
 
 // Each area's actions; the views take their hotkeys from here.
 export const ACTIONS = {
-  now: {},
+  now: { screenshot: 'c', telemetryToPrompt: 't' },
   code: { fetch: 'u', allFiles: 'f', diffPane: 'd', dismiss: 'x', measure: 'm', ciMode: 'i' },
   work: { phasePrev: 'p', phaseNext: 'n', followLive: 'l', closeRun: 'x', nextWorkflow: 'o', archive: 'a' },
   timeline: {},

@@ -8,11 +8,12 @@ export const GODOT_CSHARP: PackManifest = {
   // Godot writes a [dotnet] section into project.godot once a project has C# scripts.
   detect: [{ file: 'project.godot', contains: '[dotnet]', weight: 2, required: true }],
   // The first match wins, so the editor and an export come before the game. Godot's binary is named per version and
-  // platform (Godot_v4.4-stable_mono_win64.exe), so it is matched where a command starts or after a path separator.
+  // platform (Godot_v4.4-stable_mono_win64.exe), so it is matched as the command itself: at the start, after a quoted
+  // or unquoted folder, never as an argument (a script or an npm package named after Godot, such as a Godot MCP server).
   processes: [
-    { id: 'godot-editor', label: 'Godot editor', match: '(^|[\\\\/])[Gg]odot[\\w.-]*"?\\s.*(-e|--editor)(\\s|$)', kind: 'editor', heavy: true },
-    { id: 'godot-export', label: 'Godot export', match: '(^|[\\\\/])[Gg]odot[\\w.-]*"?\\s.*--export-(release|debug|pack)(\\s|$)', kind: 'build' },
-    { id: 'godot-game', label: 'Godot game', match: '(^|[\\\\/])[Gg]odot[\\w.-]*"?(\\s|$)', kind: 'game', heavy: true },
+    { id: 'godot-editor', label: 'Godot editor', match: '^(?:"[^"]*[\\\\/]|[^"\\s]*[\\\\/])?[Gg]odot[\\w.-]*"?\\s.*(-e|--editor)(\\s|$)', kind: 'editor', heavy: true },
+    { id: 'godot-export', label: 'Godot export', match: '^(?:"[^"]*[\\\\/]|[^"\\s]*[\\\\/])?[Gg]odot[\\w.-]*"?\\s.*--export-(release|debug|pack)(\\s|$)', kind: 'build' },
+    { id: 'godot-game', label: 'Godot game', match: '^(?:"[^"]*[\\\\/]|[^"\\s]*[\\\\/])?[Gg]odot[\\w.-]*"?(\\s|$)', kind: 'game', heavy: true },
     { id: 'dotnet-build', label: 'dotnet build', match: '\\bdotnet\\s+build\\b', kind: 'build' },
     { id: 'dotnet-test', label: 'dotnet test', match: '\\bdotnet\\s+test\\b', kind: 'test' },
   ],

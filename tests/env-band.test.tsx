@@ -4,7 +4,7 @@ import type { TestBody } from 'claude-code/testing'
 const BAND = {
   plugin: 'ccinformer',
   component: 'AbovePrompt',
-  props: { hasSurvey: false, isWorking: true, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 10, bodyColumns: 100, scroll: { offset: 0, bodyRows: 10 }, view: {} },
 } as const
 
 const PACKS = '/home/test/.claude/ccinformer/packs'
@@ -28,6 +28,7 @@ const engine = (on: Parameters<TestBody>[1], ms = 0) => {
     [PACKS + '/shop.pack.jsonc']: USER_PACK,
   }
   const statuses: (string | undefined)[] = []
+  const toasts: string[] = []
   let background = 0
   const clock = mock.clock(on, { now: 1_000_000 })
   // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
@@ -63,13 +64,17 @@ const engine = (on: Parameters<TestBody>[1], ms = 0) => {
     statuses.push(e.text)
     return { value: undefined }
   })
+  on('ui.toast', (_, e) => {
+    toasts.push((e as { text: string }).text)
+    return { value: undefined }
+  })
   on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
     const { Box } = $.ui.resolve(e)
     return <Box key="nothing" />
   })
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  return { clock, statuses }
+  return { clock, statuses, toasts }
 }
 
 const notification = (id: string) =>
@@ -122,6 +127,28 @@ test('the band gives way to a survey, and a plain dev server shows nothing', asy
   const survey = await $.ui.mount({ ...BAND, props: { ...BAND.props, hasSurvey: true }, surface: 'terminal' })
   expect(await survey.find({ text: /STAGING/ })).toBeUndefined()
   await survey.unmount()
+})
+
+test('while the band is collapsed, a new staging or production process also comes as one toast; expanded, none', async ($, on) => {
+  const { clock, toasts } = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const expanded = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev:staging', run_in_background: true })
+  expect(toasts).toEqual([])
+  await expanded.unmount()
+
+  const collapsed = await $.ui.mount({ ...BAND, props: { ...BAND.props, isCollapsed: true }, surface: 'terminal' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev:prod', run_in_background: true })
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev', run_in_background: true })
+  expect(toasts).toEqual(['⚠ PRODUCTION · npm run dev:prod (the band above the prompt is collapsed)'])
+  await collapsed.unmount()
+
+  // Expanded again: the band shows it, so no toast.
+  const again = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev:staging', run_in_background: true })
+  expect(toasts).toHaveLength(1)
+  await again.unmount()
 })
 
 test('production goes first and onto the status line; TaskStop and × clear rows', async ($, on) => {

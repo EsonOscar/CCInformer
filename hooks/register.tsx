@@ -3,13 +3,15 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type {
   AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, SkillsSettings, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GateRules, GitSnapshot, MemoryReading,
-  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolOutcome, ToolRow, WorkView, WorkflowRun,
+  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, TelemetryState, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, areaFor, areaNames, shownView, viewsFor } from './areas'
 import { createBudgets } from './budgets/run'
 import { createChecks } from './checks/run'
 import { programCandidates, skipReason } from './checks/tools'
 import { createPlans } from './plans/run'
+import { telemetryStatus } from './env/telemetry'
+import { createTelemetry } from './env/telemetry-run'
 import { CI_IDLE, CI_TEXTS, isGuardedTurn, isReadOnlyTool } from './ci/investigate'
 import { createCiActive } from './ci/run'
 import type { CiActive } from './ci/run'
@@ -39,7 +41,7 @@ import { projectDirName, upgradeRun } from './records'
 import { TOUCHING_TOOLS, capped, contextTokens, endedState, isPush, summarize, taskOf, toolLabel } from './rows'
 import { MAX_AGENTS, MAX_RUNS, createRuns } from './runs/run'
 import type { Kit } from './ui'
-import { EnvBand, bandTasks } from './view-band'
+import { EnvBand, bandTasks, collapsedToast } from './view-band'
 import { PaneView, scrolledTop } from './view-pane'
 import { PLAN_SELECTED } from './view-plans'
 
@@ -146,6 +148,7 @@ const envTasksAtom = atom({ plugin: 'ccinformer', key: 'envTasks' } as const, []
 const nowViewAtom = atom({ plugin: 'ccinformer', key: 'nowView' } as const, 'env' as NowView)
 const processesAtom = atom({ plugin: 'ccinformer', key: 'processes' } as const, null as ProcessList | null)
 const memoryAtom = atom({ plugin: 'ccinformer', key: 'memory' } as const, null as MemoryReading | null)
+const telemetryAtom = atom({ plugin: 'ccinformer', key: 'telemetry' } as const, null as TelemetryState | null)
 
 const MAX_TOOLS = 150
 const MAX_STEPS = 200
@@ -162,6 +165,8 @@ let contextWindow = 0
 // The processes this session started that the pack places, kept here as well as in state: hooks that run at
 // once each write the whole list from here, so none overwrites another's change.
 let envTasks: EnvTask[] = []
+// Whether the person has collapsed the band above the prompt, as its last render said (false on a host without it).
+let isBandCollapsed = false
 // What the status line says, so it is written only when that changes.
 let shownStatus: string | undefined
 // When Claude last wrote a file: a build older than that no longer measures the tree.
@@ -410,6 +415,9 @@ type Live = {
   setPermissions: (change: (c: PermissionChoices) => PermissionChoices) => Promise<unknown>
   setPlanFiles: (isOn: boolean) => Promise<void>
   explain: () => Promise<void>
+  installTelemetry: () => Promise<string>
+  screenshot: () => Promise<void>
+  offerTelemetry: () => Promise<void>
 }
 let live: Live | null = null
 // The full name of the pack-checking tool as the engine registered it ('' until it has, or if it couldn't).
@@ -644,8 +652,20 @@ export const register: Register = on => {
       notify: text => void $.ui.toast(text), // relay
       may,
     })
+    // A Godot game's telemetry (env/telemetry-run.ts): read while Now › Env shows; the install and the keys are the
+    // person's own, so their toasts and writes need no permission.
+    const telemetry = createTelemetry($, {
+      light: lanes.light,
+      solo,
+      pack: async () => packResolved ?? (await reloadPack().catch(() => null), packResolved),
+      report: () => packReport,
+      cwd,
+      save: state => update($, telemetryAtom, () => state),
+      toast: text => void $.ui.toast(text), // asked
+    })
 
     let ticks = 0
+    let wasGameLive = false
     let isGitQueued = false
     let isRecordQueued = false
     let ciHotUntil = 0
@@ -740,8 +760,15 @@ export const register: Register = on => {
       // Each CI poll also reads the repo's CI mode, which another session may have switched.
       if (isGitDue) void refreshGit().then(() => (isCiDue ? refreshCi().then(ciActive.readMode) : undefined))
       else if (isCiDue) void refreshCi().then(ciActive.readMode)
-      const isEnvShown = isOpen && active && area === 'now' && (await read($, nowViewAtom)) === 'env'
-      if (isEnvShown && ticks % PROCESSES_EVERY_TICKS === 0) void refreshProcesses()
+      const isEnvOpen = isOpen && area === 'now' && (await read($, nowViewAtom)) === 'env'
+      // A game's telemetry is one file read while Env is open, active or not: a person playing doesn't type. While it is
+      // live the processes are read too, and once more whenever it turns live or stops, so the game's row follows it.
+      const isGameLive = isEnvOpen && telemetryStatus((await read($, telemetryAtom))?.reading ?? null, now) === 'live'
+      const isGameFlipped = isEnvOpen && isGameLive !== wasGameLive
+      if (isEnvOpen) wasGameLive = isGameLive
+      const isEnvShown = isEnvOpen && (active || isGameLive)
+      if (isEnvOpen) void telemetry.refresh()
+      if (isGameFlipped || (isEnvShown && ticks % PROCESSES_EVERY_TICKS === 0)) void refreshProcesses()
       else if (envTasks.some(t => t.isHeavy) && ticks % MEMORY_EVERY_TICKS === 0 && may('bg.memoryProbe')) void probeMemory()
       const isPlansShown = isOpen && area === 'work' && (await read($, workViewAtom)) === 'plans'
       if (isPlansShown && ticks % PLANS_RECHECK_SHOWN_TICKS === 0) void plans.refresh()
@@ -761,7 +788,7 @@ export const register: Register = on => {
       if (area === 'work' && (await read($, workViewAtom)) === 'stats') await loadStats()
       if (area === 'work' && (await read($, workViewAtom)) === 'plans') await plans.refresh()
       if (area === 'now') await beat(await $.clock.now()).then(readSessions)
-      if (area === 'now' && (await read($, nowViewAtom)) === 'env') await refreshProcesses()
+      if (area === 'now' && (await read($, nowViewAtom)) === 'env') await Promise.all([refreshProcesses(), telemetry.refresh()])
       if (area === 'debug') await queueChoices($).then(loadSkills)
       // A pack that couldn't be read at start is tried again whenever Debug is shown or refreshed.
       if (area === 'debug' && !packReport) await reloadPack().catch(() => undefined)
@@ -893,6 +920,10 @@ export const register: Register = on => {
           .then(result => (result.drop !== undefined ? refused(result.drop) : undefined))
           .catch((err: unknown) => refused(String(err)))
       },
+      // /ccinformer pack install-telemetry; c and t in Now › Env.
+      installTelemetry: telemetry.install,
+      screenshot: telemetry.screenshot,
+      offerTelemetry: telemetry.offerFile,
     }
     $.clock.every(TICK_MS, () => void tick())
     void beat(startedAt)
@@ -943,7 +974,9 @@ export const register: Register = on => {
       void live.ci.investigateNow()
       return { text: CI_TEXTS.replyStarted }
     }
-    const named = name ? areaFor(name) : null
+    // Installing a game's telemetry shows Now › Env, where its section is, rather than Debug › Pack.
+    const isTelemetryInstall = name === 'pack' && sub === 'install-telemetry'
+    const named = isTelemetryInstall ? { area: 'now' as const, view: 'env' } : name ? areaFor(name) : null
     // A Code view the pack has no data for opens Code as it is drawn, and says why; the stored view is left alone.
     const isHidden = named?.area === 'code' && !!named.view && !(await codeViews($)).some(v => v.id === named.view)
     const target = isHidden ? { area: named!.area } : named
@@ -974,7 +1007,8 @@ export const register: Register = on => {
     if (!target) return arg ? { text: `CCInformer has no area "${name}". Try: ${areaNames().join(', ')}.` } : {}
     if (isHidden) return { text: named!.view === 'budgets' ? "This repo's pack has no budgets." : "This repo's pack has no checks." }
     if (name === 'pack' && (sub === 'trust' || sub === 'untrust')) return { text: (await live?.setTrust(sub === 'trust')) ?? '' }
-    return sub ? { text: `/${COMMAND} ${name} takes no "${sub}"` + (name === 'pack' ? ': try trust or untrust.' : '.') } : {}
+    if (isTelemetryInstall) return { text: (await live?.installTelemetry()) ?? '' }
+    return sub ? { text: `/${COMMAND} ${name} takes no "${sub}"` + (name === 'pack' ? ': try trust, untrust or install-telemetry.' : '.') } : {}
   }).catch(($, e, next) => next(e))
 
   on('ui.close', async ($, e, next) => {
@@ -1026,6 +1060,7 @@ export const register: Register = on => {
   // The band above the prompt: a process of this session aimed at a shared or prod environment. It gives way to a
   // survey, which shares the site.
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    isBandCollapsed = e.props.isCollapsed === true
     if (e.props.hasSurvey || !isAllowed(await read($, permissionsAtom), 'safety.envBand')) return next(e)
     const shown = bandTasks(await read($, envTasksAtom))
     if (!shown.length) return next(e)
@@ -1070,6 +1105,8 @@ export const register: Register = on => {
     const target = pack ? await classifyCommand($, cwd, input.command as string, pack) : null
     const envTask = target ? envTaskFor(target, row.id, startedAt) : null
     if (envTask) await saveEnvTasks($, [...envTasks, envTask])
+    // A collapsed band draws nothing, so a new warning comes as a toast too, once per process.
+    if (envTask && bandTasks([envTask]).length && isBandCollapsed && may('safety.envBand')) $.ui.toast(collapsedToast(envTask))
     if (tool === 'Workflow' && e.tool_use_id) {
       const toolUseId = e.tool_use_id
       const path = typeof input.scriptPath === 'string' ? input.scriptPath : ''
@@ -1235,14 +1272,15 @@ export const register: Register = on => {
         read($, isActiveAtom), read($, nowAtom), read($, gitAtom), read($, ciAtom), read($, showAllFilesAtom), read($, diffAtom),
         read($, agentsAtom), read($, runsAtom), read($, statsNameAtom), read($, statsAtom),
       ])
-    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRuns, budgets, plans, usage, contentTop, ciActive, version, permissions, skills, packFailed] = await Promise.all([
+    const [tools, steps, compactions, sessions, pack, tasks, processes, memory, codeView, findings, dismissed, checkRuns, budgets, plans, usage, contentTop, ciActive, version, permissions, skills, packFailed, telemetryState] = await Promise.all([
       read($, toolsAtom), read($, stepsAtom), read($, compactionsAtom), read($, sessionsAtom), read($, packAtom), read($, envTasksAtom),
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunsAtom),
-      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom), read($, packFailedAtom),
+      read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom), read($, packFailedAtom), read($, telemetryAtom),
     ])
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
       tools, steps, compactions, sessions, pack, packFailed, findings, dismissed, checkRuns, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
+      telemetry: telemetryState ?? null,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
       surface: String(e.surface),
@@ -1286,6 +1324,8 @@ export const register: Register = on => {
       setAllPermissions: isOn => void live?.setPermissions(c => allSet(c, isOn)),
       explainPermissions: () => void live?.explain(),
       togglePlanFiles: () => void live?.setPlanFiles(!skills.planFiles),
+      screenshot: () => void live?.screenshot(),
+      offerTelemetry: () => void live?.offerTelemetry(),
     })
   })
 }

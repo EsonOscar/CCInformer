@@ -193,7 +193,7 @@ test('repo tools wait until the person allows them, once, and can be stopped aga
   expect(await ui.find({ type: 'Text', text: /repo tools wait until you allow them/ })).toBeDefined()
   expect(asked.length).toBe(2)
   const odd = await $.command.run({ ...TYPED, command: 'ccinformer', args: 'pack maybe' })
-  expect(odd.text).toMatch(/takes no "maybe": try trust or untrust/)
+  expect(odd.text).toMatch(/takes no "maybe": try trust, untrust or install-telemetry/)
   await ui.unmount()
 })
 

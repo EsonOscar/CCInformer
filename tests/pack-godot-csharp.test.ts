@@ -61,6 +61,15 @@ describe('godot-csharp', () => {
     expect(processOf('grep -r godot docs')).toBe('')
   })
 
+  test('matches Godot only as the command itself, never a package or script named after it', async () => {
+    // A Godot MCP server started through npx: its last argument ends in /godot-mcp".
+    expect(processOf(String.raw`"C:\Program Files\nodejs\\node.exe"  "C:\Program Files\nodejs\\node_modules\npm\bin\npx-cli.js" "@some-scope/godot-mcp"`)).toBe('')
+    expect(processOf('node /usr/lib/node_modules/godot-mcp/build/index.js --editor')).toBe('')
+    expect(processOf('python tools/godot.py --path .')).toBe('')
+    expect(processOf('/Applications/Godot_mono.app/Contents/MacOS/Godot --path . -e')).toBe('godot-editor')
+    expect(processOf(String.raw`"C:\Program Files\Godot\Godot_v4.4-stable_mono_win64.exe" --path . --export-debug "Windows Desktop" out.exe`)).toBe('godot-export')
+  })
+
   test("folds the editor's rewrites of a scene, but not a node's real type change", async () => {
     const normalize = GODOT_CSHARP.noise?.find(n => n.id === 'godot-scenes')?.normalize ?? []
     const instanceTypeDropped = [
