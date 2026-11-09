@@ -9,7 +9,7 @@ Everything it does by itself has a switch in Debug › Settings. A new install s
 The digits shown switch areas; the letters shown switch views and run actions.
 
 - **Now** (`1`)
-  - **Env** (`e`): the processes this session started and the environment each targets, the processes your pack knows with their memory, and free memory.
+  - **Env** (`e`): the processes this session started and the environment each targets, the processes your pack knows with their memory, a Godot game's [telemetry](#godot-telemetry), and free memory.
   - **Sessions** (`s`): the other Claude sessions on this machine that have Tell other sessions on, and what each is working on.
 - **Code** (`2`)
   - **Git** (`g`): branch, changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits, branches, and CI for the PR. `u` fetches.
@@ -25,7 +25,7 @@ The digits shown switch areas; the letters shown switch views and run actions.
   - **Pack** (`p`): the [pack](#packs) in use and where each value came from. `a` lets the repo's own tools run, or stops them.
   - **Settings** (`s`): a switch for each thing the mod does by itself. `y` turns all on, `n` all off (Safety and Plan files stay as they are), `e` has Claude explain them, `f` switches the planning skills' plan files.
 
-**The band** above the prompt warns while a process Claude started targets a shared or production environment. **[Approval gates](#approval-gates)** ask about, or log, the tool calls your pack names.
+**The band** above the prompt warns while a process Claude started targets a shared or production environment; while you have collapsed it, a new one comes as a toast. **[Approval gates](#approval-gates)** ask about, or log, the tool calls your pack names.
 
 The footer shows context use and your 5-hour and 7-day limits, with the time until each resets.
 
@@ -59,6 +59,7 @@ By hand, without auto-update: `/plugin install ccinformer --marketplace EsonOsca
 - `/ccinformer` opens or closes the pane; `/ccinformer <area or view>` opens it there (`/ccinformer stats`). `/side` is an alias.
 - `/ccinformer ci active`, `ci passive` or `ci investigate`: what a failed check leads to, or look into one now.
 - `/ccinformer pack trust` or `pack untrust`: let the repo's own tools run, or stop them.
+- `/ccinformer pack install-telemetry`: add [Godot telemetry](#godot-telemetry) to a game (it asks first).
 - Ctrl+X Tab gives the pane the keyboard, Esc gives it back; `r` refreshes. Clicking always works.
 
 ## Skills
@@ -97,6 +98,17 @@ An environment's `approvals` rules name tool calls (a shell command, an MCP call
 - Each gated call adds a line to a log under `~/.claude/ccinformer/approvals/`, in files named by session, never the command or its values.
 
 A built-in pack's shared and prod rules always ask; only your own pack can loosen one, shown in amber in Debug › Pack. Rules apply only in sessions started in the matched repo, and a route no rule names isn't gated.
+
+## Godot telemetry
+
+In a Godot C# game, `/ccinformer pack install-telemetry` asks, then adds `addons/ccinformer/ccinformer_telemetry.gd`, its `[autoload]` line in `project.godot`, and `.local/telemetry/`. Git must ignore that folder, or nothing is written.
+
+While the game runs from the project (the editor or `godot --path .`, never an export), Now › Env shows its FPS, the slowest frame of each second (vsync wait included, as Godot measures it) and errors (Godot 4.5 or later).
+
+- `c` asks the game for a screenshot (at most 1280 px wide, the newest 10 kept) and puts it in your prompt as an `@` mention.
+- `t` puts `telemetry.json` in your prompt, so Claude reads the numbers and the errors.
+
+If a mention doesn't attach, its text still names the file for Claude to read. To remove telemetry, delete the `[autoload]` line, `addons/ccinformer/` and `.local/telemetry/`.
 
 ## Changing it
 

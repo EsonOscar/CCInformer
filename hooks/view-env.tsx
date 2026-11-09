@@ -1,9 +1,11 @@
 import type { Color } from 'claude-code'
 
-import type { EnvTask, MachineProcess, MemoryReading, ProcessList } from '../types'
+import type { EnvTask, MachineProcess, MemoryReading, ProcessList, TelemetryState } from '../types'
 import { ago, duration } from './format'
 import { ACCENT, Empty, Line, Section, bar } from './ui'
 import type { Glyph, Kit } from './ui'
+import { TelemetrySection } from './view-telemetry'
+import type { TelemetryNav } from './view-telemetry'
 
 const TONE_COLORS: Record<string, Color> = { '': 'inactive', local: 'success', shared: 'warning', prod: 'error' }
 const MEMORY_BAR = 12
@@ -12,9 +14,17 @@ const MB_PER_GB = 1024
 const toneGlyph = (tone: string): Glyph => ({ char: tone === 'prod' || tone === 'shared' ? '⚠' : '•', color: TONE_COLORS[tone] ?? 'inactive' })
 const gb = (mb: number) => (mb / MB_PER_GB).toFixed(1) + ' GB'
 
-// What runs and where it points: the processes this session started, the ones the pack knows on this machine, and
-// how much memory is left.
-export const EnvView = (k: Kit, tasks: EnvTask[], processes: ProcessList | null, memory: MemoryReading | null, now: number): JSX.Element => {
+// What runs and where it points: the processes this session started, the ones the pack knows on this machine, a Godot
+// game's telemetry (when the repo is one), and how much memory is left.
+export const EnvView = (
+  k: Kit,
+  tasks: EnvTask[],
+  processes: ProcessList | null,
+  memory: MemoryReading | null,
+  telemetry: TelemetryState | null,
+  now: number,
+  telemetryNav: TelemetryNav,
+): JSX.Element => {
   const { Box, Text } = k
   return (
     <Box flexDirection="column">
@@ -30,6 +40,7 @@ export const EnvView = (k: Kit, tasks: EnvTask[], processes: ProcessList | null,
       )}
       {processes && !processes.error && processes.list.length === 0 && Empty(k, 'None of the processes the pack knows is running.')}
       {processes?.list.map(p => Process(k, p))}
+      {telemetry && TelemetrySection(k, telemetry, now, telemetryNav)}
       {Section(k, 'Memory', memory ? ago(now - memory.at) : '')}
       {memory ? Memory(k, memory) : Empty(k, 'Read with the processes, and every 30 s while a heavy task runs.')}
     </Box>

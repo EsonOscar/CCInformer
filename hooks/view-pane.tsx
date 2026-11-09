@@ -1,6 +1,6 @@
 import type {
   AgentRow, Area, BudgetState, PermissionChoices, CheckRun, CiActiveState, PlansState, SkillsSettings, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
-  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, ToolRow, WorkView, WorkflowRun,
+  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, TelemetryState, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, shownView, viewsFor } from './areas'
 import { spinner } from './format'
@@ -60,6 +60,8 @@ export type PaneData = {
   tasks: EnvTask[]
   processes: ProcessList | null
   memory: MemoryReading | null
+  // A Godot game's telemetry; null when the repo isn't one.
+  telemetry: TelemetryState | null
   selfId: string
   cwd: string
   // The mod's version, shown muted in the top right; '' draws nothing.
@@ -113,6 +115,8 @@ export type PaneNav = {
   setAllPermissions: (isOn: boolean) => void
   explainPermissions: () => void
   togglePlanFiles: () => void
+  screenshot: () => void
+  offerTelemetry: () => void
 }
 
 // Each area's badge: its worst item.
@@ -171,7 +175,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   // The shown view, the same on every surface: one element, or null for an area with nothing built. A fragment holds
   // only elements and strings, so the views are picked here rather than switched on and off inside one.
   const view =
-    d.area === 'now' && d.nowView === 'env' ? EnvView(k, d.tasks, d.processes, d.memory, d.now)
+    d.area === 'now' && d.nowView === 'env' ? EnvView(k, d.tasks, d.processes, d.memory, d.telemetry, d.now, { screenshot: nav.screenshot, offerFile: nav.offerTelemetry })
     : d.area === 'now' && d.nowView === 'sessions' ? SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)
     : d.area === 'code' && shown === 'git' ? GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)
     : d.area === 'code' && shown === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRuns, checkIds, d.now, rulesNav)

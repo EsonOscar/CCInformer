@@ -2,3 +2,5 @@
 # default) they would be checked out as CRLF, and sh/bash fail on the \r.
 .githooks/** text eol=lf
 *.sh         text eol=lf
+# The Godot script the mod copies into a game: the same text on every machine, so "is it up to date" compares equal.
+*.gd         text eol=lf

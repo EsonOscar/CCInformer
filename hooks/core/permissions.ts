@@ -121,7 +121,7 @@ export const PERMISSIONS = [
     id: 'safety.envBand',
     group: 'safety',
     label: 'Environment band',
-    description: 'The band above the prompt while a process Claude started targets a shared or production environment.',
+    description: 'The band above the prompt while a process Claude started targets a shared or production environment, and a toast for a new one while you have collapsed the band.',
     isOnByDefault: true,
   },
   {

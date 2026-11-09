@@ -5,6 +5,10 @@ import type { Kit } from './ui'
 
 const TONE_COLORS: Record<EnvTask['tone'], Color> = { local: 'inactive', shared: 'warning', prod: 'error' }
 
+// What a new warning says as a toast while the person has collapsed the band, which then draws nothing.
+export const collapsedToast = (t: EnvTask): string =>
+  `⚠ ${(t.envLabel || (t.tone === 'prod' ? 'production' : 'a shared environment')).toUpperCase()} · ${t.label || 'a process'} (the band above the prompt is collapsed)`
+
 // The tasks the band warns about: those aimed at a shared or prod environment, prod first, then the newest.
 export const bandTasks = (tasks: EnvTask[]): EnvTask[] =>
   tasks

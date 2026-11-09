@@ -168,6 +168,26 @@ export type MachineProcess = {
 }
 export type ProcessList = { list: MachineProcess[]; at: number; ms: number; error: string }
 export type MemoryReading = { freeMb: number; totalMb: number; at: number; isLow: boolean }
+// A Godot game's telemetry, as its autoload writes it into the repo's .local/telemetry/telemetry.json (schema 1). Times
+// are Unix ms. `screenshot` is the answer to the latest request: a file, or why there is none. `note` says why a
+// reading is broken; `mtimeMs` is the file's, so an unchanged file isn't read again.
+export type TelemetrySample = { t: number; fps: number; slowestFrameMs: number; slowestPhysicsMs: number; drawCalls: number; objects: number; memMb: number }
+export type TelemetryError = { t: number; kind: 'error' | 'script' | 'shader' | 'stderr'; msg: string }
+export type TelemetryShot = { id: string; file: string; t: number; width?: number; height?: number; error?: string }
+export type TelemetryReading = {
+  mtimeMs: number
+  schema: number
+  startedAt: number
+  errorSource: 'logger' | 'none'
+  errorCount: number
+  samples: TelemetrySample[]
+  errors: TelemetryError[]
+  screenshot: TelemetryShot | null
+  note: string
+}
+// Telemetry as Now › Env shows it for a Godot game: the latest reading (null while there is no file) and the id of a
+// screenshot asked for and not yet answered ('' for none).
+export type TelemetryState = { reading: TelemetryReading | null; pendingShot: string }
 
 // The pack this repo resolved to, as Debug › Pack shows it: each layer's file and how it went, every value with the
 // layer that set it, and whether the repo's own tools may run.
@@ -340,6 +360,9 @@ declare module 'claude-code' {
       // heavy task of this session runs.
       processes: ProcessList | null
       memory: MemoryReading | null
+      // A Godot game's telemetry, read while Now › Env shows; null when the repo isn't a Godot game (or before
+      // the first read), and from an older version that had none.
+      telemetry: TelemetryState | null
       codeView: CodeView
       // What the pack's checks found, newest run per check and file; the ids the person dismissed this session; the
       // latest run of each check that runs the repo's own tools.
