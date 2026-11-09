@@ -6,7 +6,7 @@ How each pack setting works. Every setting, with an example, is in `pack-templat
 
 A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets and plan files. Packs are personal: nothing is read from inside the repo. Two layers, lowest first; lists merge by `id`, and the user pack's fields win:
 
-1. **A built-in pack**: the one your user pack `extends`, else one picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
+1. **A built-in pack**: the one your user pack `extends`, else one picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`) and `godot-csharp` (a `project.godot` with a `[dotnet]` section).
 2. **Your user pack**, `~/.claude/ccinformer/packs/<name>.pack.jsonc`, for repos whose remote matches its `match.remote` (globs over `host/owner/repo`, e.g. `github.com/<owner>/*`). It can `extends` a built-in and `disable` ids from it. Your own values for a repo live here, outside the repo. Have Claude write one with `/ccinformer:write-pack` ([Skills](../../README.md#skills)).
 
 A pack holds only these keys: `schema`, `id`, `version`, `match`, `detect` (built-ins only), `extends`, `processes`, `environments`, `checks`, `budgets`, `noise`, `plans` and `disable`. A pack with any other key, or a value it can't use, is refused whole, and Debug › Pack lists every reason, each saying what to change.

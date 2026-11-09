@@ -81,7 +81,7 @@ A hand-written plan in `.local/plans/` works too: a checkpoint is an id (`CP3`, 
 
 A pack tells CCInformer about a kind of project: its processes and environments, checks, budgets, noise and plan files. Packs are personal: nothing is read from inside a repo.
 
-- **A built-in pack**, picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`).
+- **A built-in pack**, picked from the repo's files. Today: `node-vite` (a `package.json` naming `vite`) and `godot-csharp` (a `project.godot` with a `[dotnet]` section).
 - **Your user pack**, `~/.claude/ccinformer/packs/<name>.pack.jsonc`, for the repos whose remote it matches. It can extend a built-in, and its values win. `/ccinformer:write-pack` drafts one.
 
 Every setting, with what it does: [the template](skills/write-pack/pack-template.jsonc). How each works: [the pack reference](skills/write-pack/reference.md).
