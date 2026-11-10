@@ -62,6 +62,11 @@ jobs:
       - name: Run the plan-feature-small skill's tests
         run: node skills/plan-feature-small/tests/test_review.mjs
 
+      # What each kind of workflow agent runs on, in all four workflow scripts: the defaults the mod's Settings show,
+      # a set value, the cap. Stub agents, no model calls; under tsx, as it reads the mod's own list of roles.
+      - name: The workflow scripts run their agents on the settings
+        run: npx -y tsx@4 skills/plan-feature/tests/test_agents.mjs
+
       # The write-pack skill's template must stay a valid pack naming every key; the mod's own validator decides, run
       # under tsx, as the plugin test kit loads only code files.
       - name: The pack template is valid

@@ -1,7 +1,7 @@
 export const meta = {
   name: 'audit-docs-fanout',
   description: 'Read-only docs audit fan-out: auditors with slices that do not overlap, then adversarial verifiers; returns a compact summary and the full changelist',
-  whenToUse: 'Run by the audit-docs skill in plan mode, with args {context, root, date, history, docs, auditors, verifiers?}',
+  whenToUse: 'Run by the audit-docs skill in plan mode, with args {context, root, date, history, docs, auditors, verifiers?, agents?}; agents is {auditor?, verifier?}, each {model?, effort?}',
   phases: [
     { title: 'Audit', detail: 'one read-only auditor per slice', model: 'opus' },
     { title: 'Verify', detail: 'adversarial verifiers, each owning some rows, keep also as a verdict-only second opinion', model: 'opus' },
@@ -18,6 +18,18 @@ const MODELS = ['haiku', 'sonnet', 'opus']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const under = (list, value, max) => list.includes(value) && list.indexOf(value) <= list.indexOf(max) ? value : max
 const capped = (model, effort) => ({ model: under(MODELS, model, MAX_MODEL), effort: under(EFFORTS, effort, MAX_EFFORT) })
+// What the person set for a kind of agent (args.agents: {<role>: {model?, effort?}}, from the skills' settings file,
+// passed on by the skill); a value left out is the default given here, and all of it is brought down to the cap.
+const chosen = args && args.agents && typeof args.agents === 'object' ? args.agents : {}
+const roleOpts = (role, model, effort) => {
+  const set = chosen[role] && typeof chosen[role] === 'object' ? chosen[role] : {}
+  return capped(set.model || model, set.effort || effort)
+}
+const ranOnLine = (ranOn) => 'ran on: ' + Object.entries(ranOn).map(([role, o]) => `${role} ${o.model}/${o.effort}`).join(', ')
+const ROLES = {
+  auditor: roleOpts('auditor', MAX_MODEL, MAX_EFFORT),
+  verifier: roleOpts('verifier', MAX_MODEL, MAX_EFFORT),
+}
 const WORDS_CAP = 8000
 const WORDS_CAP_EXTRACT = 3000
 // The completion preview shows only the first few KB of the result, so the summary (first key) stays small.
@@ -181,6 +193,7 @@ const kindLines = kindsPresent.map(k => `- ${k}: ${KIND_RULES[k]}`).join('\n')
 const historyLine = args.history ? `History file: ${args.history.file} (MOVE and ADD of history text go there, with a plain label as section).` : 'No history file: history text is deleted with DELETE or EDIT.'
 const head = `${context}\n${READ_ONLY}\n${RULES}\nDOCS IN SCOPE (a row for any other file is set aside):\n${docLines}\nDOC KINDS PRESENT (each doc's rule):\n${kindLines}\n${historyLine}`
 
+log(ranOnLine(ROLES))
 phase('Audit')
 const audits = (await parallel(args.auditors.map(a => () => {
   const ranges = (a.ranges || []).map(r => `${r.file}:${r.start}-${r.end}`).join(', ')
@@ -188,7 +201,7 @@ const audits = (await parallel(args.auditors.map(a => () => {
     ? 'EXTRACT SLICE: these ranges move to history whole. Report each as one MOVE to the history file. Report every current rule, gotcha, number or reason that lives only here as an ADD to the current doc and section where it belongs (create: true for a new section), in that doc\'s style, with the source range. Never put moved text in new_text.'
     : 'Read every line of your slice and check each claim against what it describes, citing file:line.'
   return agent(`${head}\nYOUR SLICE (other auditors cover the rest): ${ranges}\n${a.brief}\n${role}\nQuote anchors exactly. Report only problems; a clean slice returns an empty changes list.`,
-    { label: `audit:${a.key}`, phase: 'Audit', schema: AUDIT, ...capped() })
+    { label: `audit:${a.key}`, phase: 'Audit', schema: AUDIT, ...ROLES.auditor })
     .then(r => r && { key: a.key, ...r })
 }))).filter(Boolean)
 
@@ -209,7 +222,7 @@ const plan = verifiers.map(v => ({
   second: v.key === 'keep' ? changes.filter(c => ownerOf(c) !== v && secondOpinion(c)) : [],
 }))
 const verifications = await parallel(plan.map(p => () =>
-  agent(verifyPrompt(p.v, p.owned, p.second), { label: `verify:${p.v.key}`, phase: 'Verify', schema: VERIFY, ...capped() })
+  agent(verifyPrompt(p.v, p.owned, p.second), { label: `verify:${p.v.key}`, phase: 'Verify', schema: VERIFY, ...ROLES.verifier })
     .then(r => r && { key: p.v.key, ...r })))
 
 const incomplete = [
@@ -249,7 +262,7 @@ const changed = final.filter(c => c.action_changed && c.verified_by !== 'keep')
 let agents = audits.length + verifications.filter(Boolean).length
 if (changed.length) {
   const keep = verifiers.find(v => v.key === 'keep')
-  const r = await agent(verifyPrompt(keep, [], changed), { label: 'verify:keep-changed', phase: 'Verify', schema: VERIFY, ...capped() })
+  const r = await agent(verifyPrompt(keep, [], changed), { label: 'verify:keep-changed', phase: 'Verify', schema: VERIFY, ...ROLES.verifier })
   agents += 1
   if (!r) incomplete.push('verify:keep-changed')
   for (const c of changed) {
@@ -290,4 +303,4 @@ const summary = {
 }
 if (JSON.stringify(summary).length > SUMMARY_MAX) summary.note = 'summary cut; run apply_changes.py summary for the full lists'
 log(`${agents} agents returned, ${final.length} rows, ${rejected.length} rejected, incomplete: ${incomplete.join(', ') || 'none'}`)
-return { summary, run: { date: args.date, root: args.root || '', history: args.history || null, agents }, docs: args.docs, changes: final, rejected }
+return { summary, run: { date: args.date, root: args.root || '', history: args.history || null, agents, ranOn: ROLES }, docs: args.docs, changes: final, rejected }
