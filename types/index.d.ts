@@ -160,8 +160,13 @@ export type EnvTask = {
   startedAt: number
 }
 
-// Now's views: what runs and where it points, and the other sessions.
-export type NowView = 'env' | 'sessions'
+// A background shell this session started (Bash, PowerShell or Monitor). `command` is its first line, capped; the
+// mod never writes it outside session state. `status`: 'running', or the word that ended it. `endedAt`: 0 while it
+// runs. `owner`: the agent whose turn's end ends it ('' for none).
+export type ShellRow = { id: string; tool: string; command: string; startedAt: number; endedAt: number; status: string; owner: string }
+
+// Now's views: what runs and where it points, the other sessions, and the background shells.
+export type NowView = 'env' | 'sessions' | 'shells'
 // A process on this machine that a pack matcher knows, started by Claude or not. Only these fields are kept: never
 // its command line.
 export type MachineProcess = {
@@ -364,6 +369,8 @@ declare module 'claude-code' {
       sessionApprovals: string[]
       // The processes this session started that target an environment; the band shows the shared and prod ones.
       envTasks: EnvTask[]
+      // The background shells this session started, the ended ones too (hooks/env/shells.ts).
+      shells: ShellRow[]
       nowView: NowView
       // The pack's processes on this machine, read while Now › Env shows; free memory, read with them and while a
       // heavy task of this session runs.

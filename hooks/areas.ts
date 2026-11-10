@@ -15,6 +15,7 @@ export const AREAS: AreaDef[] = [
     views: [
       { id: 'env', label: 'Env', key: 'e' },
       { id: 'sessions', label: 'Sessions', key: 's' },
+      { id: 'shells', label: 'Shells', key: 'h' },
     ],
   },
   {
