@@ -21,6 +21,7 @@ import { BudgetsView } from './view-budgets'
 import { RulesView, shownFindings } from './view-rules'
 import { SessionsView } from './view-sessions'
 import { SettingsView } from './view-settings'
+import type { AgentField } from './core/skills'
 import { StatsView } from './view-stats'
 import { usageLine } from './usage'
 
@@ -115,6 +116,8 @@ export type PaneNav = {
   setAllPermissions: (isOn: boolean) => void
   explainPermissions: () => void
   togglePlanFiles: () => void
+  cycleAgent: (script: string, role: string, field: AgentField) => void
+  resetAgents: () => void
   screenshot: () => void
   offerTelemetry: () => void
 }
@@ -169,7 +172,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const isPlanSelected = d.selected.work.startsWith(PLAN_SELECTED)
   const runNav = { phase: d.phase, pickPhase: nav.pickPhase, run: isPlanSelected ? '' : d.selected.work, pickRun: nav.pickRun }
   const planNav = { selected: isPlanSelected ? d.selected.work.slice(PLAN_SELECTED.length) : '', pick: nav.pickPlan, archive: nav.archivePlan }
-  const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions, togglePlanFiles: nav.togglePlanFiles }
+  const settingsNav = { toggle: nav.togglePermission, approveAll: () => nav.setAllPermissions(true), denyAll: () => nav.setAllPermissions(false), explain: nav.explainPermissions, togglePlanFiles: nav.togglePlanFiles, cycleAgent: nav.cycleAgent, resetAgents: nav.resetAgents }
   const hasViewBar = drawn.length > 1
   const badges = badgesOf(d)
   // The shown view, the same on every surface: one element, or null for an area with nothing built. A fragment holds

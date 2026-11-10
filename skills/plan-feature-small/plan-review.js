@@ -1,7 +1,7 @@
 export const meta = {
   name: 'plan-review',
   description: 'One read-only critic reviews a drafted plan against the code, every lens in its own section',
-  whenToUse: "Run by the CCInformer plan-feature-small skill (rounds 1 and 2, and the final check) and by plan-feature and plan-handoff (the final check), in plan mode, with args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final)}",
+  whenToUse: "Run by the CCInformer plan-feature-small skill (rounds 1 and 2, and the final check) and by plan-feature and plan-handoff (the final check), in plan mode, with args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final), agents?}; agents is {critic?: {model?, effort?}}",
   phases: [{ title: 'Review', detail: 'one adversarial critic, every lens', model: 'opus' }],
 }
 
@@ -11,6 +11,14 @@ export const meta = {
 // and the user's answers, a final check looks only at what it changed since (round 'final'), once, with no round after.
 const MODEL = 'opus'
 const EFFORT = 'medium'
+// The critic runs on Opus at high effort at most, whatever is asked for: a model or effort above that, or one not on
+// the lists, is brought down to it.
+const MAX_MODEL = 'opus'
+const MAX_EFFORT = 'high'
+const MODELS = ['haiku', 'sonnet', 'opus']
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+const under = (list, value, max) => list.includes(value) && list.indexOf(value) <= list.indexOf(max) ? value : max
+const capped = (model, effort) => ({ model: under(MODELS, model, MAX_MODEL), effort: under(EFFORTS, effort, MAX_EFFORT) })
 const MAX_FILES = 30
 const MAX_LENSES = 3
 const MAX_FINDINGS = 10
@@ -52,6 +60,10 @@ if (new Set(extra.map(l => l.key)).size !== extra.length) fail('lens keys must d
 if (a.round === 2 && (!a.previous || !Array.isArray(a.previous.findings) || typeof a.previous.changes !== 'string'))
   fail('round 2 needs previous: {findings, changes}')
 const lenses = [...DEFAULT_LENSES, ...extra]
+// What the person set for the critic (agents: {critic: {model?, effort?}}, from the skills' settings file, passed on
+// by the skill); a value left out is the default above.
+const set = a.agents && typeof a.agents === 'object' && a.agents.critic && typeof a.agents.critic === 'object' ? a.agents.critic : {}
+const ranOn = { critic: capped(set.model || MODEL, set.effort || EFFORT) }
 
 const SCHEMA = {
   type: 'object',
@@ -96,10 +108,11 @@ Each finding: BLOCKER (would break, contradict the code or the requirements, or 
 
 phase('Review')
 log(`${isFinal ? 'final check' : `round ${a.round}`}: one critic, ${lenses.length} lenses, ${a.files.length} files to read first`)
-const review = await agent(prompt, { label: 'critic', phase: 'Review', model: MODEL, effort: EFFORT, schema: SCHEMA })
+log(`ran on: critic ${ranOn.critic.model}/${ranOn.critic.effort}`)
+const review = await agent(prompt, { label: 'critic', phase: 'Review', ...ranOn.critic, schema: SCHEMA })
 if (!review) return { round: a.round, error: `the critic returned nothing; run ${isFinal ? 'the final check' : 'this round'} again` }
 
 const all = Object.values(review.lenses || {}).flatMap(l => (l && Array.isArray(l.findings) ? l.findings : []))
 const count = (s) => all.filter(f => f && f.severity === s).length
 const counts = { blocker: count('blocker'), shouldFix: count('should-fix'), nit: count('nit') }
-return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0 }
+return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ranOn }

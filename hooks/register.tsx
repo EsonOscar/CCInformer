@@ -19,7 +19,8 @@ import type { Exec } from './collect'
 import { createLanes, createSolo } from './core/lanes'
 import { EXPLAIN_TEXTS, NEW_INSTALL, allSet, choicesFrom, explainPrompt, isAllowed, startingChoices, toggled } from './core/permissions'
 import type { May, PermissionId } from './core/permissions'
-import { DEFAULT_SKILLS, SKILLS_FILE, readSkills, skillsText } from './core/skills'
+import { DEFAULT_SKILLS, SKILLS_FILE, cycled, readSkills, skillsFrom, skillsRest, skillsText, withoutAgents } from './core/skills'
+import type { AgentField } from './core/skills'
 import { commandDir, endedTaskIds, envTaskFor } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
@@ -414,6 +415,8 @@ type Live = {
   ci: CiActive
   setPermissions: (change: (c: PermissionChoices) => PermissionChoices) => Promise<unknown>
   setPlanFiles: (isOn: boolean) => Promise<void>
+  cycleAgent: (script: string, role: string, field: AgentField) => Promise<void>
+  resetAgents: () => Promise<void>
   explain: () => Promise<void>
   installTelemetry: () => Promise<string>
   screenshot: () => Promise<void>
@@ -491,6 +494,20 @@ export const register: Register = on => {
       await update($, skillsAtom, () => skills)
     }
     await loadSkills()
+    // The person changed a skills setting: the file is read afresh, so what another session wrote in between stays,
+    // and the keys this version doesn't know are written back as they were. One change at a time, so two presses
+    // close together both count.
+    let skillsQueue: Promise<void> = Promise.resolve()
+    const changeSkills = (change: (s: SkillsSettings) => SkillsSettings): Promise<void> => {
+      skillsQueue = skillsQueue
+        .then(async () => {
+          const text = (await $.fs.read(skillsFile).catch(() => null)) ?? ''
+          await $.fs.write(skillsFile, skillsText(change(skillsFrom(text)), skillsRest(text))).catch(e => $.ui.toast(`Couldn't write ${skillsFile}: ${String(e)}`)) // asked
+          await loadSkills()
+        })
+        .catch(() => {})
+      return skillsQueue
+    }
 
     // The one place the mod runs commands: everything else goes through a lane (a CI check holds this).
     const lanes = createLanes((argv, timeoutMs, dir) => $.process.run(argv, dir ? { timeoutMs, cwd: dir } : { timeoutMs }))
@@ -903,10 +920,10 @@ export const register: Register = on => {
       // The person changed the Settings choices.
       setPermissions: change => queueChoices($, change),
       // The person flipped the planning skills' Plan files switch: the file is what the skills read.
-      setPlanFiles: async isOn => {
-        await $.fs.write(skillsFile, skillsText({ planFiles: isOn })).catch(e => $.ui.toast(`Couldn't write ${skillsFile}: ${String(e)}`)) // asked
-        await loadSkills()
-      },
+      setPlanFiles: isOn => changeSkills(s => ({ ...s, planFiles: isOn })),
+      // The person pressed a workflow agent's model or effort, or asked for the defaults back.
+      cycleAgent: (script, role, field) => changeSkills(s => cycled(s, script, role, field)),
+      resetAgents: () => changeSkills(withoutAgents),
       // The person asked Claude to explain the Settings: one prompt, framed as from CCInformer, run once the session is free.
       explain: async () => {
         if (isExplainSent) return
@@ -1324,6 +1341,8 @@ export const register: Register = on => {
       setAllPermissions: isOn => void live?.setPermissions(c => allSet(c, isOn)),
       explainPermissions: () => void live?.explain(),
       togglePlanFiles: () => void live?.setPlanFiles(!skills.planFiles),
+      cycleAgent: (script, role, field) => void live?.cycleAgent(script, role, field),
+      resetAgents: () => void live?.resetAgents(),
       screenshot: () => void live?.screenshot(),
       offerTelemetry: () => void live?.offerTelemetry(),
     })

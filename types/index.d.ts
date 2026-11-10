@@ -4,8 +4,13 @@ export type DebugView = 'tools' | 'requests' | 'context' | 'pack' | 'settings'
 // The Debug › Settings choices: Deny all as a base (so a permission added later starts off too), and each switch set by
 // hand. Kept in the store all sessions share.
 export type PermissionChoices = { base: 'defaults' | 'off'; set: Record<string, boolean> }
-// The planning skills' own settings (~/.claude/ccinformer/skills.json): whether they save plan files into the repo.
-export type SkillsSettings = { planFiles: boolean }
+// What the person set for one kind of workflow agent; a field left out is the script's default.
+export type AgentChoice = { model?: string; effort?: string }
+// Script name, then role: only the values that differ from the default.
+export type AgentSettings = Record<string, Record<string, AgentChoice>>
+// The planning skills' own settings (~/.claude/ccinformer/skills.json): whether they save plan files into the repo,
+// and the model and effort their workflow agents run on.
+export type SkillsSettings = { planFiles: boolean; agents: AgentSettings }
 
 // `noise`: the pack's noise kind for a file that is generated output or only an editor's rewrite; absent otherwise.
 export type FileChange = { path: string; code: string; added: number; removed: number; noise?: 'generated' | 'editor-rewrite' }

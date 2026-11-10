@@ -2,7 +2,7 @@ import { expect, mock, test } from 'claude-code/testing'
 import type { TestBody } from 'claude-code/testing'
 
 import { EXPLAIN_TEXTS, PERMISSIONS, PERMISSION_GROUPS } from '../hooks/core/permissions'
-import { PLAN_FILES } from '../hooks/core/skills'
+import { AGENTS_TEXTS, AGENT_ROLES, DEFAULT_SKILLS, PLAN_FILES, agentsExplain } from '../hooks/core/skills'
 
 const PANE = {
   plugin: 'ccinformer',
@@ -476,6 +476,97 @@ test('a skills file written elsewhere is read when Settings is shown again, and 
   await ui.unmount()
 })
 
+const agentValue = async (ui: Ui, id: string) => (await ui.find({ key: 'agent-' + id }))?.text
+const badge = async (ui: Ui, text: string) => !!(await ui.find({ type: 'Text', text }))
+
+test('the workflow agents: every row shows its default with no file; a press moves a value on and writes the file, keeping Plan files', async ($, on) => {
+  const { clock, files } = engine(on)
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  for (const d of AGENT_ROLES) {
+    expect(await agentValue(ui, `${d.script}.${d.role}-model`)).toBe(d.model)
+    expect(await agentValue(ui, `${d.script}.${d.role}-effort`)).toBe(d.effort)
+  }
+  expect(await badge(ui, AGENTS_TEXTS.defaults)).toBe(true)
+  expect(files.has(SKILLS_FILE)).toBe(false)
+
+  await ui.press({ key: 'skills-planFiles' })
+  await ui.press({ key: 'agent-plan-fanout.critic-effort' })
+  await clock.settle()
+  expect(await agentValue(ui, 'plan-fanout.critic-effort')).toBe('low')
+  expect(await agentValue(ui, 'plan-fanout.critic-model')).toBe('opus')
+  expect(await agentValue(ui, 'plan-review.critic-effort')).toBe('medium')
+  expect(await badge(ui, AGENTS_TEXTS.changed(1))).toBe(true)
+  expect(JSON.parse(files.get(SKILLS_FILE)!)).toEqual({ planFiles: false, agents: { 'plan-fanout': { critic: { effort: 'low' } } } })
+
+  // Flipping Plan files keeps the agents; approve all and deny all leave them.
+  await ui.press({ key: 'skills-planFiles' })
+  await ui.press({ key: 'settings-approve' })
+  await ui.press({ key: 'settings-deny' })
+  await clock.settle()
+  expect(JSON.parse(files.get(SKILLS_FILE)!)).toEqual({ planFiles: true, agents: { 'plan-fanout': { critic: { effort: 'low' } } } })
+  expect(await agentValue(ui, 'plan-fanout.critic-effort')).toBe('low')
+  await ui.unmount()
+
+  // A later session reads it back.
+  await start($)
+  const again = await settings($)
+  await clock.settle()
+  expect(await agentValue(again, 'plan-fanout.critic-effort')).toBe('low')
+  await again.unmount()
+})
+
+test('the workflow agents: two presses close together both count, and return to default removes them all and keeps Plan files', async ($, on) => {
+  const { clock, files } = engine(on)
+  files.set(SKILLS_FILE, '{ "planFiles": false }')
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  void ui.press({ key: 'agent-plan-fanout.scout-model' })
+  void ui.press({ key: 'agent-build-fanout.reviewer-effort' })
+  await clock.settle()
+  expect(JSON.parse(files.get(SKILLS_FILE)!)).toEqual({
+    planFiles: false,
+    agents: { 'plan-fanout': { scout: { model: 'opus' } }, 'build-fanout': { reviewer: { effort: 'low' } } },
+  })
+  expect(await badge(ui, AGENTS_TEXTS.changed(2))).toBe(true)
+
+  await ui.press({ key: 'skills-agents-reset' })
+  await clock.settle()
+  expect(files.get(SKILLS_FILE)).toBe('{\n  "planFiles": false\n}\n')
+  expect(await agentValue(ui, 'plan-fanout.scout-model')).toBe('sonnet')
+  expect(await agentValue(ui, 'build-fanout.reviewer-effort')).toBe('high')
+  expect(await badge(ui, AGENTS_TEXTS.defaults)).toBe(true)
+  expect((await ui.find({ key: 'skills-planFiles' }))?.text).toBe('off')
+  await ui.unmount()
+})
+
+test('the workflow agents: a file changed elsewhere shows after a refresh, a press builds on the file as it is, and a key this version does not know stays', async ($, on) => {
+  const { clock, files } = engine(on)
+  await start($)
+  const ui = await settings($)
+  await clock.settle()
+  files.set(SKILLS_FILE, '{ "someLater": [1], "agents": { "plan-review": { "critic": { "model": "sonnet" } }, "plan-fanout": { "scout": { "model": "fable" } } } }')
+  await ui.press({ key: 'refresh' })
+  await clock.settle()
+  expect(await agentValue(ui, 'plan-review.critic-model')).toBe('sonnet')
+  // A value off the lists reads as the default.
+  expect(await agentValue(ui, 'plan-fanout.scout-model')).toBe('sonnet')
+
+  // Another session sets one more; this one's press keeps it.
+  files.set(SKILLS_FILE, '{ "someLater": [1], "agents": { "plan-review": { "critic": { "model": "sonnet" } }, "audit-docs-fanout": { "auditor": { "effort": "medium" } } } }')
+  await ui.press({ key: 'agent-plan-review.critic-effort' })
+  await clock.settle()
+  expect(JSON.parse(files.get(SKILLS_FILE)!)).toEqual({
+    someLater: [1],
+    planFiles: true,
+    agents: { 'plan-review': { critic: { model: 'sonnet', effort: 'high' } }, 'audit-docs-fanout': { auditor: { effort: 'medium' } } },
+  })
+  expect(await agentValue(ui, 'audit-docs-fanout.auditor-effort')).toBe('medium')
+  await ui.unmount()
+})
+
 test('explain hands Claude one prompt naming every switch and its state, and only once until the session ends a turn', async ($, on) => {
   const { clock, submits, toasts } = engine(on)
   await start($)
@@ -492,6 +583,8 @@ test('explain hands Claude one prompt naming every switch and its state, and onl
     expect(submits[0]!.text).toContain(`${d.group === 'safety' ? 'On' : 'Off'} · ${group} · ${d.label}: ${d.description}`)
   }
   expect(submits[0]!.text).toContain(`On · ${PLAN_FILES.group} · ${PLAN_FILES.label}: ${PLAN_FILES.description}`)
+  expect(submits[0]!.text).toContain(agentsExplain(DEFAULT_SKILLS))
+  expect(submits[0]!.text).toContain("the planning skills' settings (Plan files and the workflow agents)")
   expect(submits[0]!.context).toEqual([])
   expect(toasts).toContain(EXPLAIN_TEXTS.sent)
 

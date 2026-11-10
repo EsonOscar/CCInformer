@@ -60,7 +60,7 @@ export const ACTIONS = {
   code: { fetch: 'u', allFiles: 'f', diffPane: 'd', dismiss: 'x', measure: 'm', ciMode: 'i' },
   work: { phasePrev: 'p', phaseNext: 'n', followLive: 'l', closeRun: 'x', nextWorkflow: 'o', archive: 'a' },
   timeline: {},
-  debug: { trust: 'a', approveAll: 'y', denyAll: 'n', explain: 'e', planFiles: 'f' },
+  debug: { trust: 'a', approveAll: 'y', denyAll: 'n', explain: 'e', planFiles: 'f', agentDefaults: 'd' },
 } as const satisfies Record<Area, Record<string, string>>
 
 // The views an area draws for the repo's pack: one that needs pack data only when the pack has some (Rules, also while

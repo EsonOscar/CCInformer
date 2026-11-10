@@ -23,7 +23,7 @@ The digits shown switch areas; the letters shown switch views and run actions.
 - **Debug** (`5`)
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): tool calls, model requests and how the context grew.
   - **Pack** (`p`): the [pack](#packs) in use and where each value came from. `a` lets the repo's own tools run, or stops them.
-  - **Settings** (`s`): a switch for each thing the mod does by itself. `y` turns all on, `n` all off (Safety and Plan files stay as they are), `e` has Claude explain them, `f` switches the planning skills' plan files.
+  - **Settings** (`s`): a switch for each thing the mod does by itself. `y` turns all on, `n` all off (Safety and the planning skills' settings stay as they are), `e` has Claude explain them, `f` switches the planning skills' plan files. Under **Workflow agents**, a press on a model or effort sets what that kind of agent runs on in the skills' workflows (Opus at high effort at most); `d` returns them all to default.
 
 **The band** above the prompt warns while a process Claude started targets a shared or production environment; while you have collapsed it, a new one comes as a toast. **[Approval gates](#approval-gates)** ask about, or log, the tool calls your pack names.
 
@@ -72,7 +72,7 @@ By hand, without auto-update: `/plugin install ccinformer --marketplace EsonOsca
 | `/ccinformer:audit-docs <focus>` | Checks a repo's docs against its code, then fixes what you approve |
 | `/ccinformer:write-pack` | Drafts your [pack](#packs) for the repo you're in |
 
-Run the planning skills in plan mode. plan-feature and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off); plan-handoff writes a doc for a developer. Nothing is committed unless you ask.
+Run the planning skills in plan mode. plan-feature and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off); plan-handoff writes a doc for a developer. Nothing is committed unless you ask. Which model and effort the skills' agents run on is set in Debug › Settings; your session's own model stays `/model`'s.
 
 A repo's planning settings go in a `## Planning` section of its CLAUDE.md, or in `.local/ccinformer-planning.md`.
 

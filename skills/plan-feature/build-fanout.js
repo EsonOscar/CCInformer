@@ -1,7 +1,7 @@
 export const meta = {
   name: 'build-fanout',
   description: 'One build wave: per work package a builder, a read-only reviewer against the plan, and one fix round',
-  whenToUse: 'Run by the CCInformer plan-feature skill in step 9, once per wave, with args {context, plan, wave, packages: [{key, brief, files, doneWhen, model?, effort?}], reserved, scopedChecks, snapshot: {script, baseline}}',
+  whenToUse: 'Run by the CCInformer plan-feature skill in step 9, once per wave, with args {context, plan, wave, packages: [{key, brief, files, doneWhen, model?, effort?}], reserved, scopedChecks, snapshot: {script, baseline}, agents?}; agents is {builder?, reviewer?}, each {model?, effort?}',
   phases: [
     { title: 'Build', detail: 'one builder per package, own files only', model: 'opus' },
     { title: 'Review', detail: 'read-only check of each package against the plan and git', model: 'opus' },
@@ -20,6 +20,20 @@ const MODELS = ['haiku', 'sonnet', 'opus']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 const under = (list, value, max) => list.includes(value) && list.indexOf(value) <= list.indexOf(max) ? value : max
 const capped = (model, effort) => ({ model: under(MODELS, model, MAX_MODEL), effort: under(EFFORTS, effort, MAX_EFFORT) })
+// What the person set for a kind of agent (args.agents: {<role>: {model?, effort?}}, from the skills' settings file,
+// passed on by the skill); a value left out is the default given here, and all of it is brought down to the cap.
+const chosen = args && args.agents && typeof args.agents === 'object' ? args.agents : {}
+const roleOpts = (role, model, effort) => {
+  const set = chosen[role] && typeof chosen[role] === 'object' ? chosen[role] : {}
+  return capped(set.model || model, set.effort || effort)
+}
+const ranOnLine = (ranOn) => 'ran on: ' + Object.entries(ranOn).map(([role, o]) => `${role} ${o.model}/${o.effort}`).join(', ')
+// A package's own model/effort goes before the builder's, for its build and its fix alike.
+const ROLES = {
+  builder: roleOpts('builder', MAX_MODEL, MAX_EFFORT),
+  reviewer: roleOpts('reviewer', MAX_MODEL, MAX_EFFORT),
+}
+const builderOf = p => capped(p.model || ROLES.builder.model, p.effort || ROLES.builder.effort)
 
 const GIT_RULES = 'Git is read-only for you: no commit, push, stash, checkout, restore, reset, clean or branch switch. The working tree holds other uncommitted work, including the other packages being built right now, and those commands would roll it back.'
 const CHECK_RULES = 'Never loosen, skip or delete a test, assertion, lint rule or check to make it pass. If a check looks wrong, report it instead of changing it. A failing check in a file you do not own is not yours: report it, do not touch it.'
@@ -104,6 +118,7 @@ packages.forEach(p => {
     throw new Error(`package ${p.key || '?'}: needs key, brief, files and doneWhen`)
 })
 log(`wave ${wave}: ${packages.length} packages (${packages.map(p => p.key).join(', ')})`)
+log(ranOnLine(ROLES))
 
 const list = items => items.map(f => `- ${f}`).join('\n') || '- (none)'
 const othersOf = p => packages.filter(o => o !== p).map(o => `${o.key}:\n${list(o.files)}`).join('\n') || '(none)'
@@ -135,7 +150,7 @@ You are the BUILDER of this package.
 - Anything you notice outside your task goes under foundOutsideTask, one line each; don't fix it.
 - List every deviation from the plan and contract, however small; an unlisted one found in review sends the package back.
 - Run the scoped checks before you finish and report them truthfully.`,
-  { label: `build:${p.key}`, phase: 'Build', schema: BUILD_SCHEMA, ...capped(p.model, p.effort) })
+  { label: `build:${p.key}`, phase: 'Build', schema: BUILD_SCHEMA, ...builderOf(p) })
 
 const review = (p, built) => agent(`${spec(p)}
 
@@ -152,7 +167,7 @@ Check, in this order:
 5. Deviations the builder didn't list, and work beyond the package (scope creep).
 
 Assume the package is wrong until the code says otherwise, but report only what you can show. verdict: pass (no blocker or should-fix), fix (fixable within the owned files), escalate (needs a decision, a contract change or a reserved file).`,
-  { label: `review:${p.key}`, phase: 'Review', schema: REVIEW_SCHEMA, ...capped() })
+  { label: `review:${p.key}`, phase: 'Review', schema: REVIEW_SCHEMA, ...ROLES.reviewer })
 
 const fix = (p, built, reviewed) => agent(`${spec(p)}
 
@@ -167,7 +182,7 @@ ${JSON.stringify(built, null, 2)}
 - ${SHARED_RULES}
 - A finding you disagree with or can't fix within the owned files goes under notFixed with the reason.
 - Run the scoped checks before you finish and report them truthfully.`,
-  { label: `fix:${p.key}`, phase: 'Fix', schema: FIX_SCHEMA, ...capped(p.model, p.effort) })
+  { label: `fix:${p.key}`, phase: 'Fix', schema: FIX_SCHEMA, ...builderOf(p) })
 
 const results = await pipeline(packages,
   p => build(p).then(built => ({ key: p.key, built })),
@@ -182,4 +197,4 @@ const escalated = done.filter(r => r.reviewed?.verdict === 'escalate').map(r => 
 if (missing.length) log(`no build result: ${missing.join(', ')}`)
 if (blocked.length) log(`blocked: ${blocked.join(', ')}`)
 if (escalated.length) log(`escalated by review: ${escalated.join(', ')}`)
-return { wave, results: done, missing, blocked, escalated }
+return { wave, results: done, missing, blocked, escalated, ranOn: ROLES }
