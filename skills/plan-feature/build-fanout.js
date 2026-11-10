@@ -28,6 +28,10 @@ const roleOpts = (role, model, effort) => {
   return capped(set.model || model, set.effort || effort)
 }
 const ranOnLine = (ranOn) => 'ran on: ' + Object.entries(ranOn).map(([role, o]) => `${role} ${o.model}/${o.effort}`).join(', ')
+// What each agent() call was given, by its label: the run's record keeps the result, and the mod's Work area reads
+// an agent's effort from here (the record itself names only its model).
+const ranOnAgents = {}
+const on = (label, opts) => { ranOnAgents[label] = { model: opts.model, effort: opts.effort }; return opts }
 // A package's own model/effort goes before the builder's, for its build and its fix alike.
 const ROLES = {
   builder: roleOpts('builder', MAX_MODEL, MAX_EFFORT),
@@ -150,7 +154,7 @@ You are the BUILDER of this package.
 - Anything you notice outside your task goes under foundOutsideTask, one line each; don't fix it.
 - List every deviation from the plan and contract, however small; an unlisted one found in review sends the package back.
 - Run the scoped checks before you finish and report them truthfully.`,
-  { label: `build:${p.key}`, phase: 'Build', schema: BUILD_SCHEMA, ...builderOf(p) })
+  { label: `build:${p.key}`, phase: 'Build', schema: BUILD_SCHEMA, ...on(`build:${p.key}`, builderOf(p)) })
 
 const review = (p, built) => agent(`${spec(p)}
 
@@ -167,7 +171,7 @@ Check, in this order:
 5. Deviations the builder didn't list, and work beyond the package (scope creep).
 
 Assume the package is wrong until the code says otherwise, but report only what you can show. verdict: pass (no blocker or should-fix), fix (fixable within the owned files), escalate (needs a decision, a contract change or a reserved file).`,
-  { label: `review:${p.key}`, phase: 'Review', schema: REVIEW_SCHEMA, ...ROLES.reviewer })
+  { label: `review:${p.key}`, phase: 'Review', schema: REVIEW_SCHEMA, ...on(`review:${p.key}`, ROLES.reviewer) })
 
 const fix = (p, built, reviewed) => agent(`${spec(p)}
 
@@ -182,7 +186,7 @@ ${JSON.stringify(built, null, 2)}
 - ${SHARED_RULES}
 - A finding you disagree with or can't fix within the owned files goes under notFixed with the reason.
 - Run the scoped checks before you finish and report them truthfully.`,
-  { label: `fix:${p.key}`, phase: 'Fix', schema: FIX_SCHEMA, ...builderOf(p) })
+  { label: `fix:${p.key}`, phase: 'Fix', schema: FIX_SCHEMA, ...on(`fix:${p.key}`, builderOf(p)) })
 
 const results = await pipeline(packages,
   p => build(p).then(built => ({ key: p.key, built })),
@@ -197,4 +201,4 @@ const escalated = done.filter(r => r.reviewed?.verdict === 'escalate').map(r => 
 if (missing.length) log(`no build result: ${missing.join(', ')}`)
 if (blocked.length) log(`blocked: ${blocked.join(', ')}`)
 if (escalated.length) log(`escalated by review: ${escalated.join(', ')}`)
-return { wave, results: done, missing, blocked, escalated, ranOn: ROLES }
+return { wave, results: done, missing, blocked, escalated, ranOn: ROLES, ranOnAgents }

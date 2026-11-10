@@ -38,7 +38,7 @@ const SCRIPTS = {
       auditors: [{ key: 'one', brief: 'b', role: 'audit', words: 100, ranges: [{ file: 'a.md', start: 1, end: 50 }] }],
     },
     reply: label => (label.startsWith('audit') ? { slice: 'a.md:1-50', changes: [] } : { verdicts: [], missed: [] }),
-    ranOn: result => result.run.ranOn,
+    at: result => result.run,
   },
   'plan-review': {
     file: 'skills/plan-feature-small/plan-review.js',
@@ -65,7 +65,10 @@ async function run(name, over = {}) {
   }))
   const fn = new AsyncFunction('args', 'agent', 'parallel', 'pipeline', 'phase', 'log', body)
   const result = await fn({ ...script.args, ...over }, agent, parallel, pipeline, () => {}, text => logs.push(text))
-  return { calls, logs, result, ranOn: (script.ranOn ?? (r => r.ranOn))(result) }
+  const at = (script.at ?? (r => r))(result)
+  // What the run says each agent ran on must be what each call was given, label for label.
+  const asked = Object.fromEntries(calls.map(c => [c.label, { model: c.model, effort: c.effort }]))
+  return { calls, logs, result, ranOn: at.ranOn, ranOnAgents: at.ranOnAgents, asked }
 }
 
 const rolesOf = name => AGENT_ROLES.filter(d => d.script === name)
@@ -86,7 +89,8 @@ for (const name of Object.keys(SCRIPTS)) {
   const roles = Object.keys(defaults)
 
   await test(`${name}: with nothing set, every agent runs on the registry's default for its role, and the run says so`, async () => {
-    const { calls, logs, ranOn } = await run(name)
+    const { calls, logs, ranOn, ranOnAgents, asked } = await run(name)
+    assert.deepEqual(ranOnAgents, asked)
     assert.deepEqual([...new Set(calls.map(c => c.role))].sort(), [...roles].sort(), 'every role ran')
     for (const c of calls) assert.deepEqual({ model: c.model, effort: c.effort }, defaults[c.role], c.label)
     assert.deepEqual(ranOn, defaults)
@@ -95,7 +99,8 @@ for (const name of Object.keys(SCRIPTS)) {
 
   await test(`${name}: a set value reaches that role's agents only, and a value left out stays the default`, async () => {
     for (const role of roles) {
-      const { calls, logs, ranOn } = await run(name, { agents: { [role]: { model: 'haiku' } } })
+      const { calls, logs, ranOn, ranOnAgents, asked } = await run(name, { agents: { [role]: { model: 'haiku' } } })
+      assert.deepEqual(ranOnAgents, asked)
       const want = { ...defaults, [role]: { model: 'haiku', effort: defaults[role].effort } }
       for (const c of calls) assert.deepEqual({ model: c.model, effort: c.effort }, want[c.role], c.label)
       assert.deepEqual(ranOn, want)
@@ -107,7 +112,8 @@ for (const name of Object.keys(SCRIPTS)) {
 
   await test(`${name}: a model or effort above the cap, or not on the lists, comes down to opus at high`, async () => {
     const all = Object.fromEntries(roles.map(r => [r, { model: 'fable', effort: 'max' }]))
-    const { calls, ranOn } = await run(name, { agents: all })
+    const { calls, ranOn, ranOnAgents, asked } = await run(name, { agents: all })
+    assert.deepEqual(ranOnAgents, asked)
     for (const c of calls) assert.deepEqual([c.model, c.effort], ['opus', 'high'], c.label)
     for (const r of roles) assert.deepEqual(ranOn[r], { model: 'opus', effort: 'high' })
     const odd = await run(name, { agents: Object.fromEntries(roles.map(r => [r, { model: 'gpt', effort: 'extreme' }])) })
@@ -125,7 +131,10 @@ for (const name of Object.keys(SCRIPTS)) {
 
 await test("plan-fanout: a scout's own model and effort go before the scouts' setting", async () => {
   const scouts = [{ key: 's1', brief: 'b', model: 'opus', effort: 'high' }, { key: 's2', brief: 'b' }]
-  const { calls, ranOn } = await run('plan-fanout', { scouts, agents: { scout: { model: 'haiku', effort: 'low' } } })
+  const { calls, ranOn, ranOnAgents, asked } = await run('plan-fanout', { scouts, agents: { scout: { model: 'haiku', effort: 'low' } } })
+  assert.deepEqual(ranOnAgents, asked)
+  assert.deepEqual(ranOnAgents['scout:s1'], { model: 'opus', effort: 'high' })
+  assert.deepEqual(ranOnAgents['scout:s2'], { model: 'haiku', effort: 'low' })
   const by = Object.fromEntries(calls.map(c => [c.label, [c.model, c.effort]]))
   assert.deepEqual(by['scout:s1'], ['opus', 'high'])
   assert.deepEqual(by['scout:s2'], ['haiku', 'low'])
@@ -133,10 +142,12 @@ await test("plan-fanout: a scout's own model and effort go before the scouts' se
 })
 
 await test('plan-fanout: a re-check runs only the critics, on their setting, and reports only them', async () => {
-  const { calls, logs, result } = await run('plan-fanout', { recheck: { plan: '/plan.md', changes: 'x' }, agents: { critic: { effort: 'medium' }, planner: { model: 'haiku' } } })
+  const { calls, logs, result, ranOnAgents, asked } = await run('plan-fanout', { recheck: { plan: '/plan.md', changes: 'x' }, agents: { critic: { effort: 'medium' }, planner: { model: 'haiku' } } })
   assert.ok(calls.length >= 3 && calls.every(c => c.role === 'critic'))
   for (const c of calls) assert.deepEqual([c.model, c.effort], ['opus', 'medium'], c.label)
   assert.deepEqual(result.ranOn, { critic: { model: 'opus', effort: 'medium' } })
+  assert.deepEqual(ranOnAgents, asked)
+  assert.ok(Object.keys(ranOnAgents).every(label => label.startsWith('critic:')))
   assert.ok(logs.includes('ran on: critic opus/medium'), logs.join(' | '))
 })
 
@@ -145,8 +156,10 @@ await test('plan-fanout: a run that skips the critique for a missing plan still 
   const reply = script.reply
   script.reply = label => (label.startsWith('plan') ? null : reply(label))
   try {
-    const { result } = await run('plan-fanout')
+    const { result, ranOnAgents, asked } = await run('plan-fanout')
     assert.deepEqual(result.missingPlanners, ['p1'])
+    assert.deepEqual(ranOnAgents, asked)
+    assert.deepEqual(Object.keys(ranOnAgents).sort(), ['plan:p1', 'scout:s1', 'scout:s2'])
     assert.deepEqual(result.ranOn, defaultsOf('plan-fanout'))
   } finally {
     script.reply = reply
@@ -155,7 +168,9 @@ await test('plan-fanout: a run that skips the critique for a missing plan still 
 
 await test("build-fanout: a package's own model and effort go before the builders' setting, for its build and its fix", async () => {
   const packages = [{ key: 'one', brief: 'b', files: ['a.ts'], doneWhen: 'd', model: 'sonnet', effort: 'medium' }, { key: 'two', brief: 'b', files: ['b.ts'], doneWhen: 'd' }]
-  const { calls } = await run('build-fanout', { packages, agents: { builder: { model: 'haiku', effort: 'low' }, reviewer: { effort: 'medium' } } })
+  const { calls, ranOnAgents, asked } = await run('build-fanout', { packages, agents: { builder: { model: 'haiku', effort: 'low' }, reviewer: { effort: 'medium' } } })
+  assert.deepEqual(ranOnAgents, asked)
+  assert.deepEqual(ranOnAgents['fix:one'], { model: 'sonnet', effort: 'medium' })
   const by = Object.fromEntries(calls.map(c => [c.label, [c.model, c.effort]]))
   assert.deepEqual(by, {
     'build:one': ['sonnet', 'medium'], 'fix:one': ['sonnet', 'medium'], 'review:one': ['opus', 'medium'],
@@ -167,6 +182,7 @@ await test('plan-review: the final check runs on the critic setting too, and a c
   const final = await run('plan-review', { round: 'final', changes: 'x', agents: { critic: { model: 'sonnet', effort: 'high' } } })
   assert.deepEqual([final.calls[0].model, final.calls[0].effort], ['sonnet', 'high'])
   assert.deepEqual(final.ranOn, { critic: { model: 'sonnet', effort: 'high' } })
+  assert.deepEqual(final.ranOnAgents, { critic: { model: 'sonnet', effort: 'high' } })
   const script = SCRIPTS['plan-review']
   const reply = script.reply
   script.reply = () => null

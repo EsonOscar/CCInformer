@@ -38,7 +38,7 @@ import { askTrust, forgetTrust, loadPack, packSignature, readPackInput, userPack
 import type { ResolvedPack } from './packs/types'
 import { readText } from './read-records'
 import { readBeats, readBranch } from './read-sessions'
-import { projectDirName, upgradeRun } from './records'
+import { projectDirName, upgradeRun, withEffort } from './records'
 import { TOUCHING_TOOLS, capped, contextTokens, endedState, isPush, summarize, taskOf, toolLabel } from './rows'
 import { MAX_AGENTS, MAX_RUNS, createRuns } from './runs/run'
 import type { Kit } from './ui'
@@ -1196,6 +1196,9 @@ export const register: Register = on => {
     const result = await next(e)
     if (!('agentId' in result) || !result.agentId) return result
     const runId = e.workflow?.runId ?? ''
+    // The row is written only now, so the agent's first request may have started already: its effort is taken from
+    // the requests recorded so far, and from its next request otherwise.
+    const effort = (await read($, stepsAtom)).find(s => s.agent === result.agentId)?.effort ?? ''
     const row: AgentRow = {
       id: result.agentId,
       description: e.description,
@@ -1210,6 +1213,7 @@ export const register: Register = on => {
       tools: 0,
       tokens: 0,
       output: 0,
+      effort,
     }
     await update($, agentsAtom, list => capped(list.filter(a => a.id !== row.id), row, MAX_AGENTS))
     if (runId) await update($, runsAtom, list => list.map(r => (r.toolUseId === e.tool_use_id && !r.runId ? { ...r, runId } : r)))
@@ -1247,6 +1251,11 @@ export const register: Register = on => {
       key, model: e.model, effort, agent, startedAt, ms: 0, input: 0, cacheRead: 0, cacheWrite: 0, output: 0, stop: '', window: contextWindow,
     }
     await update($, stepsAtom, list => capped(list, row, MAX_STEPS))
+    // An agent's row shows the effort of its first request, set before the request is sent; written once per agent.
+    if (agent && effort) {
+      const rows = await read($, agentsAtom)
+      if (withEffort(rows, agent, effort) !== rows) await update($, agentsAtom, list => withEffort(list, agent, effort))
+    }
     const result = yield* next(e)
     const ms = (await $.clock.now()) - startedAt
     const usage = result.usage

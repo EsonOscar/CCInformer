@@ -17,8 +17,8 @@ The digits shown switch areas; the letters shown switch views and run actions.
   - **Rules** (`k`), when your pack has checks: what they found in the files Claude wrote. `x` dismisses the selected one.
   - **Budgets** (`b`), when your pack has budgets: each against its limit. `m` builds, then measures.
 - **Work** (`3`)
-  - **Runs** (`w`): the running workflow's phases (`p`/`n`, `l` follows the live one) and agents (`ctx`: the latest request's context, `↓`: output tokens); recent runs (`x` closes one).
-  - **Stats** (`s`): finished runs of a workflow: duration, time per phase, results per model. `o` shows the next workflow.
+  - **Runs** (`w`): the running workflow's phases (`p`/`n`, `l` follows the live one) and agents, each with its model and effort (`ctx`: the latest request's context, `↓`: output tokens); recent runs (`x` closes one).
+  - **Stats** (`s`): finished runs of a workflow: duration, time per phase, results per model and effort, and what each recent run's phases ran on. `o` shows the next workflow.
   - **Plans** (`t`): the checkpoints of your [plans](#skills) and their status. Select a plan, then `a` archives it.
 - **Debug** (`5`)
   - **Calls** (`t`), **Requests** (`q`), **Context** (`c`): tool calls, model requests and how the context grew.

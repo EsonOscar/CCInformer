@@ -26,6 +26,10 @@ const roleOpts = (role, model, effort) => {
   return capped(set.model || model, set.effort || effort)
 }
 const ranOnLine = (ranOn) => 'ran on: ' + Object.entries(ranOn).map(([role, o]) => `${role} ${o.model}/${o.effort}`).join(', ')
+// What each agent() call was given, by its label: the run's record keeps the result, and the mod's Work area reads
+// an agent's effort from here (the record itself names only its model).
+const ranOnAgents = {}
+const on = (label, opts) => { ranOnAgents[label] = { model: opts.model, effort: opts.effort }; return opts }
 const ROLES = {
   auditor: roleOpts('auditor', MAX_MODEL, MAX_EFFORT),
   verifier: roleOpts('verifier', MAX_MODEL, MAX_EFFORT),
@@ -201,7 +205,7 @@ const audits = (await parallel(args.auditors.map(a => () => {
     ? 'EXTRACT SLICE: these ranges move to history whole. Report each as one MOVE to the history file. Report every current rule, gotcha, number or reason that lives only here as an ADD to the current doc and section where it belongs (create: true for a new section), in that doc\'s style, with the source range. Never put moved text in new_text.'
     : 'Read every line of your slice and check each claim against what it describes, citing file:line.'
   return agent(`${head}\nYOUR SLICE (other auditors cover the rest): ${ranges}\n${a.brief}\n${role}\nQuote anchors exactly. Report only problems; a clean slice returns an empty changes list.`,
-    { label: `audit:${a.key}`, phase: 'Audit', schema: AUDIT, ...ROLES.auditor })
+    { label: `audit:${a.key}`, phase: 'Audit', schema: AUDIT, ...on(`audit:${a.key}`, ROLES.auditor) })
     .then(r => r && { key: a.key, ...r })
 }))).filter(Boolean)
 
@@ -222,7 +226,7 @@ const plan = verifiers.map(v => ({
   second: v.key === 'keep' ? changes.filter(c => ownerOf(c) !== v && secondOpinion(c)) : [],
 }))
 const verifications = await parallel(plan.map(p => () =>
-  agent(verifyPrompt(p.v, p.owned, p.second), { label: `verify:${p.v.key}`, phase: 'Verify', schema: VERIFY, ...ROLES.verifier })
+  agent(verifyPrompt(p.v, p.owned, p.second), { label: `verify:${p.v.key}`, phase: 'Verify', schema: VERIFY, ...on(`verify:${p.v.key}`, ROLES.verifier) })
     .then(r => r && { key: p.v.key, ...r })))
 
 const incomplete = [
@@ -262,7 +266,7 @@ const changed = final.filter(c => c.action_changed && c.verified_by !== 'keep')
 let agents = audits.length + verifications.filter(Boolean).length
 if (changed.length) {
   const keep = verifiers.find(v => v.key === 'keep')
-  const r = await agent(verifyPrompt(keep, [], changed), { label: 'verify:keep-changed', phase: 'Verify', schema: VERIFY, ...ROLES.verifier })
+  const r = await agent(verifyPrompt(keep, [], changed), { label: 'verify:keep-changed', phase: 'Verify', schema: VERIFY, ...on('verify:keep-changed', ROLES.verifier) })
   agents += 1
   if (!r) incomplete.push('verify:keep-changed')
   for (const c of changed) {
@@ -303,4 +307,4 @@ const summary = {
 }
 if (JSON.stringify(summary).length > SUMMARY_MAX) summary.note = 'summary cut; run apply_changes.py summary for the full lists'
 log(`${agents} agents returned, ${final.length} rows, ${rejected.length} rejected, incomplete: ${incomplete.join(', ') || 'none'}`)
-return { summary, run: { date: args.date, root: args.root || '', history: args.history || null, agents, ranOn: ROLES }, docs: args.docs, changes: final, rejected }
+return { summary, run: { date: args.date, root: args.root || '', history: args.history || null, agents, ranOn: ROLES, ranOnAgents }, docs: args.docs, changes: final, rejected }

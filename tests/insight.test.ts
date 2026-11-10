@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 
 import { barSpan, ciOutcome, columnChart, compactionMarks, earlyFailureText, newFailures, sessionGroups, stepContext } from '../hooks/insight'
-import { mergeRecord, parseHead, projectDirName, runFromRecord, upgradeRun } from '../hooks/records'
+import { mergeRecord, parseHead, projectDirName, runFromRecord, upgradeRun, withEffort } from '../hooks/records'
 import { pruneAgents, taskOf } from '../hooks/rows'
 import type { AgentRow, CiCheck, CiSnapshot, SessionBeat, StepRow, WorkflowRun } from '../types'
 
@@ -35,6 +35,27 @@ describe('run records', () => {
     }
     const [merged] = mergeRecord([live], runFromRecord(RECORD, 'call', '')!)
     expect([merged!.status, merged!.phase, merged!.tokens, merged!.output]).toEqual(['done', 'Critique', 143_889, 4_200])
+  })
+
+  test('a live row’s effort stands over the record’s, which fills in where the row has none', async () => {
+    const record = runFromRecord(RECORD, 'call', '')!
+    const asked = { ...record, agents: record.agents.map(a => ({ ...a, effort: 'medium' })) }
+    const row = { id: record.agents[0]!.id, runId: record.run.runId, toolUseId: 'call', status: 'running' } as AgentRow
+    expect(mergeRecord([{ ...row, effort: 'high' }], asked)[0]!.effort).toBe('high')
+    expect(mergeRecord([{ ...row, effort: '' }], asked)[0]!.effort).toBe('medium')
+    // A row from before rows had an effort.
+    expect(mergeRecord([row], asked)[0]!.effort).toBe('medium')
+    expect(mergeRecord([row], record)[0]!.effort).toBe('')
+  })
+
+  test('an agent’s row takes the effort of its first request, once', async () => {
+    const rows = [{ id: 'a1' }, { id: 'a2', effort: '' }, { id: 'a3', effort: 'low' }] as AgentRow[]
+    expect(withEffort(rows, 'a1', 'high').map(a => a.effort)).toEqual(['high', '', 'low'])
+    expect(withEffort(rows, 'a2', 'high').map(a => a.effort)).toEqual([undefined, 'high', 'low'])
+    // The same list, so nothing is written: a later request, a request without an effort, an agent with no row yet.
+    expect(withEffort(rows, 'a3', 'high')).toBe(rows)
+    expect(withEffort(rows, 'a1', '')).toBe(rows)
+    expect(withEffort(rows, 'a9', 'high')).toBe(rows)
   })
 
   test('a run recorded before runs had a status is finished once all its agents have ended', async () => {

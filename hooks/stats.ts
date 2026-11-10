@@ -1,4 +1,5 @@
 import type { AgentSample, RunSummary } from '../types'
+import { effortOf } from './records'
 import type { RunRecord } from './records'
 
 // Workflow statistics over the run records: plain functions, so the tests can feed them runs.
@@ -17,6 +18,7 @@ export const summarizeRun = (record: RunRecord): RunSummary => {
   const samples: AgentSample[] = agents.map(a => ({
     phase: a.phase,
     family: modelFamily(a.model),
+    effort: effortOf(a),
     // An agent replayed from the workflow's cache has no time of its own.
     ms: a.endedAt > a.startedAt ? a.endedAt - a.startedAt : 0,
     tokens: a.tokens,
@@ -43,8 +45,8 @@ export const isFull = (r: RunSummary): boolean => r.phasesRan.length > 0 && r.ph
 const mean = (values: number[]): number => (values.length ? values.reduce((n, v) => n + v, 0) / values.length : 0)
 
 // `agents` counts every agent; `ran` those that ran rather than being replayed from the workflow's cache, which
-// alone give `ms` and `tokens` (a replayed agent has neither).
-export type ModelStats = { family: string; agents: number; ran: number; ms: number; tokens: number }
+// alone give `ms` and `tokens` (a replayed agent has neither). `effort` is '' for agents whose record names none.
+export type ModelStats = { family: string; effort: string; agents: number; ran: number; ms: number; tokens: number }
 export type PhaseStats = { title: string; ms: number; share: number; agents: number; models: ModelStats[] }
 export type GroupStats = { runs: number; ms: number; tokens: number; agents: number }
 export type WorkflowStats = {
@@ -64,17 +66,32 @@ const group = (runs: RunSummary[]): GroupStats => ({
   agents: mean(runs.map(r => r.agents.length)),
 })
 
-// Per agent and per model, averaged over the agents that ran.
+// Per agent, for each model and effort the phase's agents ran on, averaged over the agents that ran. Agents whose
+// effort isn't known share a row per model. Most agents first, ties in the order first seen.
 const modelStats = (samples: AgentSample[]): ModelStats[] => {
-  const families = [...new Set(samples.map(s => s.family))]
-  return families
-    .map(family => {
-      const mine = samples.filter(s => s.family === family)
+  const groups: ModelStats[] = []
+  for (const s of samples) {
+    const effort = effortOf(s)
+    if (!groups.some(g => g.family === s.family && g.effort === effort)) groups.push({ family: s.family, effort, agents: 0, ran: 0, ms: 0, tokens: 0 })
+  }
+  return groups
+    .map(g => {
+      const mine = samples.filter(s => s.family === g.family && effortOf(s) === g.effort)
       const ran = mine.filter(s => s.ms > 0)
-      return { family, agents: mine.length, ran: ran.length, ms: mean(ran.map(s => s.ms)), tokens: mean(ran.map(s => s.tokens)) }
+      return { ...g, agents: mine.length, ran: ran.length, ms: mean(ran.map(s => s.ms)), tokens: mean(ran.map(s => s.tokens)) }
     })
     .sort((a, b) => b.agents - a.agents)
 }
+
+// What each phase of a run ran on, as "Scout sonnet/medium · Plan opus/high": a phase's distinct models and
+// efforts joined by +, an agent of unknown effort by its model alone.
+export const phaseModels = (r: RunSummary): string =>
+  r.phasesRan
+    .map(phase => {
+      const ranOn = r.agents.filter(a => a.phase === phase).map(a => a.family + (effortOf(a) ? '/' + effortOf(a) : ''))
+      return `${phase} ${[...new Set(ranOn)].join('+')}`
+    })
+    .join(' · ') || 'no agents'
 
 // One workflow's runs summed up: full runs and partial ones apart, each phase of the full runs with its share of
 // their time, and per phase how each model's agents did (all runs, since a re-check's critics are critics too).

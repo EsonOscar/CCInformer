@@ -2,7 +2,7 @@ import type { RunSummary } from '../types'
 import { ACTIONS } from './areas'
 import { duration, shortDate, tokens } from './format'
 import { columnChart } from './insight'
-import { isFull, statsFor, workflowNames } from './stats'
+import { isFull, phaseModels, statsFor, workflowNames } from './stats'
 import type { GroupStats } from './stats'
 import { ACCENT, Empty, Line, Section, bar } from './ui'
 import type { Kit } from './ui'
@@ -15,7 +15,7 @@ const SHARE_BAR = 8
 const LATEST_RUNS = 3
 
 // Every finished run of one workflow in this project, summed up: how long and how much, where the time goes,
-// and how each model's agents do per phase.
+// and how the agents of each model and effort do per phase.
 export const StatsView = (k: Kit, summaries: RunSummary[], picked: string, width: number, pick: (name: string) => void): JSX.Element => {
   const { Box, Button, Text } = k
   const names = workflowNames(summaries)
@@ -60,7 +60,7 @@ export const StatsView = (k: Kit, summaries: RunSummary[], picked: string, width
             Line(
               k,
               { char: '■', color: m.family === 'opus' ? ACCENT : m.family === 'sonnet' ? 'suggestion' : 'success' },
-              `${m.family} · ${m.agents} agents` + (m.ran < m.agents ? ` (${m.agents - m.ran} cached)` : ''),
+              `${m.family}${m.effort ? ' · ' + m.effort : ''} · ${m.agents} agents` + (m.ran < m.agents ? ` (${m.agents - m.ran} cached)` : ''),
               m.ran ? `${duration(m.ms)} · ${tokens(Math.round(m.tokens))}` : 'cached only',
             ),
           )}
@@ -80,7 +80,7 @@ export const StatsView = (k: Kit, summaries: RunSummary[], picked: string, width
           Line(
             k,
             { char: isFull(r) ? '●' : '○', color: isFull(r) ? ACCENT : 'inactive' },
-            `${shortDate(r.startedAt)} · ${firstPhaseModels(r)}`,
+            `${shortDate(r.startedAt)} · ${phaseModels(r)}`,
             `${duration(r.ms)} · ${tokens(r.tokens)}`,
           ),
         )}
@@ -110,10 +110,3 @@ const Full = (k: Kit, full: GroupStats, trend: number[], width: number): JSX.Ele
   )
 }
 
-// Which models the run's first phase ran on, as "Scout: sonnet" (the phase the model switch is about).
-const firstPhaseModels = (r: RunSummary): string => {
-  const phase = r.phasesRan[0]
-  if (!phase) return 'no agents'
-  const families = [...new Set(r.agents.filter(a => a.phase === phase).map(a => a.family))]
-  return `${phase}: ${families.join('+')}`
-}

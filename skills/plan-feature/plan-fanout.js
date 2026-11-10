@@ -34,6 +34,10 @@ const roleOpts = (role, model, effort) => {
   return capped(set.model || model, set.effort || effort)
 }
 const ranOnLine = (ranOn) => 'ran on: ' + Object.entries(ranOn).map(([role, o]) => `${role} ${o.model}/${o.effort}`).join(', ')
+// What each agent() call was given, by its label: the run's record keeps the result, and the mod's Work area reads
+// an agent's effort from here (the record itself names only its model).
+const ranOnAgents = {}
+const on = (label, opts) => { ranOnAgents[label] = { model: opts.model, effort: opts.effort }; return opts }
 const ROLES = {
   scout: roleOpts('scout', SCOUT_MODEL, SCOUT_EFFORT),
   planner: roleOpts('planner', MAX_MODEL, MAX_EFFORT),
@@ -82,7 +86,7 @@ const section = (kind, items, field) => items.map(x => `### ${kind}: ${x.key}\n$
 
 const critique = (subject) => parallel(critics.map(c => () =>
   agent(`${context}${requirements}\n${READ_ONLY}\n${subject}\n\nYou are an ADVERSARIAL REVIEWER. Assume the plans are wrong until the code says otherwise. Focus: ${c.focus}\nReturn your findings: BLOCKERS (would break, contradict the code or the requirements, or skip a needed approval), SHOULD-FIX, NITS. Each with evidence (file and line where there is one) and the minimal fix. Don't restate the plans. At most about 15 findings.`,
-    { label: `critic:${c.key}`, phase: 'Critique', schema: CRITIQUE_SCHEMA, ...ROLES.critic })
+    { label: `critic:${c.key}`, phase: 'Critique', schema: CRITIQUE_SCHEMA, ...on(`critic:${c.key}`, ROLES.critic) })
     .then(r => r && { key: c.key, ...r })))
   .then(rs => rs.filter(Boolean))
 
@@ -95,7 +99,7 @@ if (args.recheck) {
   log(ranOnLine(ranOn))
   phase('Critique')
   const critiques = await critique(`The REVISED PLAN:\n\n${args.recheck.plan}\n\nWhat changed since the first review (check these hardest, and whether the fixes introduced new problems):\n${args.recheck.changes}`)
-  return { critiques, ranOn }
+  return { critiques, ranOn, ranOnAgents }
 }
 
 const { scouts, planners } = args
@@ -109,7 +113,7 @@ log(ranOnLine(ROLES))
 phase('Scout')
 const reports = (await parallel(scouts.map(s => () =>
   agent(`${context}${requirements}${priorFindings}\n${READ_ONLY}\nSCOUT DOMAIN: ${s.brief}\nReturn a dense report (headings and bullets), at most about 900 words, facts with file:line citations, then a short "Implications for the plan" list. For anything you report as absent (no callers, no other uses), say how you searched; mark what you couldn't confirm as unconfirmed.`,
-    { label: `scout:${s.key}`, phase: 'Scout', ...capped(s.model || ROLES.scout.model, s.effort || ROLES.scout.effort), ...(s.agentType ? { agentType: s.agentType } : {}) })
+    { label: `scout:${s.key}`, phase: 'Scout', ...on(`scout:${s.key}`, capped(s.model || ROLES.scout.model, s.effort || ROLES.scout.effort)), ...(s.agentType ? { agentType: s.agentType } : {}) })
     .then(r => r && { key: s.key, report: r })))).filter(Boolean)
 const missingScouts = scouts.filter(s => !reports.some(r => r.key === s.key)).map(s => s.key)
 if (missingScouts.length)
@@ -129,18 +133,18 @@ Give:
 - how it is deployed and rolled back, and what behaves differently after deploy;
 - the tests, especially those that encode business or access rules.
 Say exactly what you need from or give to the other planners. List the defaults you took. End with "Open questions" (only real decisions, at most 5, each with your recommendation), split into "for the user" and "for other stakeholders". At most about 1500 words.`,
-    { label: `plan:${p.key}`, phase: 'Plan', ...ROLES.planner }).then(r => r && { key: p.key, plan: r })
+    { label: `plan:${p.key}`, phase: 'Plan', ...on(`plan:${p.key}`, ROLES.planner) }).then(r => r && { key: p.key, plan: r })
 }))).filter(Boolean)
 
 // Don't review a plan with a hole in it: a missing domain would read as "nothing to say".
 const missingPlanners = planners.filter(p => !plans.some(x => x.key === p.key)).map(p => p.key)
 if (missingPlanners.length) {
   log(`missing plans: ${missingPlanners.join(', ')}; critique skipped, re-run those planners first`)
-  return { reports, plans, missingScouts, missingPlanners, critiques: [], ranOn: ROLES }
+  return { reports, plans, missingScouts, missingPlanners, critiques: [], ranOn: ROLES, ranOnAgents }
 }
 
 phase('Critique')
 const critiques = await critique(`Scout reports:\n\n${section('Scout report', reports, 'report')}\n\nThe plans:\n\n${section('Plan', plans, 'plan')}`)
 
 log(`${reports.length + plans.length + critiques.length} agents returned`)
-return { reports, plans, missingScouts, missingPlanners, critiques, ranOn: ROLES }
+return { reports, plans, missingScouts, missingPlanners, critiques, ranOn: ROLES, ranOnAgents }

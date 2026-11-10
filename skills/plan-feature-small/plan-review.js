@@ -63,6 +63,8 @@ const lenses = [...DEFAULT_LENSES, ...extra]
 // What the person set for the critic (agents: {critic: {model?, effort?}}, from the skills' settings file, passed on
 // by the skill); a value left out is the default above.
 const set = a.agents && typeof a.agents === 'object' && a.agents.critic && typeof a.agents.critic === 'object' ? a.agents.critic : {}
+// ranOnAgents says the same by the agent's label: the run's record keeps the result, and the mod's Work area reads
+// the critic's effort from there (the record itself names only its model).
 const ranOn = { critic: capped(set.model || MODEL, set.effort || EFFORT) }
 
 const SCHEMA = {
@@ -115,4 +117,4 @@ if (!review) return { round: a.round, error: `the critic returned nothing; run $
 const all = Object.values(review.lenses || {}).flatMap(l => (l && Array.isArray(l.findings) ? l.findings : []))
 const count = (s) => all.filter(f => f && f.severity === s).length
 const counts = { blocker: count('blocker'), shouldFix: count('should-fix'), nit: count('nit') }
-return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ranOn }
+return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ranOn, ranOnAgents: { critic: ranOn.critic } }
