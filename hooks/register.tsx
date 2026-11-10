@@ -1130,8 +1130,9 @@ export const register: Register = on => {
     }
     await update($, toolsAtom, list => capped(list, row, MAX_TOOLS))
     if (e.agentId) await update($, agentsAtom, list => list.map(a => (a.id === e.agentId ? { ...a, tools: a.tools + 1 } : a)))
-    // A Bash call the pack places (a dev server, a script aimed at staging, ...) is tracked while it runs.
-    const pack = tool === 'Bash' && typeof input.command === 'string' ? await live?.pack() : null
+    // A shell command the pack places (a dev server, a script aimed at staging, ...) is tracked while it runs, through
+    // Bash, PowerShell or a Monitor alike, as the approval gates read them.
+    const pack = isShell(tool) && typeof input.command === 'string' ? await live?.pack() : null
     const target = pack ? await classifyCommand($, cwd, input.command as string, pack) : null
     const envTask = target ? envTaskFor(target, row.id, startedAt) : null
     if (envTask) await saveEnvTasks($, [...envTasks, envTask])
@@ -1162,18 +1163,17 @@ export const register: Register = on => {
     const ms = (await $.clock.now()) - startedAt
     const outcome: ToolOutcome = 'deny' in result && result.deny ? 'denied' : result.isError ? 'error' : 'ok'
     await update($, toolsAtom, list => list.map(r => (r.id === row.id ? { ...r, ms, outcome } : r)))
-    // A call that went to the background keeps its task under the background id; any other one has ended.
-    if (envTask) {
-      const record = 'deny' in result && result.deny ? undefined : (result.result as { backgroundTaskId?: unknown } | undefined)
-      const backgroundId = typeof record?.backgroundTaskId === 'string' ? record.backgroundTaskId : ''
-      await saveEnvTasks($, backgroundId ? envTasks.map(t => (t.id === envTask.id ? { ...t, id: backgroundId } : t)) : envTasks.filter(t => t.id !== envTask.id))
-    }
-    const stopped = tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
-    if (stopped && envTasks.some(t => t.id === stopped)) await saveEnvTasks($, envTasks.filter(t => t.id !== stopped))
-    // Now › Shells: a call that left a shell open in the background is listed, and a stop that went through ends its row.
+    // The shell a call left open in the background, if it did: Now › Shells lists it.
     const shell = outcome === 'ok' ? shellFrom(tool, input, result.result, e.agentId ?? '', startedAt) : null
     if (shell) await update($, shellsAtom, list => withShell(list, shell))
-    if (stopped && outcome === 'ok') await endShells($, () => [{ id: stopped, status: 'killed' }])
+    // A call that went to the background keeps its task under the background id, with the agent whose final response
+    // ends it (such a command gets no notification); any other one has ended.
+    if (envTask)
+      await saveEnvTasks($, shell ? envTasks.map(t => (t.id === envTask.id ? { ...t, id: shell.id, owner: shell.owner } : t)) : envTasks.filter(t => t.id !== envTask.id))
+    // A stop that went through ends the task and its row; a denied or failed one leaves the process running.
+    const stopped = tool === 'TaskStop' && outcome === 'ok' ? String(input.task_id ?? input.shell_id ?? '') : ''
+    if (stopped && envTasks.some(t => t.id === stopped)) await saveEnvTasks($, envTasks.filter(t => t.id !== stopped))
+    if (stopped) await endShells($, () => [{ id: stopped, status: 'killed' }])
     if (!e.agentId && TOUCHING_TOOLS.includes(tool)) live?.touched()
     if (!e.agentId && isPush(input.command)) live?.pushed()
     // A file written by any agent: the inline checks read it, and the model reads what they found with the result.
@@ -1244,9 +1244,11 @@ export const register: Register = on => {
       const endedAt = await $.clock.now()
       const status = endedState(e.reason)
       await update($, agentsAtom, list => list.map(a => (a.id === e.agentId ? { ...a, status, endedAt } : a)))
-      // A background command that ends with this agent's final response gets no notification: its row ends here.
+      // A background command that ends with this agent's final response gets no notification: its row and its
+      // tracked process end here.
       const agentId = e.agentId
       await endShells($, list => ownedEnds(list, agentId))
+      if (envTasks.some(t => t.owner === agentId)) await saveEnvTasks($, envTasks.filter(t => t.owner !== agentId))
       live?.recordsSoon()
     } else {
       isTurnRunning = false

@@ -18,8 +18,10 @@ const USER_PACK = `{ "schema": 1, "id": "acme-shop", "version": "1", "match": { 
 // The engine hands file hooks native paths (C:\repo\x on Windows); the files are keyed as /repo/x.
 const posix = (path: string) => path.replace(/\\/g, '/').replace(/^[a-z]:/i, '')
 
-// A Vite repo with staging and production env files. A Bash call answers after `ms` on the mocked clock, with a
-// background task id when it ran in the background. `statuses` collects the status line's text.
+// A Vite repo with staging and production env files. A Bash or PowerShell call answers after `ms` on the mocked clock,
+// with a background task id when it ran in the background (`ends: true` marks its command as one its caller's final
+// response terminates); a Monitor answers with a task id. A tool named in `refused` is denied. `statuses` collects the
+// status line's text.
 const engine = (on: Parameters<TestBody>[1], ms = 0) => {
   const files: Record<string, string> = {
     '/repo/package.json': PACKAGE,
@@ -29,6 +31,7 @@ const engine = (on: Parameters<TestBody>[1], ms = 0) => {
   }
   const statuses: (string | undefined)[] = []
   const toasts: string[] = []
+  const refused: string[] = []
   let background = 0
   const clock = mock.clock(on, { now: 1_000_000 })
   // An install from before 0.24.0 (it ran at the defaults), so every switch keeps its old default.
@@ -53,12 +56,16 @@ const engine = (on: Parameters<TestBody>[1], ms = 0) => {
     return out('')
   })
   on('tool.call', async (_, e) => {
-    if (e.tool !== 'Bash') return { result: {}, text: 'ok' }
-    const isBackground = (e as { run_in_background?: boolean }).run_in_background
-    if (!isBackground) await clock.sleep(ms)
+    if (refused.includes(String(e.tool))) return { deny: 'refused in this test' } as never
+    if (e.tool === 'Monitor') return { result: { taskId: 'mon-1', timeoutMs: 300000 }, text: 'ok' } as never
+    if (e.tool !== 'Bash' && e.tool !== 'PowerShell') return { result: {}, text: 'ok' }
+    const call = e as { run_in_background?: boolean; ends?: boolean }
+    if (!call.run_in_background) await clock.sleep(ms)
     background += 1
-    return { result: { stdout: '', stderr: '', interrupted: false, ...(isBackground ? { backgroundTaskId: 'bg-' + background } : {}) }, text: 'ok' } as never
+    const id = call.run_in_background ? { backgroundTaskId: 'bg-' + background, ...(call.ends ? { backgroundEndsWithFinalResponse: true } : {}) } : {}
+    return { result: { stdout: '', stderr: '', interrupted: false, ...id }, text: 'ok' } as never
   })
+  on('turn.complete', () => ({ text: '' }) as never)
   on('prompt.submit', (_, e) => ({ text: e.text }) as never)
   on('ui.status', (_, e) => {
     statuses.push(e.text)
@@ -74,7 +81,7 @@ const engine = (on: Parameters<TestBody>[1], ms = 0) => {
   })
   on('command.register', (_, e) => ({ value: { command: e.name } }))
   on('session.start', (_, e) => ({ cwd: e.cwd }))
-  return { clock, statuses, toasts }
+  return { clock, statuses, toasts, refused }
 }
 
 const notification = (id: string) =>
@@ -169,5 +176,62 @@ test('production goes first and onto the status line; TaskStop and × clear rows
 
   await band.press({ key: 'band-dismiss' })
   expect(await band.find({ text: /⚠/ })).toBeUndefined()
+  await band.unmount()
+})
+
+test('a PowerShell command and a Monitor are placed like a Bash one', async ($, on) => {
+  const { clock } = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+  await $.tool.call({ tool: 'PowerShell', command: 'npm run dev:staging', run_in_background: true } as never)
+  expect(await band.find({ type: 'Text', text: '⚠ STAGING' })).toBeDefined()
+  await $.prompt.submit({ text: notification('bg-1'), origin: { kind: 'task-notification' }, wait: false })
+  expect(await band.find({ text: /⚠/ })).toBeUndefined()
+
+  await $.tool.call({ tool: 'Monitor', description: 'the dev server', timeout_ms: 300000, command: 'npm run dev:prod' } as never)
+  expect(await band.find({ type: 'Text', text: '⚠ PRODUCTION' })).toBeDefined()
+  await $.prompt.submit({ text: notification('mon-1'), origin: { kind: 'task-notification' }, wait: false })
+  expect(await band.find({ text: /⚠/ })).toBeUndefined()
+  await band.unmount()
+})
+
+test('a denied TaskStop leaves the process tracked', async ($, on) => {
+  const { clock, refused, statuses } = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev:prod', run_in_background: true })
+
+  refused.push('TaskStop')
+  await $.tool.call({ tool: 'TaskStop', task_id: 'bg-1' })
+  expect(await band.find({ type: 'Text', text: '⚠ PRODUCTION' })).toBeDefined()
+  expect(statuses.at(-1)).toBe('⚠ PROD · npm run dev:prod')
+
+  refused.length = 0
+  await $.tool.call({ tool: 'TaskStop', task_id: 'bg-1' })
+  expect(await band.find({ text: /⚠/ })).toBeUndefined()
+  await band.unmount()
+})
+
+test("a command that ends with its agent's final response is cleared when that agent's turn ends", async ($, on) => {
+  const { clock } = engine(on)
+  await $.session.start({ cwd: '/repo', surface: 'terminal', isInteractive: true })
+  await clock.settle()
+  const band = await $.ui.mount({ ...BAND, surface: 'terminal' })
+  const end = (agentId: string) => ({ answer: '', durationMs: 1, isAborted: false, turnId: 't-' + agentId, reason: 'answer', agentId }) as never
+
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev:staging', run_in_background: true, ends: true, agentId: 'helper-1' } as never)
+  await $.tool.call({ tool: 'Bash', command: 'npm run dev:prod', run_in_background: true, agentId: 'helper-1' } as never)
+  expect(await band.find({ type: 'Text', text: '+1 more' })).toBeDefined()
+
+  // Another agent's turn ends nothing; its own ends only the command that ends with it.
+  await $.turn.complete(end('helper-2'))
+  expect(await band.find({ type: 'Text', text: '+1 more' })).toBeDefined()
+  await $.turn.complete(end('helper-1'))
+  expect(await band.find({ type: 'Text', text: '⚠ PRODUCTION' })).toBeDefined()
+  expect(await band.find({ type: 'Text', text: '+1 more' })).toBeUndefined()
+  expect(await band.find({ type: 'Text', text: '⚠ STAGING' })).toBeUndefined()
   await band.unmount()
 })
