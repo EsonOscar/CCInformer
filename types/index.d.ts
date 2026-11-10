@@ -95,6 +95,9 @@ export type AgentRow = {
   tokens: number
   // What it generated over all its requests (thinking, text, tool calls): what its time mostly goes to.
   output: number
+  // The effort it runs on: its first request's while this session watches it, else what its workflow script says
+  // it asked for. Absent or '' while unknown, and on a row from before the mod kept it.
+  effort?: string
 }
 export type WorkflowRun = {
   // The Workflow call that started it in this session, or `rec:<runId>` for a run read from its record.
@@ -113,7 +116,8 @@ export type WorkflowRun = {
 }
 
 // One agent of a finished run, as the statistics count it.
-export type AgentSample = { phase: string; family: string; ms: number; tokens: number; tools: number }
+// `effort`: absent or '' when the run's record doesn't say.
+export type AgentSample = { phase: string; family: string; effort?: string; ms: number; tokens: number; tools: number }
 // A finished run's record, boiled down for the Stats view.
 export type RunSummary = {
   runId: string

@@ -23,6 +23,23 @@ const AGENT_STATES: Record<string, AgentState> = {
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
 const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
+
+// An agent's effort, '' while unknown: a row or sample from before the mod kept it has none.
+export const effortOf = (a: { effort?: string }): string => a.effort ?? ''
+
+// The record names an agent's model but not its effort. The mod's own workflow scripts say in their result what each
+// agent() call was given, by label (`ranOnAgents`; the docs audit keeps it under `run`): the effort asked for.
+const ranOnAgents = (result: unknown): Record<string, unknown> => {
+  const r = obj(result)
+  return obj(r.ranOnAgents ?? obj(r.run).ranOnAgents)
+}
+const effortText = (v: unknown): string => (typeof v === 'string' ? v : typeof v === 'number' && Number.isFinite(v) ? String(v) : '')
+
+// The rows with a request's effort on its agent, where that row has none yet: the first request's stands. The same
+// list when nothing changes, so the caller writes only then.
+export const withEffort = (list: AgentRow[], agentId: string, effort: string): AgentRow[] =>
+  effort && list.some(a => a.id === agentId && !effortOf(a)) ? list.map(a => (a.id === agentId && !effortOf(a) ? { ...a, effort } : a)) : list
 
 export type RunRecord = { run: WorkflowRun; agents: AgentRow[] }
 
@@ -34,6 +51,7 @@ export const runFromRecord = (text: string, toolUseId: string, session: string):
   const runId = j.runId
   const startedAt = num(j.startTime)
   const progress = Array.isArray(j.workflowProgress) ? (j.workflowProgress as Record<string, unknown>[]) : []
+  const ranOn = ranOnAgents(j.result)
   const agents: AgentRow[] = progress
     .filter(e => e.type === 'workflow_agent')
     .map(e => {
@@ -52,6 +70,7 @@ export const runFromRecord = (text: string, toolUseId: string, session: string):
         tools: num(e.toolCalls),
         tokens: num(e.tokens),
         output: 0,
+        effort: effortText(obj(ranOn[str(e.label)]).effort),
       }
     })
   const phases = Array.isArray(j.phases) ? (j.phases as Record<string, unknown>[]).map(p => str(p.title)).filter(Boolean) : []
@@ -70,14 +89,15 @@ export const runFromRecord = (text: string, toolUseId: string, session: string):
 }
 
 // Folds a finished run's record into the rows the session recorded live: the record's status, totals and phases
-// win; the live rows keep what only they know (output tokens).
+// win; the live rows keep what only they know (output tokens, and the effort their requests were sent with, which
+// goes before the one the record says was asked for).
 export const mergeRecord = (live: AgentRow[], record: RunRecord): AgentRow[] => {
   const byId = new Map(record.agents.map(a => [a.id, a]))
   const merged = live.map(a => {
     const r = byId.get(a.id)
     if (!r) return a.runId === record.run.runId && a.status === 'running' ? { ...a, status: 'done' as AgentState } : a
     byId.delete(a.id)
-    return { ...a, status: r.status, phase: r.phase, tokens: r.tokens || a.tokens, tools: r.tools || a.tools, endedAt: r.endedAt || a.endedAt }
+    return { ...a, status: r.status, phase: r.phase, tokens: r.tokens || a.tokens, tools: r.tools || a.tools, endedAt: r.endedAt || a.endedAt, effort: effortOf(a) || effortOf(r) }
   })
   return [...merged, ...byId.values()]
 }

@@ -4,6 +4,7 @@ import type { AgentRow, WorkflowRun } from '../types'
 import { ACTIONS } from './areas'
 import { ago, duration, shortModel, spinner, tokens } from './format'
 import { barSpan } from './insight'
+import { effortOf } from './records'
 import { agentsOf, isFinished, isLive, phaseElapsed, phasesOf, shownPhase, shownRun, totalsOf } from './phases'
 import type { Phase, PhaseState, RunTotals } from './phases'
 import { ACCENT, Empty, Line, Section, agentGlyph } from './ui'
@@ -236,12 +237,14 @@ const RunRow = (k: Kit, run: WorkflowRun, agents: AgentRow[], now: number, isSho
 
 const elapsed = (a: AgentRow, now: number) => (a.endedAt || now) - a.startedAt
 
-// An agent on two lines: what it is and how long it took, then its model and what it cost.
+// An agent's second line: what it is, its model with its effort once that is known, and what it cost.
+export const agentFacts = (a: AgentRow, kind: string): string =>
+  [kind, shortModel(a.model), effortOf(a), a.tools ? a.tools + '⚒' : '', a.tokens ? tokens(a.tokens) + ' ctx' : ''].filter(Boolean).join(' · ')
+
+// An agent on two lines: what it is and how long it took, then its model, effort and what it cost.
 const Agent = (k: Kit, a: AgentRow, now: number, kind: string): JSX.Element => {
   const { Box, Text } = k
-  const facts = [kind, shortModel(a.model), a.tools ? a.tools + '⚒' : '', a.tokens ? tokens(a.tokens) + ' ctx' : '']
-    .filter(Boolean)
-    .join(' · ')
+  const facts = agentFacts(a, kind)
   return (
     <Box flexDirection="column" marginLeft={1}>
       {Line(k, agentGlyph(a.status, now), a.description || a.type, <Text color={isLive(a) ? ACCENT : 'inactive'} mono>{duration(elapsed(a, now))}</Text>)}
