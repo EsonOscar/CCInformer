@@ -144,8 +144,8 @@ export type PlanFile = { path: string; title: string; checkpoints: PlanCheckpoin
 // `archiveDir`: the pack's archive folder ('' for none), where a plan outside .local/plans/ is archived.
 export type PlansState = { plans: PlanFile[]; merged: number[]; archiveDir: string; at: number; error: string }
 
-// A process this session started (a Bash call, foreground or background) that the pack places in an
-// environment. Only a short label is kept, never the command line or an env file's values.
+// A process this session started (a Bash, PowerShell or Monitor call, foreground or background) that the pack
+// places in an environment. Only a short label is kept, never the command line or an env file's values.
 export type EnvTone = 'local' | 'shared' | 'prod'
 export type EnvTask = {
   // The background task's id once the call returns one; the call's tool_use_id until then.
@@ -158,6 +158,9 @@ export type EnvTask = {
   tone: EnvTone
   isHeavy: boolean
   startedAt: number
+  // The agent whose final response ends a background command, which then gets no notification; absent or '' for none
+  // (and on a task kept from before 0.43.1).
+  owner?: string
 }
 
 // A background shell this session started (Bash, PowerShell or Monitor). `command` is its first line, capped; the
