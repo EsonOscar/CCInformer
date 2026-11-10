@@ -139,14 +139,18 @@ export const hostsIn = (text: string, key?: string): string[] =>
     return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(value) ? [value] : []
   })
 
-// The tasks a background-task notification says have ended: each block with a `<task-id>` and a `<status>`.
-export const endedTaskIds = (text: string): string[] =>
+// The tasks a background-task notification says have ended, and how: each block with a `<task-id>` and a `<status>`.
+// A block without a status (a Monitor's event line) is no end.
+export const taskEnds = (text: string): { id: string; status: string }[] =>
   text
     .split('<task-notification>')
     .flatMap(block => {
       const id = /<task-id>\s*([^<\s]+)\s*<\/task-id>/.exec(block)?.[1]
-      return id && /<status>[^<]+<\/status>/.test(block) ? [id] : []
+      const status = /<status>\s*([^<]*?)\s*<\/status>/.exec(block)?.[1]
+      return id && status ? [{ id, status }] : []
     })
+
+export const endedTaskIds = (text: string): string[] => taskEnds(text).map(e => e.id)
 
 const TONE_RANK: Record<Tone, number> = { local: 0, shared: 1, prod: 2 }
 

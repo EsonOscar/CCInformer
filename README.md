@@ -11,6 +11,7 @@ The digits shown switch areas; the letters shown switch views and run actions.
 - **Now** (`1`)
   - **Env** (`e`): the processes this session started and the environment each targets, the processes your pack knows with their memory, a Godot game's [telemetry](#godot-telemetry), and free memory.
   - **Sessions** (`s`): the other Claude sessions on this machine that have Tell other sessions on, and what each is working on.
+  - **Shells** (`h`): the background shells this session started (a Bash or PowerShell command sent to the background, a Monitor): the first line of what each runs and how long it has been open, then the ones that ended, with how. The mod keeps that line in the session only: it never writes it to a file, a log or a note for Claude.
 - **Code** (`2`)
   - **Git** (`g`): branch, changed files (press one for its diff, `f` shows all, `d` opens `/diff`), commits, branches, and CI for the PR. `u` fetches.
     - `i` switches active CI for the repo: with Look into failed CI on, Claude looks into a failed check in a read-only turn (it uses tokens).

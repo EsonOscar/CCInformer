@@ -1,6 +1,6 @@
 import type {
   AgentRow, Area, BudgetState, PermissionChoices, CheckRun, CiActiveState, PlansState, SkillsSettings, UsageReading, CiSnapshot, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GitSnapshot, MemoryReading,
-  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, TelemetryState, ToolRow, WorkView, WorkflowRun,
+  NowView, PackReport, ProcessList, RunSummary, SessionBeat, ShellRow, StepRow, TelemetryState, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, shownView, viewsFor } from './areas'
 import { spinner } from './format'
@@ -22,6 +22,7 @@ import { RulesView, shownFindings } from './view-rules'
 import { SessionsView } from './view-sessions'
 import { SettingsView } from './view-settings'
 import type { AgentField } from './core/skills'
+import { ShellsView } from './view-shells'
 import { StatsView } from './view-stats'
 import { usageLine } from './usage'
 
@@ -59,6 +60,7 @@ export type PaneData = {
   usage: UsageReading | null
   ciActive: CiActiveState
   tasks: EnvTask[]
+  shells: ShellRow[]
   processes: ProcessList | null
   memory: MemoryReading | null
   // A Godot game's telemetry; null when the repo isn't one.
@@ -180,6 +182,7 @@ export const PaneView = (k: Kit, title: string, d: PaneData, nav: PaneNav): JSX.
   const view =
     d.area === 'now' && d.nowView === 'env' ? EnvView(k, d.tasks, d.processes, d.memory, d.telemetry, d.now, { screenshot: nav.screenshot, offerFile: nav.offerTelemetry })
     : d.area === 'now' && d.nowView === 'sessions' ? SessionsView(k, d.sessions, d.selfId, d.cwd, d.now)
+    : d.area === 'now' && d.nowView === 'shells' ? ShellsView(k, d.shells, d.now)
     : d.area === 'code' && shown === 'git' ? GitView(k, d.git, d.ci, d.now, width, !d.isActive, gitNav)
     : d.area === 'code' && shown === 'rules' ? RulesView(k, d.findings, d.dismissed, d.checkRuns, checkIds, d.now, rulesNav)
     : d.area === 'code' && shown === 'budgets' ? BudgetsView(k, d.budgets, d.now, nav.measure)

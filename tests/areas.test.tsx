@@ -23,6 +23,7 @@ describe('the areas and their keys', () => {
     expect(areaFor('settings')).toEqual({ area: 'debug', view: 'settings' })
     expect(areaFor('agents')).toEqual({ area: 'work', view: 'runs' })
     expect(areaFor('sessions')).toEqual({ area: 'now', view: 'sessions' })
+    expect(areaFor('shells')).toEqual({ area: 'now', view: 'shells' })
     expect(areaFor('stats')).toEqual({ area: 'work', view: 'stats' })
     expect(areaFor('requests')).toEqual({ area: 'debug', view: 'requests' })
     expect(areaFor('timeline')).toBeNull()

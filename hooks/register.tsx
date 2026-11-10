@@ -3,7 +3,7 @@ import type { EngineInterface, Register } from 'claude-code'
 
 import type {
   AgentRow, Area, BudgetState, CheckRun, PermissionChoices, CiActiveState, CiSnapshot, PlansState, SkillsSettings, UsageReading, CodeView, Compaction, DebugView, DiffPreview, EnvTask, FileChange, Finding, GateRules, GitSnapshot, MemoryReading,
-  NowView, PackReport, ProcessList, RunSummary, SessionBeat, StepRow, TelemetryState, ToolOutcome, ToolRow, WorkView, WorkflowRun,
+  NowView, PackReport, ProcessList, RunSummary, SessionBeat, ShellRow, StepRow, TelemetryState, ToolOutcome, ToolRow, WorkView, WorkflowRun,
 } from '../types'
 import { areaDef, areaFor, areaNames, shownView, viewsFor } from './areas'
 import { createBudgets } from './budgets/run'
@@ -21,10 +21,11 @@ import { EXPLAIN_TEXTS, NEW_INSTALL, allSet, choicesFrom, explainPrompt, isAllow
 import type { May, PermissionId } from './core/permissions'
 import { DEFAULT_SKILLS, SKILLS_FILE, cycled, readSkills, skillsFrom, skillsRest, skillsText, withoutAgents } from './core/skills'
 import type { AgentField } from './core/skills'
-import { commandDir, endedTaskIds, envTaskFor } from './env/classify'
+import { commandDir, endedTaskIds, envTaskFor, taskEnds } from './env/classify'
 import { memoryQuery, parseMemory, parseProcesses, processQuery } from './env/procs'
 import type { Platform } from './env/procs'
 import { classifyCommand, scriptsAt } from './env/read'
+import { endedShells, ownedEnds, shellFrom, withShell } from './env/shells'
 import { appendEvent } from './gates/ledger'
 import { answerOf, askFor, couldApply, denyText, eventScript, gateCall, gateRulesOf, isApproved, isShell, ledgerDir, pickGate, sessionKey } from './gates/match'
 import type { Answer } from './gates/match'
@@ -146,6 +147,9 @@ const packFailedAtom = atom({ plugin: 'ccinformer', key: 'packFailed' } as const
 const gateRulesAtom = atom({ plugin: 'ccinformer', key: 'gateRules' } as const, null as GateRules | null)
 const sessionApprovalsAtom = atom({ plugin: 'ccinformer', key: 'sessionApprovals' } as const, [] as string[])
 const envTasksAtom = atom({ plugin: 'ccinformer', key: 'envTasks' } as const, [] as EnvTask[])
+// The background shells this session started, for Now › Shells. Each holds its command's first line, which stays here:
+// nothing writes a row to the store, a file, a toast, the status line or a note for Claude.
+const shellsAtom = atom({ plugin: 'ccinformer', key: 'shells' } as const, [] as ShellRow[])
 const nowViewAtom = atom({ plugin: 'ccinformer', key: 'nowView' } as const, 'env' as NowView)
 const processesAtom = atom({ plugin: 'ccinformer', key: 'processes' } as const, null as ProcessList | null)
 const memoryAtom = atom({ plugin: 'ccinformer', key: 'memory' } as const, null as MemoryReading | null)
@@ -195,9 +199,16 @@ async function setPaneTop($: EngineInterface, top: number): Promise<void> {
 // Shows a view in the area that has it; a name no area has changes nothing.
 async function writeView($: EngineInterface, view: string): Promise<void> {
   if (view === 'runs' || view === 'stats' || view === 'plans') await update($, workViewAtom, () => view)
-  if (view === 'env' || view === 'sessions') await update($, nowViewAtom, () => view)
+  if (view === 'env' || view === 'sessions' || view === 'shells') await update($, nowViewAtom, () => view)
   if (view === 'git' || view === 'rules' || view === 'budgets') await update($, codeViewAtom, () => view)
   if (view === 'tools' || view === 'requests' || view === 'context' || view === 'pack' || view === 'settings') await update($, debugViewAtom, () => view)
+}
+
+// Ends the running shells that `endsOf` names in the latest list. No read comes first: a hook reads state as it stood
+// when its event began, and the update's callback gets the list as it is now.
+async function endShells($: EngineInterface, endsOf: (list: ShellRow[]) => { id: string; status: string }[]): Promise<void> {
+  const at = await $.clock.now()
+  await update($, shellsAtom, list => endedShells(list, endsOf(list), at))
 }
 
 // Writes the tracked processes; the status line names a production one too, as a backup for the band.
@@ -1065,6 +1076,8 @@ export const register: Register = on => {
     if (e.origin.kind === 'task-notification') {
       const ended = endedTaskIds(e.text)
       if (envTasks.some(t => ended.includes(t.id))) await saveEnvTasks($, envTasks.filter(t => !ended.includes(t.id)))
+      const ends = taskEnds(e.text)
+      if (ends.length) await endShells($, () => ends)
     }
     // A prompt the person types into the read-only turn takes that turn over: it is theirs again.
     if ((e.origin.kind === 'composer' || e.origin.kind === 'bridge') && e.turnId && ciState.guardedTurn) await saveCi($, s => ({ ...s, guardedTurn: '' }))
@@ -1157,6 +1170,10 @@ export const register: Register = on => {
     }
     const stopped = tool === 'TaskStop' ? String(input.task_id ?? input.shell_id ?? '') : ''
     if (stopped && envTasks.some(t => t.id === stopped)) await saveEnvTasks($, envTasks.filter(t => t.id !== stopped))
+    // Now › Shells: a call that left a shell open in the background is listed, and a stop that went through ends its row.
+    const shell = outcome === 'ok' ? shellFrom(tool, input, result.result, e.agentId ?? '', startedAt) : null
+    if (shell) await update($, shellsAtom, list => withShell(list, shell))
+    if (stopped && outcome === 'ok') await endShells($, () => [{ id: stopped, status: 'killed' }])
     if (!e.agentId && TOUCHING_TOOLS.includes(tool)) live?.touched()
     if (!e.agentId && isPush(input.command)) live?.pushed()
     // A file written by any agent: the inline checks read it, and the model reads what they found with the result.
@@ -1227,6 +1244,9 @@ export const register: Register = on => {
       const endedAt = await $.clock.now()
       const status = endedState(e.reason)
       await update($, agentsAtom, list => list.map(a => (a.id === e.agentId ? { ...a, status, endedAt } : a)))
+      // A background command that ends with this agent's final response gets no notification: its row ends here.
+      const agentId = e.agentId
+      await endShells($, list => ownedEnds(list, agentId))
       live?.recordsSoon()
     } else {
       isTurnRunning = false
@@ -1303,9 +1323,10 @@ export const register: Register = on => {
       read($, processesAtom), read($, memoryAtom), read($, codeViewAtom), read($, findingsAtom), read($, dismissedAtom), read($, checkRunsAtom),
       read($, budgetsAtom), read($, plansAtom), read($, usageAtom), read($, paneTopAtom), read($, ciActiveAtom), read($, versionAtom), read($, permissionsAtom), read($, skillsAtom), read($, packFailedAtom), read($, telemetryAtom),
     ])
+    const shells = await read($, shellsAtom)
     const data = {
       area, nowView, codeView, workView, debugView, selected, phase, isActive, now, git, ci, showAllFiles, diff, agents, runs, statsName, stats,
-      tools, steps, compactions, sessions, pack, packFailed, findings, dismissed, checkRuns, budgets, plans, usage, tasks, processes, memory, selfId, cwd, version, permissions, skills,
+      tools, steps, compactions, sessions, pack, packFailed, findings, dismissed, checkRuns, budgets, plans, usage, tasks, shells, processes, memory, selfId, cwd, version, permissions, skills,
       telemetry: telemetryState ?? null,
       ciActive: { ...CI_IDLE, ...ciActive },
       width: e.props.bodyColumns, rows: e.props.scroll.bodyRows, scrollTop: e.props.scroll.offset, contentTop,
