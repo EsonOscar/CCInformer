@@ -21,10 +21,15 @@ const STATUS_LOOK: Record<PlanCheckpoint['status'], Glyph> = {
 const PRS_SHOWN = 3
 const prList = (prs: number[]) => prs.slice(0, PRS_SHOWN).map(n => '#' + n).join(' ') + (prs.length > PRS_SHOWN ? ' …' : '')
 
+// How long ago the board was read: in seconds under a minute, as it is read every 5 s while it shows, so a read that
+// stopped is seen at once. Never below zero: a read stamps its time just after the tick stamped the pane's.
+export const readAgo = (ms: number): string => (ms < 60_000 ? Math.floor(Math.max(0, ms) / 1000) + 's ago' : ago(ms))
+
 // The checkpoint board: each plan file (in .local/plans/, or named by the pack), how many of its checkpoints are done,
 // and every checkpoint with its status (from the markers on its own line) and the PRs it names. The status is always
 // the plan's own; a PR GitHub reports merged on a checkpoint that still reads open is a warning beside it. Pressing a
-// plan's header selects it, and `a` archives the selected one (it asks first). With the planning skills' plan files
+// plan's header selects it, and `a` archives the selected one (it asks first). The header says when the board was last
+// read. With the planning skills' plan files
 // off (Debug › Settings), the empty board says so, as no plan of theirs will appear.
 export const PlansView = (k: Kit, state: PlansState | null, now: number, nav: PlanNav, isPlanFilesOn: boolean): JSX.Element => {
   const { Box } = k
@@ -33,9 +38,8 @@ export const PlansView = (k: Kit, state: PlansState | null, now: number, nav: Pl
   const archiveDir = state?.archiveDir ?? ''
   return (
     <Box flexDirection="column">
-      {!state && Section(k, 'Plans')}
+      {Section(k, 'Plans', state ? 'read ' + readAgo(now - state.at) : '')}
       {!state && Empty(k, 'Reading the plans…')}
-      {state && state.plans.length === 0 && Section(k, 'Plans', ago(now - state.at))}
       {state && state.plans.length === 0 && isPlanFilesOn && Empty(k, 'No plans yet: a plan in .local/plans/ (as /ccinformer:plan-feature saves it) shows here.')}
       {state && state.plans.length === 0 && !isPlanFilesOn && Empty(k, 'No plans. Plan files are off (Debug › Settings): the planning skills save nothing to .local/plans/.')}
       {state?.plans.map(p => Plan(k, p, merged, archiveDir, nav))}
