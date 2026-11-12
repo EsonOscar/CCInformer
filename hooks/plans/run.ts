@@ -7,7 +7,11 @@ import type { Platform } from '../env/procs'
 import type { PlanSpec, ResolvedPack } from '../packs/types'
 import { filesOf as globFiles } from '../read-files'
 import { readText } from '../read-records'
-import { archiveDirFor, archivePath, archiveQuestion, baseOf, isReminderDue, moveOwnLinks, reminderText, removeCommand, rewriteRefs } from './archive'
+import { isIgnored } from '../core/ignored'
+import {
+  archiveDirFor, archiveGitUnknown, archiveNotIgnored, archivePath, archiveQuestion, baseOf, isLocalPath, isReminderDue, moveOwnLinks, reminderText,
+  removeCommand, rewriteRefs,
+} from './archive'
 import { isFinished, mergedToast, prState, prsToAsk } from './drift'
 import { parsePlan } from './parse'
 
@@ -141,6 +145,11 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     const root = deps.report()?.root ?? ''
     const dir = archiveDirFor(path, pack?.plans)
     if (!root || !dir) return
+    // Nothing is written under .local/ unless git ignores the folder; a pack's folder outside it is the person's own.
+    if (isLocalPath(dir)) {
+      const ignored = await isIgnored(deps.light, root, dir)
+      if (ignored !== true) return deps.notify(ignored === false ? archiveNotIgnored(dir) : archiveGitUnknown(dir)) // asked
+    }
     const to = archivePath(path, dir)
     if (await $.fs.exists(`${root}/${to}`)) return deps.notify(`Already in the archive: ${to}`) // asked
     const text = await readText($, `${root}/${path}`)
@@ -148,7 +157,7 @@ export function createPlans($: EngineInterface, deps: PlanDeps): Plans {
     const moved = rewriteRefs(moveOwnLinks(text, fromDir, dir), dir, path, to)
     const changes = await referencesTo(root, path, to)
     const open = parsed.get(path)?.plan.checkpoints.filter(c => c.status === 'open' || c.status === 'partly').length ?? 0
-    const question = archiveQuestion(path, to, changes.map(c => c.label), open)
+    const question = archiveQuestion(path, to, changes.map(c => c.label), open, isLocalPath(path) && !isLocalPath(dir))
     const answer = await $.ui.ask(question, { options: [ARCHIVE, 'Cancel'], header: 'Archive plan' }).catch(() => '') // asked
     if (answer !== ARCHIVE) return
 

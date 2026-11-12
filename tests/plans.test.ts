@@ -2,8 +2,11 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   archiveDirFor,
+  archiveGitUnknown,
+  archiveNotIgnored,
   archivePath,
   archiveQuestion,
+  isLocalPath,
   isReminderDue,
   markdownLinks,
   moveOwnLinks,
@@ -13,6 +16,7 @@ import {
 } from '../hooks/plans/archive'
 import { isFinished, mergedPrs, mergedToast, mergedWarnings, prState, prsToAsk } from '../hooks/plans/drift'
 import { leadingIds, parsePlan } from '../hooks/plans/parse'
+import { readAgo } from '../hooks/view-plans'
 import type { PlanCheckpoint, PlanFile, PlanStatus } from '../types'
 
 const board = (text: string, spec = {}) => parsePlan(text, spec).checkpoints.map(c => [c.id, c.status, c.title, c.prs])
@@ -290,5 +294,24 @@ describe('archiving a plan', () => {
     expect(archiveQuestion(FROM, TO, files, 3)).toBe(
       'Move .local/plans/x.md to .local/plans/archive/x.md and update references in 8 files (a.md, b.md, c.md, d.md, e.md, f.md, and 2 more)? 3 checkpoints are still open.',
     )
+    // A plan that leaves .local/ says so last.
+    expect(archiveQuestion('.local/notes/x.md', 'docs/archive/x.md', [], 1, true)).toBe(
+      'Move .local/notes/x.md to docs/archive/x.md? 1 checkpoint is still open. It leaves .local/, so git may no longer ignore it.',
+    )
+  })
+
+  test('.local or anything below it is a local path, however the pack wrote it', async () => {
+    for (const path of ['.local', '.local/plans/archive', '.local/archive', './.local/x', '.local\\x', '.LOCAL/x', 'plans/../.local/x'])
+      expect([path, isLocalPath(path)]).toEqual([path, true])
+    for (const path of ['.localx', 'docs/.local', 'plans/archive', '../.local/x']) expect([path, isLocalPath(path)]).toEqual([path, false])
+  })
+
+  test('a refused archive says which folder git should ignore', async () => {
+    expect(archiveNotIgnored('.local/archive')).toBe("Git doesn't ignore .local/archive/ here, so nothing was archived. Add .local/ to .gitignore, then archive again.")
+    expect(archiveGitUnknown('.local/archive')).toBe("Couldn't ask git whether .local/archive/ is ignored, so nothing was archived.")
+  })
+
+  test('the board age is in seconds under a minute, and never below zero', async () => {
+    expect([readAgo(-300), readAgo(0), readAgo(4999), readAgo(59_999), readAgo(60_000)]).toEqual(['0s ago', '0s ago', '4s ago', '59s ago', '1m ago'])
   })
 })

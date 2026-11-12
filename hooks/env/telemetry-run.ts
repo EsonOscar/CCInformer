@@ -1,6 +1,7 @@
 import type { EngineInterface } from 'claude-code'
 
 import type { PackReport, TelemetryReading, TelemetryState } from '../../types'
+import { isIgnored } from '../core/ignored'
 import type { Lane, Solo } from '../core/lanes'
 import type { ResolvedPack } from '../packs/types'
 import {
@@ -31,13 +32,6 @@ export type Telemetry = {
   screenshot: () => Promise<void>
   // `t`: offers telemetry.json to the prompt.
   offerFile: () => Promise<void>
-}
-
-// Whether git ignores a folder of the repo (the folder itself, so a rule for some of its files doesn't count): true,
-// false, or null when git couldn't say. Written to become the repo-wide rule for everything the mod writes in .local/.
-export async function isIgnored(light: Lane, root: string, dir: string): Promise<boolean | null> {
-  const run = await light(['git', 'check-ignore', '-q', '--', dir.replace(/\/*$/, '/')], undefined, root).catch(() => null)
-  return run?.exitCode === 0 ? true : run?.exitCode === 1 ? false : null
 }
 
 const why = (err: unknown): string => (err instanceof Error ? err.message : String(err))

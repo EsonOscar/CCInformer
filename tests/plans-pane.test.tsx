@@ -44,6 +44,9 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>, prs:
   const asked: Record<number, number> = {}
   const toasts: string[] = []
   const dialog = { answer: 'Archive', questions: [] as string[] }
+  // What `git check-ignore` exits with (0 ignored, 1 not, anything else: git couldn't say), and every command run.
+  const git = { ignored: 0 }
+  const commands: string[] = []
   on('fs.write', (_, e) => {
     if (posix(e.path).endsWith('/read-only.md')) throw new Error('EPERM: operation not permitted')
     all[posix(e.path)] = e.text
@@ -84,10 +87,11 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>, prs:
   })
   on('process.run', (_, e) => {
     const line = (e as { argv: string[] }).argv.join(' ')
+    commands.push(line)
     const out = (stdout: string, exitCode = 0) => ({ value: { exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false } })
     if (line === 'git rev-parse --show-toplevel --git-common-dir') return out('/repo\n.git\n')
     if (line === 'git config --get remote.origin.url') return out('git@github.com:acme/shop.git\n')
-    if (line.startsWith('git check-ignore')) return out('', 0)
+    if (line.startsWith('git check-ignore')) return out('', git.ignored)
     if (line.startsWith('git status')) return out('# branch.oid abc123\n# branch.head main\n')
     if (line.startsWith('git rev-parse')) return out('/repo/.git\n/repo\n')
     const pr = line.match(/^gh pr view (\d+) --json state$/)
@@ -116,7 +120,7 @@ const engine = (on: Parameters<TestBody>[1], files: Record<string, string>, prs:
     all[path] = text
     mtimes[path] = (mtimes[path] ?? 1) + 1
   }
-  return { clock, reads, change, asked, toasts, all, dialog }
+  return { clock, reads, change, asked, toasts, all, dialog, git, commands }
 }
 
 test("Work › Plans lists each plan file's checkpoints, leaving out the archive and files that define none", async ($, on) => {
@@ -455,6 +459,89 @@ test('a plan whose name the archive already holds is refused before any dialog',
   expect(toasts).toEqual([`Already in the archive: ${LOGIN_ARCHIVED}`])
   expect(all['/repo/' + LOGIN_ARCHIVED]).toBe('# Old login')
   expect('/repo/' + LOGIN in all).toBe(true)
+  await ui.unmount()
+})
+
+test("an archive folder under .local/ that git doesn't ignore is refused: no dialog, nothing written, and a toast says why", async ($, on) => {
+  const { clock, all, dialog, toasts, git, commands } = engine(on, ARCHIVE_TREE)
+  git.ignored = 1
+  const before = { ...all }
+  const ui = await openPlans($, clock)
+  await ui.press({ key: 'plan-pick-' + LOGIN })
+  await ui.press({ key: 'plan-archive' })
+  await clock.settle()
+  expect(commands).toContain('git check-ignore -q -- .local/plans/archive/')
+  expect(dialog.questions).toEqual([])
+  expect(toasts).toEqual(["Git doesn't ignore .local/plans/archive/ here, so nothing was archived. Add .local/ to .gitignore, then archive again."])
+  expect(all).toEqual(before)
+
+  // Git can't say (not a repo, a failed call): refused as well. The press took the selection with it.
+  git.ignored = 128
+  await ui.press({ key: 'plan-pick-' + LOGIN })
+  await ui.press({ key: 'plan-archive' })
+  await clock.settle()
+  expect(dialog.questions).toEqual([])
+  expect(toasts[1]).toBe("Couldn't ask git whether .local/plans/archive/ is ignored, so nothing was archived.")
+  expect(all).toEqual(before)
+  await ui.unmount()
+})
+
+test("a pack's archive folder outside .local/ is the person's own: archived without asking git", async ($, on) => {
+  const { clock, all, dialog, git, commands } = engine(on, { '/repo/plans/backend.md': BACKEND })
+  git.ignored = 1
+  const ui = await openPlans($, clock)
+  await ui.press({ key: 'plan-pick-plans/backend.md' })
+  await ui.press({ key: 'plan-archive' })
+  await clock.settle()
+  expect(dialog.questions).toEqual(['Move plans/backend.md to plans/archive/backend.md? 2 checkpoints are still open.'])
+  expect('/repo/plans/archive/backend.md' in all).toBe(true)
+  expect('/repo/plans/backend.md' in all).toBe(false)
+  expect(commands.filter(c => c.startsWith('git check-ignore'))).toEqual([])
+  await ui.unmount()
+})
+
+test('a plan that leaves .local/ for a pack folder outside it is named so in the dialog', async ($, on) => {
+  const pack = USER_PACK.replace('"plans/**/*.md"', '".local/notes/*.md"')
+  expect(pack).not.toBe(USER_PACK)
+  const { clock, all, dialog } = engine(on, { [PACKS + '/shop.pack.jsonc']: pack, '/repo/.local/notes/x.md': '# Notes\n### R1: first' })
+  dialog.answer = 'Cancel'
+  const before = { ...all }
+  const ui = await openPlans($, clock)
+  await ui.press({ key: 'plan-pick-.local/notes/x.md' })
+  await ui.press({ key: 'plan-archive' })
+  await clock.settle()
+  expect(dialog.questions).toEqual(['Move .local/notes/x.md to plans/archive/x.md? 1 checkpoint is still open. It leaves .local/, so git may no longer ignore it.'])
+  expect(all).toEqual(before)
+  await ui.unmount()
+})
+
+// The age in the board's header, as the pane shows it now.
+const readNote = async (ui: { find: (q: { type: string; text: RegExp }) => Promise<{ text: string } | undefined> }) =>
+  (await ui.find({ type: 'Text', text: /^read \d+s ago$/ }))?.text ?? ''
+
+test('the board always says when it was last read, counting up between the 5 s reads', async ($, on) => {
+  const { clock } = engine(on, { [PACKS + '/shop.pack.jsonc']: NO_PLANS_IN_PACK, '/repo/.local/plans/2026-10-29-search.md': SEARCH })
+  const ui = await openPlans($, clock)
+  expect(await ui.find({ type: 'Text', text: '▍PLANS' })).toBeDefined()
+  expect(await ui.find({ type: 'Text', text: '▍2026-10-29-SEARCH.MD' })).toBeDefined()
+  // Opening the view read the board, so the age starts at 0. The 5 s read falls on a tick counted from the session's
+  // start: step until the age has grown, then until a read brings it back to 0.
+  expect(await readNote(ui)).toBe('read 0s ago')
+  const stepUntil = async (isThere: (note: string) => boolean) => {
+    for (let i = 0; i < 6 && !isThere(await readNote(ui)); i++) {
+      await clock.advance(1000)
+      await clock.settle()
+    }
+    expect(isThere(await readNote(ui))).toBe(true)
+  }
+  await stepUntil(note => note !== 'read 0s ago')
+  await stepUntil(note => note === 'read 0s ago')
+  await clock.advance(4000)
+  await clock.settle()
+  expect(await readNote(ui)).toBe('read 4s ago')
+  await clock.advance(1000)
+  await clock.settle()
+  expect(await readNote(ui)).toBe('read 0s ago')
   await ui.unmount()
 })
 

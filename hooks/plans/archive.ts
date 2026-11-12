@@ -53,6 +53,15 @@ export const archiveDirFor = (path: string, spec: { archiveDir?: string } | unde
 
 export const archivePath = (path: string, dir: string): string => `${dir}/${baseOf(path)}`
 
+// Whether a repo-relative path is `.local` or below it. A pack's archive folder is any string, so it is worked out
+// first: backslashes to `/`, then `.` and `..` resolved, case ignored (a case-insensitive disk).
+export const isLocalPath = (path: string): boolean => /^\.local(\/|$)/i.test(resolve('', path.replace(/\\/g, '/')))
+
+// Why nothing was archived: the archive folder is under .local/ and git doesn't ignore it, or couldn't say.
+export const archiveNotIgnored = (dir: string): string =>
+  `Git doesn't ignore ${dir}/ here, so nothing was archived. Add .local/ to .gitignore, then archive again.`
+export const archiveGitUnknown = (dir: string): string => `Couldn't ask git whether ${dir}/ is ignored, so nothing was archived.`
+
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
 // A text with its references to `from` moved to `to`: Markdown links that lead there from `fileDir`, and plain
@@ -86,12 +95,14 @@ export const isReminderDue = (lastAt: number | null, now: number): boolean => la
 
 const plural = (n: number, one: string, many: string) => (n === 1 ? one : many)
 
-// The archive dialog: the move, the files whose references change, and the checkpoints still open.
-export const archiveQuestion = (from: string, to: string, files: string[], open: number): string => {
+// The archive dialog: the move, the files whose references change, the checkpoints still open, and whether the plan
+// leaves .local/ for a folder outside it.
+export const archiveQuestion = (from: string, to: string, files: string[], open: number, leavesLocal = false): string => {
   const named = files.slice(0, FILES_NAMED).join(', ') + (files.length > FILES_NAMED ? `, and ${files.length - FILES_NAMED} more` : '')
   const refs = files.length ? ` and update references in ${files.length} ${plural(files.length, 'file', 'files')} (${named})` : ''
   const still = open ? ` ${open} ${plural(open, 'checkpoint is', 'checkpoints are')} still open.` : ''
-  return `Move ${from} to ${to}${refs}?${still}`
+  const leaves = leavesLocal ? ' It leaves .local/, so git may no longer ignore it.' : ''
+  return `Move ${from} to ${to}${refs}?${still}${leaves}`
 }
 
 export const reminderText = (count: number): string =>

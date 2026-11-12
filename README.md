@@ -73,9 +73,9 @@ By hand, without auto-update: `/plugin install ccinformer --marketplace EsonOsca
 | `/ccinformer:audit-docs <focus>` | Checks a repo's docs against its code, then fixes what you approve |
 | `/ccinformer:write-pack` | Drafts your [pack](#packs) for the repo you're in |
 
-Run the planning skills in plan mode. plan-feature and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off); plan-handoff writes a doc for a developer. Nothing is committed unless you ask. Which model and effort the skills' agents run on is set in Debug › Settings; your session's own model stays `/model`'s.
+Run the planning skills in plan mode. plan-feature and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off, or git doesn't ignore that folder: then nothing is written there); plan-handoff writes a doc for a developer. Nothing is committed unless you ask. Which model and effort the skills' agents run on is set in Debug › Settings; your session's own model stays `/model`'s.
 
-A repo's planning settings go in a `## Planning` section of its CLAUDE.md, or in `.local/ccinformer-planning.md`.
+A repo's planning settings go in a `## Planning` section of its CLAUDE.md, or in `.local/ccinformer-planning.md` (the skills write that file only where git ignores `.local/`).
 
 A hand-written plan in `.local/plans/` works too: a checkpoint is an id (`CP3`, `C7`) at the start of a heading, a table row or a bold label, with its status (`done`, `merged as #N`, `dropped`) on that line.
 
