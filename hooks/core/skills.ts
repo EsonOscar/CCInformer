@@ -37,7 +37,7 @@ export const AGENT_ROLES: AgentRole[] = [
   { script: 'build-fanout', role: 'reviewer', label: 'Build: reviewers', model: 'opus', effort: 'high' },
   { script: 'audit-docs-fanout', role: 'auditor', label: 'Docs audit: auditors', model: 'opus', effort: 'high' },
   { script: 'audit-docs-fanout', role: 'verifier', label: 'Docs audit: verifiers', model: 'opus', effort: 'high' },
-  { script: 'plan-review', role: 'critic', label: 'Plan review: critic (and final checks)', model: 'opus', effort: 'medium' },
+  { script: 'plan-review', role: 'critic', label: 'Final check: critic', model: 'opus', effort: 'medium' },
 ]
 
 export const AGENTS_TEXTS = {

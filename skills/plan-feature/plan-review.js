@@ -1,14 +1,15 @@
 export const meta = {
   name: 'plan-review',
   description: 'One read-only critic reviews a drafted plan against the code, every lens in its own section',
-  whenToUse: "Run by the CCInformer plan-feature-small skill (rounds 1 and 2, and the final check) and by plan-feature and plan-handoff (the final check), in plan mode, with args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final), agents?}; agents is {critic?: {model?, effort?}}",
+  whenToUse: "Run by the CCInformer plan-feature and plan-handoff skills for the final check (round: 'final'), in plan mode; rounds 1 and 2 review a whole drafted plan, which no skill asks for at present. Args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final), agents?}; agents is {critic?: {model?, effort?}}",
   phases: [{ title: 'Review', detail: 'one adversarial critic, every lens', model: 'opus' }],
 }
 
-// plan-feature-small's review: one critic, kept fast. It reads the plan file and the files the plan touches, and goes
-// further only to back up a finding. The main session checks what it finds and decides the replan; a second round is
-// for a blocker only (needsRound2), and there is never a third. Once the main session has folded in the last round
-// and the user's answers, a final check looks only at what it changed since (round 'final'), once, with no round after.
+// One critic, kept fast. It reads the plan file and the files the plan touches, and goes further only to back up a
+// finding. plan-feature and plan-handoff run it as their final check (round 'final'): once the main session has folded
+// in the last review and the user's answers, it looks only at what changed since, once, with no round after.
+// Rounds 1 and 2 review a whole drafted plan (a second round for a blocker only, needsRound2, and never a third);
+// plan-feature-small ran them until it began reviewing its own plan, and no skill calls them now.
 const MODEL = 'opus'
 const EFFORT = 'medium'
 // The critic runs on Opus at high effort at most, whatever is asked for: a model or effort above that, or one not on

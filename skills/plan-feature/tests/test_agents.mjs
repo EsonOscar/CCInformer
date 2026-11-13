@@ -41,7 +41,7 @@ const SCRIPTS = {
     at: result => result.run,
   },
   'plan-review': {
-    file: 'skills/plan-feature-small/plan-review.js',
+    file: 'skills/plan-feature/plan-review.js',
     role: () => 'critic',
     args: { context: 'c', requirements: 'r', plan: '/plan.md', files: ['a.ts'], round: 1 },
     reply: () => ({ lenses: {}, summary: 's' }),

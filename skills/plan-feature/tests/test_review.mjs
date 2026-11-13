@@ -1,5 +1,5 @@
 // Runs plan-review.js with a stub critic, so the whole flow is checked with no model calls.
-// Run from the repo root: node skills/plan-feature-small/tests/test_review.mjs
+// Run from the repo root: node skills/plan-feature/tests/test_review.mjs
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'

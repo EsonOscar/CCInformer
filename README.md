@@ -68,7 +68,7 @@ By hand, without auto-update: `/plugin install ccinformer --marketplace EsonOsca
 | Skill | For |
 |---|---|
 | `/ccinformer:plan-feature <task>` | Thorough planning by a workflow of agents (often 10 to 20), then the build |
-| `/ccinformer:plan-feature-small <task>` | Smaller tasks: Claude plans, one critic agent reviews, then the build |
+| `/ccinformer:plan-feature-small <task>` | Smaller tasks, fast: Claude plans and reviews its own plan, with no review agent, then the build |
 | `/ccinformer:plan-handoff <feature>` | Planning for someone who isn't a developer, ending in a doc a developer builds from |
 | `/ccinformer:audit-docs <focus>` | Checks a repo's docs against its code, then fixes what you approve |
 | `/ccinformer:write-pack` | Drafts your [pack](#packs) for the repo you're in |
