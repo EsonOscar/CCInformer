@@ -32,7 +32,7 @@ func _take(kind: String, msg: String) -> void:
 		entries.append({"t": int(Time.get_unix_time_from_system() * 1000.0), "kind": kind, "msg": msg})
 	lock.unlock()
 
-func _log_error(function: String, file: String, line: int, code: String, rationale: String, editor_notify: bool, error_type: int, script_backtraces: Array[ScriptBacktrace]) -> void:
+func _log_error(_function: String, file: String, line: int, code: String, rationale: String, _editor_notify: bool, error_type: int, _script_backtraces: Array[ScriptBacktrace]) -> void:
 	if error_type == 1:
 		return
 	var text := rationale if rationale != "" else code
