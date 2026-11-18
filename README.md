@@ -68,12 +68,13 @@ By hand, without auto-update: `/plugin install ccinformer --marketplace EsonOsca
 | Skill | For |
 |---|---|
 | `/ccinformer:plan-feature <task>` | Thorough planning by a workflow of agents (often 10 to 20), then the build |
+| `/ccinformer:plan-feature-medium <task>` | Middle ground: Claude plans, two critic agents review the plan beside Claude's own check, then the build |
 | `/ccinformer:plan-feature-small <task>` | Smaller tasks, fast: Claude plans and reviews its own plan, with no review agent, then the build |
 | `/ccinformer:plan-handoff <feature>` | Planning for someone who isn't a developer, ending in a doc a developer builds from |
 | `/ccinformer:audit-docs <focus>` | Checks a repo's docs against its code, then fixes what you approve |
 | `/ccinformer:write-pack` | Drafts your [pack](#packs) for the repo you're in |
 
-Run the planning skills in plan mode. plan-feature and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off, or git doesn't ignore that folder: then nothing is written there); plan-handoff writes a doc for a developer. Nothing is committed unless you ask. Which model and effort the skills' agents run on is set in Debug › Settings; your session's own model stays `/model`'s.
+Run the planning skills in plan mode. plan-feature, plan-feature-medium and plan-feature-small save an approved plan to `.local/plans/`, followed in Work › Plans (unless Plan files is off, or git doesn't ignore that folder: then nothing is written there); plan-handoff writes a doc for a developer. Nothing is committed unless you ask. Which model and effort the skills' agents run on is set in Debug › Settings; your session's own model stays `/model`'s.
 
 A repo's planning settings go in a `## Planning` section of its CLAUDE.md, or in `.local/ccinformer-planning.md` (the skills write that file only where git ignores `.local/`).
 

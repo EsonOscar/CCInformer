@@ -106,6 +106,18 @@ await test('plan-feature and plan-feature-small point at the build rules, which 
   for (const heading of ['## Before the first checkpoint', '## While building', '## Finish']) assert.ok(rules.includes(heading), heading)
 })
 
+// plan-feature-medium follows plan-feature-small's steps and replaces its review step and its late-change check by
+// name, so a renumbered or reworded small would silently break it.
+await test('plan-feature-medium points at small and at this script, and small still has the steps it replaces', async () => {
+  const skills = join(here, '..', '..')
+  const medium = readFileSync(join(skills, 'plan-feature-medium', 'SKILL.md'), 'utf8')
+  assert.match(medium, /`\.\.\/plan-feature-small\/SKILL\.md` from this file/)
+  assert.match(medium, /`\.\.\/plan-feature\/plan-review\.js`/)
+  assert.match(medium, /split: true/)
+  const small = readFileSync(join(skills, 'plan-feature-small', 'SKILL.md'), 'utf8')
+  for (const marker of ['5. **Review the plan yourself.**', '7. Finish the plan file:', '**Check every late change.**']) assert.ok(small.includes(marker), marker)
+})
+
 await test('the prompt names the plan file and the files to read first, and stays read-only', async () => {
   const { calls } = await run(baseArgs(), () => review())
   const { prompt } = calls[0]
@@ -177,6 +189,62 @@ await test('a structured answer that fails is asked for again one finding per li
 await test('when the per-line answer gives nothing either, the check asks to be run again instead of throwing', async () => {
   for (const lines of [null, '', '```\n```'])
     assert.deepEqual((await run(baseArgs({ round: 'final', changes: 'x' }), throwsOnSchema(lines))).result, { round: 'final', error: 'the critic returned nothing; run the final check again' })
+})
+
+// split: two critics in parallel, the lenses shared out between them (correctness and gaps; fit and the extra lenses),
+// merged back into the result one critic gives.
+const byLabel = (replies) => (prompt, opts) => {
+  const r = replies[opts.label]
+  if (r instanceof Error) throw r
+  return r === undefined ? null : r
+}
+const half1 = { lenses: { correctness: { checked: ['src/parse.ts'], findings: [finding('blocker')] }, gaps: { checked: ['src/view.ts'], findings: [] } }, summary: 'one' }
+const half2 = { lenses: { fit: { checked: ['src/view.ts'], findings: [finding('nit')] }, access: { checked: ['src/parse.ts'], findings: [finding('should-fix')] } }, summary: 'two' }
+const accessLens = [{ key: 'access', focus: 'who may read what' }]
+
+await test('split: two critics, each asked only its own lenses, merged into one result', async () => {
+  const { calls, result } = await run(baseArgs({ split: true, lenses: accessLens }), byLabel({ 'critic:1': half1, 'critic:2': half2 }))
+  assert.deepEqual(calls.map(c => c.opts.label).sort(), ['critic:1', 'critic:2'])
+  const call = label => calls.find(c => c.opts.label === label)
+  assert.deepEqual(call('critic:1').opts.schema.properties.lenses.required, ['correctness', 'gaps'])
+  assert.deepEqual(call('critic:2').opts.schema.properties.lenses.required, ['fit', 'access'])
+  for (const key of ['correctness', 'gaps']) assert.match(call('critic:1').prompt, new RegExp(`^- ${key}: `, 'm'))
+  for (const key of ['fit', 'access']) assert.doesNotMatch(call('critic:1').prompt, new RegExp(`^- ${key}: `, 'm'))
+  assert.match(call('critic:2').prompt, /^- fit: /m)
+  assert.match(call('critic:2').prompt, /^- access: who may read what/m)
+  for (const key of ['correctness', 'gaps']) assert.doesNotMatch(call('critic:2').prompt, new RegExp(`^- ${key}: `, 'm'))
+  assert.deepEqual(Object.keys(result.lenses).sort(), ['access', 'correctness', 'fit', 'gaps'])
+  assert.deepEqual(result.lenses.fit, half2.lenses.fit)
+  assert.deepEqual(result.counts, { blocker: 1, shouldFix: 1, nit: 1 })
+  assert.equal(result.needsRound2, true)
+  assert.equal(result.summary, 'one two')
+  assert.deepEqual(Object.keys(result.ranOnAgents).sort(), ['critic:1', 'critic:2'])
+  assert.equal('missingLenses' in result, false)
+  assert.equal('fallback' in result, false)
+})
+
+await test('split: a half that gives nothing is named, and both halves empty is an error', async () => {
+  const one = await run(baseArgs({ split: true }), byLabel({ 'critic:1': half1 }))
+  assert.deepEqual(one.result.missingLenses, ['fit'])
+  assert.deepEqual(Object.keys(one.result.lenses).sort(), ['correctness', 'gaps'])
+  assert.equal(one.result.error, undefined)
+  const none = await run(baseArgs({ split: true, round: 'final', changes: 'x' }), byLabel({}))
+  assert.deepEqual(none.result, { round: 'final', error: 'the critic returned nothing; run the final check again' })
+})
+
+await test("split: a half whose structured answer fails is asked again per line, kept to its own lenses", async () => {
+  const lines = [
+    '{"lens":"gaps","severity":"nit","claim":"c","evidence":"e","minimalFix":"f"}',
+    '{"lens":"fit","severity":"nit","claim":"c","evidence":"e","minimalFix":"f"}',
+    '{"summary":"one"}',
+  ].join('\n')
+  const { calls, result } = await run(baseArgs({ split: true }), byLabel({ 'critic:1': new Error('StructuredOutput retry cap (5) exceeded'), 'critic:1:lines': lines, 'critic:2': half2 }))
+  assert.equal(calls.find(c => c.opts.label === 'critic:1:lines').opts.schema, undefined)
+  assert.equal(result.fallback, 'lines')
+  assert.deepEqual(result.lenses.gaps.findings, [{ severity: 'nit', claim: 'c', evidence: 'e', minimalFix: 'f' }])
+  assert.deepEqual(result.lenses.fit, half2.lenses.fit)
+  assert.deepEqual(result.unparsed, ['{"lens":"fit","severity":"nit","claim":"c","evidence":"e","minimalFix":"f"}'])
+  assert.deepEqual(Object.keys(result.ranOnAgents).sort(), ['critic:1', 'critic:1:lines', 'critic:2'])
 })
 
 await test("a round other than 1, 2 or 'final' is refused by name", async () => {
