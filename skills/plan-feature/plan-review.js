@@ -25,9 +25,9 @@ const MAX_LENSES = 3
 const MAX_FINDINGS = 10
 const READ_ONLY = 'YOU ARE READ-ONLY: do not create, edit or delete any file; no builds, tests, git, deploys or writes to any database or service. Only read and search.'
 const DEFAULT_LENSES = [
-  { key: 'correctness', focus: 'correctness against the actual code (verify every signature and behaviour the plan assumes by reading it), edge cases, tests or invariants that could pass wrongly, YAGNI.' },
-  { key: 'fit', focus: 'whether the plan agrees with the existing code and the project rules (naming, structure, the docs that must change), and every mismatch in the shapes and names it uses.' },
-  { key: 'gaps', focus: 'what the plan leaves out from the requirements and the task, contradictions inside it, checkpoints that cannot be measured, and whether everything still builds and passes after each checkpoint.' },
+  { key: 'correctness', focus: 'correctness against the actual code (verify every signature and behaviour the plan assumes by reading it), edge cases, tests or invariants that could pass wrongly (an expected value worked out the way the code works it out, a test that reaches past the public interface), YAGNI.' },
+  { key: 'fit', focus: 'whether the plan agrees with the existing code and the project rules (naming, structure, the docs that must change), every mismatch in the shapes and names it uses, and a new module or seam that does not earn its place (deleting it would move no complexity into its callers; nothing varies across it, not even a test stand-in).' },
+  { key: 'gaps', focus: 'what the plan leaves out from the requirements and the task, a requirement or premise the code contradicts (quote both), a bug fix whose checkpoint does not start by reproducing the symptom, with no stated reason none can, contradictions inside it, checkpoints that cannot be measured, and whether everything still builds and passes after each checkpoint.' },
 ]
 const FINDING = {
   type: 'object',
@@ -88,6 +88,37 @@ const SCHEMA = {
   required: ['lenses', 'summary'],
 }
 
+// agent({schema}) throws once the critic's answer has failed validation too often: one bad character anywhere in a
+// long nested answer is enough. The critic is then asked once more for one JSON object per line, so a bad line costs
+// only itself: a lone backslash (a Windows path) is doubled and the line parsed again, and a line that still won't
+// parse is returned as raw text under unparsed, for the main session to read like the rest.
+const LINES_FORMAT = 'Answer in JSON Lines: one JSON object per line and nothing else. For each lens, one line {"lens": "<key>", "checked": [<the files it checked>]}. For each finding, one line {"lens": "<key>", "severity": "blocker" | "should-fix" | "nit", "claim": "...", "evidence": "...", "minimalFix": "...", "file": "...", "line": <number>} (file and line only where there is one). Last, one line {"summary": "..."}. Write paths with forward slashes.'
+const parseLine = (line) => {
+  for (const text of [line, line.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\')]) {
+    try { const v = JSON.parse(text); if (v && typeof v === 'object' && !Array.isArray(v)) return v } catch {}
+  }
+  return null
+}
+const isFinding = (f) => FINDING.properties.severity.enum.includes(f.severity) && FINDING.required.every(k => typeof f[k] === 'string' && f[k].trim())
+const fromLines = (text) => {
+  const out = Object.fromEntries(lenses.map(l => [l.key, { checked: [], findings: [] }]))
+  const unparsed = []
+  let summary = ''
+  let any = false
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('```')) continue
+    any = true
+    const v = parseLine(line)
+    const { lens, ...rest } = v || {}
+    if (v && !lens && typeof v.summary === 'string') summary = v.summary
+    else if (v && out[lens] && Array.isArray(v.checked)) out[lens].checked.push(...v.checked.filter(f => typeof f === 'string'))
+    else if (v && out[lens] && isFinding(rest)) out[lens].findings.push(rest)
+    else unparsed.push(line)
+  }
+  return any ? { lenses: out, summary, unparsed } : null
+}
+
 const roundTwo = a.round === 2
   ? `\nTHIS IS ROUND 2. Round 1 found:\n${JSON.stringify(a.previous.findings, null, 1)}\nWhat changed since:\n${a.previous.changes}\nCheck these changes hardest, and whether the fixes broke something. Don't repeat a finding the changes fixed.\n`
   : isFinal
@@ -112,10 +143,20 @@ Each finding: BLOCKER (would break, contradict the code or the requirements, or 
 phase('Review')
 log(`${isFinal ? 'final check' : `round ${a.round}`}: one critic, ${lenses.length} lenses, ${a.files.length} files to read first`)
 log(`ran on: critic ${ranOn.critic.model}/${ranOn.critic.effort}`)
-const review = await agent(prompt, { label: 'critic', phase: 'Review', ...ranOn.critic, schema: SCHEMA })
+let review
+let byLines = false
+try {
+  review = await agent(prompt, { label: 'critic', phase: 'Review', ...ranOn.critic, schema: SCHEMA })
+} catch (e) {
+  log(`the critic's structured answer failed (${String((e && e.message) || e).slice(0, 120)}); asking for it again, one finding per line`)
+  byLines = true
+  review = fromLines(await agent(`${prompt}\n\n${LINES_FORMAT}`, { label: 'critic:lines', phase: 'Review', ...ranOn.critic }))
+}
 if (!review) return { round: a.round, error: `the critic returned nothing; run ${isFinal ? 'the final check' : 'this round'} again` }
 
 const all = Object.values(review.lenses || {}).flatMap(l => (l && Array.isArray(l.findings) ? l.findings : []))
 const count = (s) => all.filter(f => f && f.severity === s).length
 const counts = { blocker: count('blocker'), shouldFix: count('should-fix'), nit: count('nit') }
-return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ranOn, ranOnAgents: { critic: ranOn.critic } }
+const fallback = byLines ? { fallback: 'lines', unparsed: review.unparsed } : {}
+const ranOnAgents = byLines ? { critic: ranOn.critic, 'critic:lines': ranOn.critic } : { critic: ranOn.critic }
+return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ...fallback, ranOn, ranOnAgents }
