@@ -6,7 +6,7 @@ argument-hint: <task to plan>
 
 Plan (small): $ARGUMENTS
 
-"You" below is the main session: you scout, plan and review the plan yourself, with no review agent, so it stays fast and costs a fraction of the tokens. If the task spans several subsystems or carries real risk (data migrations, access rules, a shared environment), ask with AskUserQuestion whether to switch to `/ccinformer:plan-feature`, and wait for the answer; on a yes, continue there with the same task.
+"You" below is the main session: you scout, plan and review the plan yourself, with no review agent, so it stays fast and costs a fraction of the tokens. If the task spans several subsystems or carries real risk (data migrations, access rules, a shared environment), ask with AskUserQuestion whether to switch to `/ccinformer:plan-feature-medium` (two critic agents review the plan) or `/ccinformer:plan-feature` (a full workflow of agents), and wait for the answer; on a choice, continue there with the same task.
 
 1. Plan mode must be on. If it isn't, stop and ask the user to switch to it (Shift+Tab until the bottom of the screen says plan mode), then run the command again.
 2. Read what the task needs, and only that:
@@ -36,7 +36,7 @@ Plan (small): $ARGUMENTS
    - **Each finding** is a blocker (would break, contradict the code or the requirements, or skip a needed approval), a should-fix or a nit, with its file and line where there is one. Fold the real ones into the plan file, and keep one line on each blocker and should-fix for Context, starting `[main session]`.
    - **Rounds.** Go again after a round that found a blocker or changed the contract, a checkpoint or a "done when", checking those changes hardest and whether a fix broke something else. Stop after a round with no blocker and no such change; three rounds at most, and what is still open after the third is listed in the plan as open.
 
-   If the review shows the task is larger or riskier than it looked, ask the same; on a yes, continue in `/ccinformer:plan-feature` with this plan file as its prior findings.
+   If the review shows the task is larger or riskier than it looked, ask the same; on a choice, continue in that skill with this plan file as its prior findings.
 6. Ask the real decisions with AskUserQuestion, the recommended option first; take defaults for the rest and list them in the plan. Ask in rounds: each round asks only the decisions whose prerequisites are settled (at most 4 per AskUserQuestion call); one that hangs on an open decision or a running lookup waits for the next round. When an option adds scope, its description gives its size (small, medium, large, and why).
 7. Finish the plan file:
    - **Check every late change.** A change after your last round (an answer, a fix) is checked the same way: against the code, against intent, and for a broken cross-reference, checkpoint or "done when". Go again while a check changes something, twice at most; name what is left, and anything after it (such as feedback on ExitPlanMode), in Context as unreviewed.

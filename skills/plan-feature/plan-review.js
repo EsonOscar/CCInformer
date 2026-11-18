@@ -1,15 +1,16 @@
 export const meta = {
   name: 'plan-review',
-  description: 'One read-only critic reviews a drafted plan against the code, every lens in its own section',
-  whenToUse: "Run by the CCInformer plan-feature and plan-handoff skills for the final check (round: 'final'), in plan mode; rounds 1 and 2 review a whole drafted plan, which no skill asks for at present. Args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final), agents?}; agents is {critic?: {model?, effort?}}",
-  phases: [{ title: 'Review', detail: 'one adversarial critic, every lens', model: 'opus' }],
+  description: 'Read-only critics review a drafted plan against the code, every lens in its own section: one critic, or two with the lenses split',
+  whenToUse: "Run by the CCInformer planning skills in plan mode: plan-feature and plan-handoff for the final check (round: 'final'); plan-feature-medium for its rounds 1 and 2 and its final check, with split: true. Args {context, requirements, plan, files, round: 1 | 2 | 'final', lenses?, previous? (round 2), changes? (final), split?, agents?}; agents is {critic?: {model?, effort?}}",
+  phases: [{ title: 'Review', detail: 'adversarial critics, every lens', model: 'opus' }],
 }
 
-// One critic, kept fast. It reads the plan file and the files the plan touches, and goes further only to back up a
-// finding. plan-feature and plan-handoff run it as their final check (round 'final'): once the main session has folded
+// Kept fast. A critic reads the plan file and the files the plan touches, and goes further only to back up a finding.
+// plan-feature and plan-handoff run one critic as their final check (round 'final'): once the main session has folded
 // in the last review and the user's answers, it looks only at what changed since, once, with no round after.
-// Rounds 1 and 2 review a whole drafted plan (a second round for a blocker only, needsRound2, and never a third);
-// plan-feature-small ran them until it began reviewing its own plan, and no skill calls them now.
+// Rounds 1 and 2 review a whole drafted plan (a second round for a blocker only, needsRound2, and never a third).
+// plan-feature-medium runs rounds 1, 2 and the final check with split: two critics in parallel, one on correctness and
+// gaps, one on fit and the extra lenses, merged into the same result as one critic gives.
 const MODEL = 'opus'
 const EFFORT = 'medium'
 // The critic runs on Opus at high effort at most, whatever is asked for: a model or effort above that, or one not on
@@ -61,6 +62,14 @@ if (new Set(extra.map(l => l.key)).size !== extra.length) fail('lens keys must d
 if (a.round === 2 && (!a.previous || !Array.isArray(a.previous.findings) || typeof a.previous.changes !== 'string'))
   fail('round 2 needs previous: {findings, changes}')
 const lenses = [...DEFAULT_LENSES, ...extra]
+const split = a.split === true
+const FIRST_HALF = ['correctness', 'gaps']
+const critics = split
+  ? [
+    { label: 'critic:1', lenses: lenses.filter(l => FIRST_HALF.includes(l.key)) },
+    { label: 'critic:2', lenses: lenses.filter(l => !FIRST_HALF.includes(l.key)) },
+  ]
+  : [{ label: 'critic', lenses }]
 // What the person set for the critic (agents: {critic: {model?, effort?}}, from the skills' settings file, passed on
 // by the skill); a value left out is the default above.
 const set = a.agents && typeof a.agents === 'object' && a.agents.critic && typeof a.agents.critic === 'object' ? a.agents.critic : {}
@@ -68,12 +77,12 @@ const set = a.agents && typeof a.agents === 'object' && a.agents.critic && typeo
 // the critic's effort from there (the record itself names only its model).
 const ranOn = { critic: capped(set.model || MODEL, set.effort || EFFORT) }
 
-const SCHEMA = {
+const schemaFor = (ls) => ({
   type: 'object',
   properties: {
     lenses: {
       type: 'object',
-      properties: Object.fromEntries(lenses.map(l => [l.key, {
+      properties: Object.fromEntries(ls.map(l => [l.key, {
         type: 'object',
         properties: {
           checked: { type: 'array', items: { type: 'string' }, description: 'The files this lens checked the plan against' },
@@ -81,12 +90,12 @@ const SCHEMA = {
         },
         required: ['checked', 'findings'],
       }])),
-      required: lenses.map(l => l.key),
+      required: ls.map(l => l.key),
     },
     summary: { type: 'string', description: 'At most three sentences' },
   },
   required: ['lenses', 'summary'],
-}
+})
 
 // agent({schema}) throws once the critic's answer has failed validation too often: one bad character anywhere in a
 // long nested answer is enough. The critic is then asked once more for one JSON object per line, so a bad line costs
@@ -100,8 +109,9 @@ const parseLine = (line) => {
   return null
 }
 const isFinding = (f) => FINDING.properties.severity.enum.includes(f.severity) && FINDING.required.every(k => typeof f[k] === 'string' && f[k].trim())
-const fromLines = (text) => {
-  const out = Object.fromEntries(lenses.map(l => [l.key, { checked: [], findings: [] }]))
+// A critic's own lenses only: a line naming another lens stays in unparsed.
+const fromLines = (text, ls) => {
+  const out = Object.fromEntries(ls.map(l => [l.key, { checked: [], findings: [] }]))
   const unparsed = []
   let summary = ''
   let any = false
@@ -124,7 +134,7 @@ const roundTwo = a.round === 2
   : isFinal
     ? `\nTHIS IS THE FINAL CHECK. The plan was reviewed before; since then the main session made these changes:\n${a.changes.trim()}\nCheck only these changes: is each one right against the code, and did it break anything else in the plan (a cross-reference, another checkpoint, the contract, a "done when" or test that would now pass wrongly)? Also flag a part these changes depend on that looks altered but isn't listed. Don't re-review the rest of the plan.\n`
     : ''
-const prompt = `${a.context}
+const promptFor = (ls) => `${a.context}
 
 REQUIREMENTS (judge the plan against these):
 ${a.requirements}
@@ -136,27 +146,40 @@ ${a.files.map(f => `- ${f}`).join('\n')}
 Go beyond them only to back up a finding: this review must be quick.
 ${roundTwo}
 You are an ADVERSARIAL REVIEWER. Assume the plan is wrong until the code says otherwise. Review it through each lens, and fill every lens's section, with the files it checked:
-${lenses.map(l => `- ${l.key}: ${l.focus}`).join('\n')}
+${ls.map(l => `- ${l.key}: ${l.focus}`).join('\n')}
 
 Each finding: BLOCKER (would break, contradict the code or the requirements, or skip a needed approval), SHOULD-FIX or NIT, with evidence (file and line where there is one) and the minimal fix. Don't restate the plan. At most about ${MAX_FINDINGS} findings in all, the most serious first.`
 
-phase('Review')
-log(`${isFinal ? 'final check' : `round ${a.round}`}: one critic, ${lenses.length} lenses, ${a.files.length} files to read first`)
-log(`ran on: critic ${ranOn.critic.model}/${ranOn.critic.effort}`)
-let review
-let byLines = false
-try {
-  review = await agent(prompt, { label: 'critic', phase: 'Review', ...ranOn.critic, schema: SCHEMA })
-} catch (e) {
-  log(`the critic's structured answer failed (${String((e && e.message) || e).slice(0, 120)}); asking for it again, one finding per line`)
-  byLines = true
-  review = fromLines(await agent(`${prompt}\n\n${LINES_FORMAT}`, { label: 'critic:lines', phase: 'Review', ...ranOn.critic }))
+// One critic's review of its own lenses, or null. Every agent() call is recorded by its label in ranOnAgents.
+const ranOnAgents = {}
+const reviewBy = async (c) => {
+  const prompt = promptFor(c.lenses)
+  try {
+    ranOnAgents[c.label] = ranOn.critic
+    const r = await agent(prompt, { label: c.label, phase: 'Review', ...ranOn.critic, schema: schemaFor(c.lenses) })
+    return r && { lenses: Object.fromEntries(c.lenses.map(l => [l.key, r.lenses && r.lenses[l.key]])), summary: r.summary }
+  } catch (e) {
+    log(`${c.label}: the structured answer failed (${String((e && e.message) || e).slice(0, 120)}); asking for it again, one finding per line`)
+    ranOnAgents[`${c.label}:lines`] = ranOn.critic
+    const r = fromLines(await agent(`${prompt}\n\n${LINES_FORMAT}`, { label: `${c.label}:lines`, phase: 'Review', ...ranOn.critic }), c.lenses)
+    return r && { ...r, byLines: true }
+  }
 }
-if (!review) return { round: a.round, error: `the critic returned nothing; run ${isFinal ? 'the final check' : 'this round'} again` }
 
-const all = Object.values(review.lenses || {}).flatMap(l => (l && Array.isArray(l.findings) ? l.findings : []))
+phase('Review')
+log(`${isFinal ? 'final check' : `round ${a.round}`}: ${split ? 'two critics' : 'one critic'}, ${lenses.length} lenses, ${a.files.length} files to read first`)
+log(`ran on: critic ${ranOn.critic.model}/${ranOn.critic.effort}`)
+const reviews = await Promise.all(critics.map(reviewBy))
+const got = reviews.filter(Boolean)
+if (!got.length) return { round: a.round, error: `the critic returned nothing; run ${isFinal ? 'the final check' : 'this round'} again` }
+
+const merged = Object.assign({}, ...got.map(r => r.lenses))
+const all = Object.values(merged).flatMap(l => (l && Array.isArray(l.findings) ? l.findings : []))
 const count = (s) => all.filter(f => f && f.severity === s).length
 const counts = { blocker: count('blocker'), shouldFix: count('should-fix'), nit: count('nit') }
-const fallback = byLines ? { fallback: 'lines', unparsed: review.unparsed } : {}
-const ranOnAgents = byLines ? { critic: ranOn.critic, 'critic:lines': ranOn.critic } : { critic: ranOn.critic }
-return { round: a.round, lenses: review.lenses, summary: review.summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ...fallback, ranOn, ranOnAgents }
+const fallback = got.some(r => r.byLines) ? { fallback: 'lines', unparsed: got.flatMap(r => r.unparsed || []) } : {}
+// A split half that gave nothing: its lenses are named, for the main session to check itself.
+const missingLenses = reviews.flatMap((r, i) => (r ? [] : critics[i].lenses.map(l => l.key)))
+const missing = missingLenses.length ? { missingLenses } : {}
+const summary = got.map(r => r.summary).filter(Boolean).join(' ')
+return { round: a.round, lenses: merged, summary, counts, needsRound2: a.round === 1 && counts.blocker > 0, ...fallback, ...missing, ranOn, ranOnAgents }

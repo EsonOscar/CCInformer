@@ -1,6 +1,6 @@
 # Planning settings
 
-How the CCInformer planning skills (`/ccinformer:plan-feature`, `/ccinformer:plan-feature-small`, `/ccinformer:plan-handoff`) plan in this repo. This file is private to this clone: it lives in `.local/`, which git ignores. If the repo also has a committed `## Planning` section in its CLAUDE.md (or a `.claude/planning.md`), that is read first and this file adds to it or overrides it. Delete a section to fall back to the skills' defaults.
+How the CCInformer planning skills (`/ccinformer:plan-feature`, `/ccinformer:plan-feature-medium`, `/ccinformer:plan-feature-small`, `/ccinformer:plan-handoff`) plan in this repo. This file is private to this clone: it lives in `.local/`, which git ignores. If the repo also has a committed `## Planning` section in its CLAUDE.md (or a `.claude/planning.md`), that is read first and this file adds to it or overrides it. Delete a section to fall back to the skills' defaults.
 
 ## Checks
 
