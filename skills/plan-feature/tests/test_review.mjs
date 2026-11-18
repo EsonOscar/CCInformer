@@ -80,6 +80,32 @@ await test('every lens, an extra one too, is a required section and named in the
   assert.match(calls[0].prompt, /- access: who may read what/)
 })
 
+// What each default lens must ask about, beyond its basics: tests that pass wrongly, seams that don't earn their place,
+// premises the code contradicts and bug fixes with no repro. plan-fanout's critics carry the same clauses
+// (test_agents.mjs), and plan-feature-small's lens list repeats them by hand.
+const LENS_CLAUSES = {
+  correctness: [/worked out the way the code works it out/, /past the public interface/],
+  fit: [/deleting it would move no complexity/, /not even a test stand-in/],
+  gaps: [/premise the code contradicts \(quote both\)/, /stated reason none can/],
+}
+for (const [key, clauses] of Object.entries(LENS_CLAUSES))
+  await test(`the ${key} lens carries its clauses`, async () => {
+    const { calls } = await run(baseArgs(), () => review())
+    const line = calls[0].prompt.match(new RegExp(`^- ${key}: .*$`, 'm'))?.[0] ?? ''
+    const missing = clauses.filter(c => !c.test(line))
+    assert.deepEqual(missing, [], `${key} lacks ${missing.join(', ')}`)
+  })
+
+// Both building skills follow one rules file from plan approval to the finish, so a pointer that goes stale would
+// silently drop every build rule.
+await test('plan-feature and plan-feature-small point at the build rules, which exist with their three parts', async () => {
+  const skills = join(here, '..', '..')
+  assert.match(readFileSync(join(skills, 'plan-feature', 'SKILL.md'), 'utf8'), /read `build-rules\.md` next to this file/)
+  assert.match(readFileSync(join(skills, 'plan-feature-small', 'SKILL.md'), 'utf8'), /`\.\.\/plan-feature\/build-rules\.md` from this file/)
+  const rules = readFileSync(join(here, '..', 'build-rules.md'), 'utf8')
+  for (const heading of ['## Before the first checkpoint', '## While building', '## Finish']) assert.ok(rules.includes(heading), heading)
+})
+
 await test('the prompt names the plan file and the files to read first, and stays read-only', async () => {
   const { calls } = await run(baseArgs(), () => review())
   const { prompt } = calls[0]
@@ -113,6 +139,44 @@ await test('counts, and a second round only after a blocker in round 1', async (
 await test('a critic that returns nothing asks for the round again', async () => {
   const { result } = await run(baseArgs(), () => null)
   assert.deepEqual(result, { round: 1, error: 'the critic returned nothing; run this round again' })
+})
+
+// agent({schema}) throws once the structured answer has failed validation too often (one bad character anywhere in a
+// long nested answer is enough). The critic is then asked again for one JSON object per line: a bad line costs only
+// itself, a lone backslash (a Windows path) is repaired, and a line that still won't parse is kept as raw text.
+const LINES = [
+  '```jsonl',
+  '{"lens":"correctness","checked":["src/parse.ts"]}',
+  '{"lens":"fit","severity":"should-fix","claim":"c","evidence":"e","minimalFix":"f","file":"C:\\Users\\dev\\src\\view.ts","line":3}',
+  'not json at all',
+  '{"lens":"nobody","severity":"nit","claim":"c","evidence":"e","minimalFix":"f"}',
+  '{"summary":"s"}',
+  '```',
+].join('\n')
+const throwsOnSchema = (lines) => (prompt, opts) => {
+  if (opts.schema) throw new Error('StructuredOutput retry cap (5) exceeded')
+  return lines
+}
+
+await test('a structured answer that fails is asked for again one finding per line, and nothing in it is lost', async () => {
+  const { calls, result } = await run(baseArgs({ round: 'final', changes: 'x' }), throwsOnSchema(LINES))
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].opts.schema, undefined)
+  assert.match(calls[1].prompt, /JSON Lines/)
+  assert.match(calls[1].prompt, /THIS IS THE FINAL CHECK/)
+  assert.equal(result.fallback, 'lines')
+  assert.deepEqual(result.lenses.correctness, { checked: ['src/parse.ts'], findings: [] })
+  assert.deepEqual(result.lenses.fit.findings, [{ severity: 'should-fix', claim: 'c', evidence: 'e', minimalFix: 'f', file: 'C:\\Users\\dev\\src\\view.ts', line: 3 }])
+  assert.deepEqual(result.lenses.gaps, { checked: [], findings: [] })
+  assert.equal(result.summary, 's')
+  assert.deepEqual(result.unparsed, ['not json at all', '{"lens":"nobody","severity":"nit","claim":"c","evidence":"e","minimalFix":"f"}'])
+  assert.deepEqual(result.counts, { blocker: 0, shouldFix: 1, nit: 0 })
+  assert.deepEqual(Object.keys(result.ranOnAgents), ['critic', 'critic:lines'])
+})
+
+await test('when the per-line answer gives nothing either, the check asks to be run again instead of throwing', async () => {
+  for (const lines of [null, '', '```\n```'])
+    assert.deepEqual((await run(baseArgs({ round: 'final', changes: 'x' }), throwsOnSchema(lines))).result, { round: 'final', error: 'the critic returned nothing; run the final check again' })
 })
 
 await test("a round other than 1, 2 or 'final' is refused by name", async () => {

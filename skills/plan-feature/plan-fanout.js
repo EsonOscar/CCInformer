@@ -45,9 +45,9 @@ const ROLES = {
 }
 const READ_ONLY = 'YOU ARE READ-ONLY: do not create, edit or delete any file; no builds, tests, git, deploys or writes to any database or service. Only read and search.'
 const DEFAULT_CRITICS = [
-  { key: 'correctness', focus: 'correctness against the actual code (verify every signature and behaviour a plan assumes by reading it), determinism, edge cases, tests or invariants that could pass wrongly or only repeat the code, magic numbers, YAGNI.' },
-  { key: 'fit', focus: 'whether the plans agree with each other and with the existing code (list every mismatch in the interface between planners, including data shapes, columns and API payloads), naming and project rules, and whether the docs updates are complete.' },
-  { key: 'gaps', focus: 'what no plan covers (from the requirements, the task, the scout reports or the design docs), contradictions between plans, unmeasurable checkpoints, and ordering risks between the checkpoints (does everything still build and pass after each one?).' },
+  { key: 'correctness', focus: 'correctness against the actual code (verify every signature and behaviour a plan assumes by reading it), determinism, edge cases, tests or invariants that could pass wrongly (an expected value worked out the way the code works it out, a test that reaches past the public interface), magic numbers, YAGNI.' },
+  { key: 'fit', focus: 'whether the plans agree with each other and with the existing code (list every mismatch in the interface between planners, including data shapes, columns and API payloads), naming and project rules, whether the docs updates are complete, and a new module or seam that does not earn its place (deleting it would move no complexity into its callers; nothing varies across it, not even a test stand-in).' },
+  { key: 'gaps', focus: 'what no plan covers (from the requirements, the task, the scout reports or the design docs), a requirement or premise the code contradicts (quote both), a bug fix whose checkpoint does not start by reproducing the symptom, with no stated reason none can, contradictions between plans, unmeasurable checkpoints, and ordering risks between the checkpoints (does everything still build and pass after each one?).' },
 ]
 // Structured findings, so the main session can check each one against the code and none gets lost in prose.
 const CRITIQUE_SCHEMA = {
@@ -84,11 +84,53 @@ const checkList = (name, list) => {
 }
 const section = (kind, items, field) => items.map(x => `### ${kind}: ${x.key}\n${x[field]}`).join('\n\n')
 
-const critique = (subject) => parallel(critics.map(c => () =>
-  agent(`${context}${requirements}\n${READ_ONLY}\n${subject}\n\nYou are an ADVERSARIAL REVIEWER. Assume the plans are wrong until the code says otherwise. Focus: ${c.focus}\nReturn your findings: BLOCKERS (would break, contradict the code or the requirements, or skip a needed approval), SHOULD-FIX, NITS. Each with evidence (file and line where there is one) and the minimal fix. Don't restate the plans. At most about 15 findings.`,
-    { label: `critic:${c.key}`, phase: 'Critique', schema: CRITIQUE_SCHEMA, ...on(`critic:${c.key}`, ROLES.critic) })
-    .then(r => r && { key: c.key, ...r })))
+// agent({schema}) throws once a critic's answer has failed validation too often: one bad character anywhere in the
+// answer is enough. That critic is then asked once more for one JSON object per line, so a bad line costs only itself:
+// a lone backslash (a Windows path) is doubled and the line parsed again, and a line that still won't parse is returned
+// as raw text under unparsed. A critic that gives nothing either way is listed in missingCritics, never dropped silently.
+const LINES_FORMAT = 'Answer in JSON Lines: one JSON object per line and nothing else. For each finding, one line {"severity": "blocker" | "should-fix" | "nit", "claim": "...", "evidence": "...", "minimalFix": "...", "planner": "...", "file": "...", "line": <number>} (planner, file and line only where there is one). Last, one line {"summary": "..."}. Write paths with forward slashes.'
+const FINDING = CRITIQUE_SCHEMA.properties.findings.items
+const parseLine = (line) => {
+  for (const text of [line, line.replace(/\\(?!["\\/bfnrt]|u[0-9a-fA-F]{4})/g, '\\\\')]) {
+    try { const v = JSON.parse(text); if (v && typeof v === 'object' && !Array.isArray(v)) return v } catch {}
+  }
+  return null
+}
+const isFinding = (f) => FINDING.properties.severity.enum.includes(f.severity) && FINDING.required.every(k => typeof f[k] === 'string' && f[k].trim())
+const fromLines = (text) => {
+  const findings = []
+  const unparsed = []
+  let summary = ''
+  let any = false
+  for (const raw of String(text || '').split('\n')) {
+    const line = raw.trim()
+    if (!line || line.startsWith('```')) continue
+    any = true
+    const v = parseLine(line)
+    if (v && isFinding(v)) findings.push(v)
+    else if (v && typeof v.summary === 'string') summary = v.summary
+    else unparsed.push(line)
+  }
+  return any ? { findings, summary, fallback: 'lines', unparsed } : null
+}
+
+const critique = (subject) => parallel(critics.map(c => async () => {
+  const prompt = `${context}${requirements}\n${READ_ONLY}\n${subject}\n\nYou are an ADVERSARIAL REVIEWER. Assume the plans are wrong until the code says otherwise. Focus: ${c.focus}\nReturn your findings: BLOCKERS (would break, contradict the code or the requirements, or skip a needed approval), SHOULD-FIX, NITS. Each with evidence (file and line where there is one) and the minimal fix. Don't restate the plans. At most about 15 findings.`
+  let r
+  try {
+    r = await agent(prompt, { label: `critic:${c.key}`, phase: 'Critique', schema: CRITIQUE_SCHEMA, ...on(`critic:${c.key}`, ROLES.critic) })
+  } catch (e) {
+    log(`critic:${c.key}: its structured answer failed (${String((e && e.message) || e).slice(0, 120)}); asking for it again, one finding per line`)
+    r = fromLines(await agent(`${prompt}\n\n${LINES_FORMAT}`, { label: `critic:${c.key}:lines`, phase: 'Critique', ...on(`critic:${c.key}:lines`, ROLES.critic) }))
+  }
+  return r && { key: c.key, ...r }
+}))
   .then(rs => rs.filter(Boolean))
+const missingOf = (critiques) => {
+  const missing = critics.filter(c => !critiques.some(r => r.key === c.key)).map(c => c.key)
+  if (missing.length) log(`missing critiques: ${missing.join(', ')}; re-run those lenses as a re-check`)
+  return missing
+}
 
 checkList('critics', critics)
 
@@ -99,7 +141,7 @@ if (args.recheck) {
   log(ranOnLine(ranOn))
   phase('Critique')
   const critiques = await critique(`The REVISED PLAN:\n\n${args.recheck.plan}\n\nWhat changed since the first review (check these hardest, and whether the fixes introduced new problems):\n${args.recheck.changes}`)
-  return { critiques, ranOn, ranOnAgents }
+  return { critiques, missingCritics: missingOf(critiques), ranOn, ranOnAgents }
 }
 
 const { scouts, planners } = args
@@ -112,7 +154,7 @@ log(ranOnLine(ROLES))
 
 phase('Scout')
 const reports = (await parallel(scouts.map(s => () =>
-  agent(`${context}${requirements}${priorFindings}\n${READ_ONLY}\nSCOUT DOMAIN: ${s.brief}\nReturn a dense report (headings and bullets), at most about 900 words, facts with file:line citations, then a short "Implications for the plan" list. For anything you report as absent (no callers, no other uses), say how you searched; mark what you couldn't confirm as unconfirmed.`,
+  agent(`${context}${requirements}${priorFindings}\n${READ_ONLY}\nSCOUT DOMAIN: ${s.brief}\nReturn a dense report (headings and bullets), at most about 900 words, facts with file:line citations, then a short "Implications for the plan" list. For anything you report as absent (no callers, no other uses), say how you searched; mark what you couldn't confirm as unconfirmed. A claim about a dependency's behaviour cites the installed package's code or types, or its official docs; else it is unconfirmed.`,
     { label: `scout:${s.key}`, phase: 'Scout', ...on(`scout:${s.key}`, capped(s.model || ROLES.scout.model, s.effort || ROLES.scout.effort)), ...(s.agentType ? { agentType: s.agentType } : {}) })
     .then(r => r && { key: s.key, report: r })))).filter(Boolean)
 const missingScouts = scouts.filter(s => !reports.some(r => r.key === s.key)).map(s => s.key)
@@ -128,10 +170,10 @@ Give:
 - the files another planner's domain also has to change (barrels, route tables, translation tables, config, shared types);
 - the data contract you touch (columns, constraints, access rules, API or JSON shapes, storage paths);
 - the user-facing texts (UI strings) you add;
-- checkpoints in build order, each with a measurable "done when";
+- checkpoints in build order, each a thin slice checkable on its own with a measurable "done when" (any prefactor first; a bug fix's checkpoint starting with a repro of the symptom and ending with the fix; a wide change as expand, migrate in batches, contract);
 - every action that writes to a shared environment, a database, a service or git, marked "NEEDS APPROVAL";
 - how it is deployed and rolled back, and what behaves differently after deploy;
-- the tests, especially those that encode business or access rules.
+- the tests, especially those that encode business or access rules, each with the seam it goes through.
 Say exactly what you need from or give to the other planners. List the defaults you took. End with "Open questions" (only real decisions, at most 5, each with your recommendation), split into "for the user" and "for other stakeholders". At most about 1500 words.`,
     { label: `plan:${p.key}`, phase: 'Plan', ...on(`plan:${p.key}`, ROLES.planner) }).then(r => r && { key: p.key, plan: r })
 }))).filter(Boolean)
@@ -147,4 +189,4 @@ phase('Critique')
 const critiques = await critique(`Scout reports:\n\n${section('Scout report', reports, 'report')}\n\nThe plans:\n\n${section('Plan', plans, 'plan')}`)
 
 log(`${reports.length + plans.length + critiques.length} agents returned`)
-return { reports, plans, missingScouts, missingPlanners, critiques, ranOn: ROLES, ranOnAgents }
+return { reports, plans, missingScouts, missingPlanners, critiques, missingCritics: missingOf(critiques), ranOn: ROLES, ranOnAgents }

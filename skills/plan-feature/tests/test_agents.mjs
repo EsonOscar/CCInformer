@@ -1,5 +1,6 @@
 // Runs the four workflow scripts with stub agents (no model calls) and holds what each kind of agent runs on: the
 // defaults the mod's Settings show (AGENT_ROLES), a value the person set, the cap, and what the script reports back.
+// It also holds the clauses plan-fanout's critic, scout and planner prompts must carry.
 // The registry is the mod's TypeScript, so this runs under tsx:
 //   npx -y tsx@4 skills/plan-feature/tests/test_agents.mjs
 import { readFileSync } from 'node:fs'
@@ -54,8 +55,8 @@ async function run(name, over = {}) {
   const calls = []
   const logs = []
   const agent = async (prompt, opts) => {
-    calls.push({ label: opts.label, role: script.role(opts.label), model: opts.model, effort: opts.effort })
-    return script.reply(opts.label)
+    calls.push({ label: opts.label, role: script.role(opts.label), model: opts.model, effort: opts.effort, prompt })
+    return script.reply(opts.label, opts)
   }
   const parallel = fns => Promise.all(fns.map(f => f()))
   const pipeline = (items, ...stages) => Promise.all(items.map(async item => {
@@ -161,6 +162,57 @@ await test('plan-fanout: a run that skips the critique for a missing plan still 
     assert.deepEqual(ranOnAgents, asked)
     assert.deepEqual(Object.keys(ranOnAgents).sort(), ['plan:p1', 'scout:s1', 'scout:s2'])
     assert.deepEqual(result.ranOn, defaultsOf('plan-fanout'))
+  } finally {
+    script.reply = reply
+  }
+})
+
+// The same clauses as plan-review's default lenses (test_review.mjs), here in each plan-fanout critic's Focus line.
+const LENS_CLAUSES = {
+  correctness: [/worked out the way the code works it out/, /past the public interface/],
+  fit: [/deleting it would move no complexity/, /not even a test stand-in/],
+  gaps: [/premise the code contradicts \(quote both\)/, /stated reason none can/],
+}
+const missingIn = (text, clauses) => clauses.filter(c => !c.test(text))
+const promptOf = (calls, label) => calls.find(c => c.label === label)?.prompt ?? ''
+
+for (const [key, clauses] of Object.entries(LENS_CLAUSES))
+  await test(`plan-fanout: the ${key} critic carries its clauses`, async () => {
+    const { calls } = await run('plan-fanout')
+    const focus = promptOf(calls, `critic:${key}`).match(/Focus: .*$/m)?.[0] ?? ''
+    assert.deepEqual(missingIn(focus, clauses), [], `critic:${key}`)
+  })
+
+await test("plan-fanout: a scout cites a dependency's own code or docs", async () => {
+  const { calls } = await run('plan-fanout')
+  assert.deepEqual(missingIn(promptOf(calls, 'scout:s1'), [/installed package's code or types, or its official docs/]), [])
+})
+
+await test('plan-fanout: a planner drafts thin checkpoints and names each test\'s seam', async () => {
+  const { calls } = await run('plan-fanout')
+  assert.deepEqual(missingIn(promptOf(calls, 'plan:p1'), [/thin slice checkable on its own/, /the seam it goes through/]), [])
+})
+
+// agent({schema}) throws once the structured answer has failed validation too often. A critic that does is asked
+// again for one finding per line; one that gives nothing even then is named, never dropped silently.
+await test('plan-fanout: a critic whose structured answer fails is asked again per line, and one that gives nothing is listed', async () => {
+  const script = SCRIPTS['plan-fanout']
+  const reply = script.reply
+  script.reply = (label, opts) => {
+    if ((label === 'critic:fit' || label === 'critic:gaps') && opts.schema) throw new Error('StructuredOutput retry cap (5) exceeded')
+    if (label === 'critic:fit:lines') return '{"severity":"nit","claim":"c","evidence":"e","minimalFix":"f","planner":"p1"}\n{"summary":"s"}'
+    if (label === 'critic:gaps:lines') return null
+    return reply(label, opts)
+  }
+  try {
+    const { calls, result, ranOnAgents, asked } = await run('plan-fanout')
+    assert.deepEqual(ranOnAgents, asked)
+    assert.equal(calls.find(c => c.label === 'critic:fit:lines').prompt.includes('JSON Lines'), true)
+    const fit = result.critiques.find(c => c.key === 'fit')
+    assert.deepEqual(fit.findings, [{ severity: 'nit', claim: 'c', evidence: 'e', minimalFix: 'f', planner: 'p1' }])
+    assert.equal(fit.summary, 's')
+    assert.equal(fit.fallback, 'lines')
+    assert.deepEqual(result.missingCritics, ['gaps'])
   } finally {
     script.reply = reply
   }
