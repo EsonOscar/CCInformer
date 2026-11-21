@@ -19,7 +19,8 @@ const HISTORY_RECORDS = 8
 // these).
 export type RunDeps = {
   projectsDir: string
-  selfId: string
+  // This session's id, then the ids it had before a /clear or /resume; read at each use, as either adds one.
+  selfIds: () => string[]
   runs: () => Promise<WorkflowRun[]>
   saveRuns: (change: (list: WorkflowRun[]) => WorkflowRun[]) => Promise<unknown>
   saveAgents: (change: (list: AgentRow[]) => AgentRow[]) => Promise<unknown>
@@ -43,7 +44,7 @@ export function createRuns($: EngineInterface, deps: RunDeps): Runs {
   // Records already read, by path, with the mtime they were read at.
   const readRecords = new Map<string, number>()
   const statsCache = new Map<string, { mtime: number; summary: RunSummary | null }>()
-  const sessionOf = (session: string) => (session === deps.selfId ? '' : session.slice(0, 8))
+  const sessionOf = (session: string) => (deps.selfIds().includes(session) ? '' : session.slice(0, 8))
 
   return {
     pollAgents: async () => {
@@ -62,8 +63,12 @@ export function createRuns($: EngineInterface, deps: RunDeps): Runs {
     checkRecords: async () => {
       const runs = await deps.runs()
       for (const run of runs.filter(r => !r.session && r.runId && !isFinished(r))) {
-        const path = `${deps.projectsDir}/${deps.selfId}/workflows/${run.runId}.json`
-        if (!(await $.fs.exists(path))) continue
+        let path = ''
+        for (const id of deps.selfIds()) {
+          const candidate = `${deps.projectsDir}/${id}/workflows/${run.runId}.json`
+          if (!path && (await $.fs.exists(candidate))) path = candidate
+        }
+        if (!path) continue
         const record = runFromRecord(await readText($, path), run.toolUseId, '')
         if (!record || !isFinished(record.run)) continue
         const done = { ...record.run, phases: record.run.phases.length ? record.run.phases : run.phases }
