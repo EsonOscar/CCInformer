@@ -161,6 +161,8 @@ const MAX_COMPACTIONS = 30
 
 // What the hooks learn about this session as it goes. Module variables: a hot reload starts them over.
 let selfId = ''
+// The ids this process had before a /clear or /resume, newest first: a run started under one has its record there.
+let pastIds: string[] = []
 let cwd = ''
 let lastActive = 0
 let isTurnRunning = false
@@ -445,6 +447,102 @@ async function answerPackTool(input: Record<string, unknown>): Promise<{ result:
     .checkDraft(draft)
     .then(report => ({ result: JSON.stringify(report, null, 2) }))
     .catch((err: unknown) => ({ result: 'check_pack failed: ' + (err instanceof Error ? err.message : String(err)) }))
+}
+
+// A /clear or /resume keeps the process, this module and the open pane, but the session goes on under a new id whose
+// state starts empty, and no session.start fires for it. So what isn't the conversation's own is read as the old
+// session ends and written back once the new one is there. Left to start over: the tool calls, requests and
+// compactions, the findings and what was dismissed, the selections, the open diff and the session approvals.
+// Nothing tells a mod that the new session began (the host sends the classic SessionStart hook past a mod of the
+// user tier), so the tick and /ccinformer ask whether the session id has moved while something is carried.
+// Each atom is named at its own read and write: the validator lists a module's state from those.
+async function readCarried($: EngineInterface) {
+  return {
+    area: await read($, areaAtom),
+    nowView: await read($, nowViewAtom),
+    codeView: await read($, codeViewAtom),
+    workView: await read($, workViewAtom),
+    debugView: await read($, debugViewAtom),
+    isOpen: await read($, isOpenAtom),
+    paneTop: await read($, paneTopAtom),
+    showAllFiles: await read($, showAllFilesAtom),
+    statsName: await read($, statsNameAtom),
+    now: await read($, nowAtom),
+    isActive: await read($, isActiveAtom),
+    version: await read($, versionAtom),
+    permissions: await read($, permissionsAtom),
+    skills: await read($, skillsAtom),
+    pack: await read($, packAtom),
+    packFailed: await read($, packFailedAtom),
+    gateRules: await read($, gateRulesAtom),
+    ciActive: await read($, ciActiveAtom),
+    git: await read($, gitAtom),
+    ci: await read($, ciAtom),
+    budgets: await read($, budgetsAtom),
+    plans: await read($, plansAtom),
+    stats: await read($, statsAtom),
+    runs: await read($, runsAtom),
+    agents: await read($, agentsAtom),
+    sessions: await read($, sessionsAtom),
+    envTasks: await read($, envTasksAtom),
+    shells: await read($, shellsAtom),
+    processes: await read($, processesAtom),
+    memory: await read($, memoryAtom),
+    telemetry: await read($, telemetryAtom),
+  }
+}
+let carried: Awaited<ReturnType<typeof readCarried>> | null = null
+
+// The new session takes up what was carried, and this session's entry for the others moves to the new id. Answers
+// what it wrote, as a hook reads state as it stood when its event began; null when there was nothing to take up.
+async function resumeState($: EngineInterface): Promise<typeof carried> {
+  if (!carried) return null
+  const id = await $.session.id()
+  // Read again after the wait: the tick and a command may both be here.
+  const kept = carried
+  if (!kept || id === selfId) return null
+  carried = null
+  await update($, areaAtom, () => kept.area)
+  await update($, nowViewAtom, () => kept.nowView)
+  await update($, codeViewAtom, () => kept.codeView)
+  await update($, workViewAtom, () => kept.workView)
+  await update($, debugViewAtom, () => kept.debugView)
+  await update($, isOpenAtom, () => kept.isOpen)
+  await update($, paneTopAtom, () => kept.paneTop)
+  await update($, showAllFilesAtom, () => kept.showAllFiles)
+  await update($, statsNameAtom, () => kept.statsName)
+  await update($, nowAtom, () => kept.now)
+  await update($, isActiveAtom, () => kept.isActive)
+  await update($, versionAtom, () => kept.version)
+  await update($, permissionsAtom, () => kept.permissions)
+  await update($, skillsAtom, () => kept.skills)
+  await update($, packAtom, () => kept.pack)
+  await update($, packFailedAtom, () => kept.packFailed)
+  await update($, gateRulesAtom, () => kept.gateRules)
+  await update($, ciActiveAtom, () => kept.ciActive)
+  await update($, gitAtom, () => kept.git)
+  await update($, ciAtom, () => kept.ci)
+  await update($, budgetsAtom, () => kept.budgets)
+  await update($, plansAtom, () => kept.plans)
+  await update($, statsAtom, () => kept.stats)
+  await update($, runsAtom, () => kept.runs)
+  await update($, agentsAtom, () => kept.agents)
+  await update($, sessionsAtom, () => kept.sessions)
+  await update($, envTasksAtom, () => kept.envTasks)
+  await update($, shellsAtom, () => kept.shells)
+  await update($, processesAtom, () => kept.processes)
+  await update($, memoryAtom, () => kept.memory)
+  await update($, telemetryAtom, () => kept.telemetry)
+  if (selfId) {
+    pastIds = [selfId, ...pastIds]
+    await $.store.delete(STORE_SESSION + selfId)
+  }
+  selfId = id
+  lastTask = ''
+  // The context window's fill is the new conversation's.
+  const usage = await $.session.usage().catch(() => null)
+  if (usage) await update($, usageAtom, () => readUsage(usage.context, usage.rateLimits))
+  return kept
 }
 
 export const register: Register = on => {
@@ -738,7 +836,7 @@ export const register: Register = on => {
     // Work › Runs and Stats (runs/run.ts): subagents, this session's runs as their records arrive, the history, stats.
     const { pollAgents, checkRecords, loadHistory, loadStats } = createRuns($, {
       projectsDir,
-      selfId,
+      selfIds: () => [selfId, ...pastIds],
       runs: () => read($, runsAtom),
       saveRuns: change => update($, runsAtom, change),
       saveAgents: change => update($, agentsAtom, change),
@@ -769,6 +867,7 @@ export const register: Register = on => {
     // Once a second: keep this session's beat and CI pings going, and while the pane is open, poll what it shows.
     // Git and CI run commands, so the tick starts them without waiting: a slow gh call never holds up the next tick.
     const tick = async () => {
+      await resumeState($)
       const now = await $.clock.now()
       ticks += 1
       const active = isActive(now)
@@ -975,8 +1074,11 @@ export const register: Register = on => {
   on('session.end', async ($, e, next) => {
     // A /clear or /resume keeps the session's process; only a real end takes it off the Sessions tab.
     if (selfId && e.reason !== 'clear' && e.reason !== 'resume') await $.store.delete(STORE_SESSION + selfId)
-    // The session goes on under a new id: an approval for "this session" doesn't carry over.
-    if (e.reason === 'clear' || e.reason === 'resume') await forgetSessionApprovals($)
+    // The session goes on under a new id: an approval for "this session" doesn't carry over; the pane's own state does.
+    if (e.reason === 'clear' || e.reason === 'resume') {
+      await forgetSessionApprovals($)
+      carried = await readCarried($)
+    }
     return next(e)
   })
 
@@ -988,7 +1090,9 @@ export const register: Register = on => {
     if (isStartPending) await queueChoices($)
     const arg = e.args.trim().toLowerCase()
     void live?.wake()
-    if (!arg && (await read($, isOpenAtom))) {
+    // Typed in the second after a /clear, before the tick has taken up the pane's state.
+    const resumed = await resumeState($)
+    if (!arg && (resumed?.isOpen ?? (await read($, isOpenAtom)))) {
       await $.ui.close({ id: PANE })
       await update($, isOpenAtom, () => false)
       await $.store.set(STORE_OPEN, false)
